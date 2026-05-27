@@ -1,0 +1,24 @@
+[package]
+name = "rsfai-opencl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# The OpenCL/GPU backend (Phase 2). Unlike the cython-parity crates this is
+# tolerance-validated, not bit-exact: the target device (Apple M4 Pro) has no
+# f64, so pyFAI's OpenCL kernels accumulate in a doubleword (two-f32) Kahan
+# representation. The backend reuses pyFAI's own MIT-licensed .cl kernels
+# (compiled via opencl3) and ports only the host-side orchestration, validated
+# at relative error against pyFAI's OpenCL golden. See doc/bit-exact-ladder.md.
+
+[dependencies]
+opencl3 = "0.12"
+rsfai-core = { workspace = true }
+rsfai-integrate = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+ndarray = { workspace = true }
+ndarray-npy = { workspace = true }

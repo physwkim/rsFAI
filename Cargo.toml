@@ -6,6 +6,7 @@ members = [
     "crates/rsfai-detectors",
     "crates/rsfai-preproc",
     "crates/rsfai-integrate",
+    "crates/rsfai-opencl",
     "crates/rsfai",
     # rsfai-py (the PyO3 drop-in) is intentionally excluded from the default
     # cargo build/test: it is a cdylib needing extension-module linkage, built
@@ -27,6 +28,7 @@ rsfai-geometry = { path = "crates/rsfai-geometry" }
 rsfai-detectors = { path = "crates/rsfai-detectors" }
 rsfai-preproc = { path = "crates/rsfai-preproc" }
 rsfai-integrate = { path = "crates/rsfai-integrate" }
+rsfai-opencl = { path = "crates/rsfai-opencl" }
 
 # External
 ndarray = "0.16"
