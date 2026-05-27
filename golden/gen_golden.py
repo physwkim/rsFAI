@@ -542,6 +542,38 @@ def main():
                 "correct_solid_angle": True,
                 "polarization_factor": 0.99,
             },
+            {
+                # Full direct-split histogram (splitPixel.fullSplit1D_engine): the
+                # same corner clipping as full-CSR (recenter + _integrate1d over the
+                # 4 edges → per-bin trapezoid buffer), but the normalized overlap
+                # buffer[bin]*inv_area is scattered straight into update_1d_accumulator
+                # (f64 coef, no error-model fork) instead of stored as an f32 CSR
+                # coef. Reduces like the CSR / 2D-histogram path (guard on count,
+                # f64 sums). Own golden (reduction ORDER differs from full-CSR).
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("full", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # 2D full direct-split histogram (splitPixel.fullSplit2D_engine):
+                # corner clipping into a (w0+1)×(w1+1) box via _integrate2d (the
+                # fused-type _calc_area float/double resolution shared with full-CSR
+                # build), normalized box[i,j]*inv_area scattered via
+                # update_2d_accumulator. Range skip uses min1>pos1_maxin (NOT the
+                # full-CSR build's min1>=pos1_max). chiDiscAtPi default True,
+                # pos1_period = CHI_DEG.period (360, applied to radian azimuths).
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("full", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
         ],
     )
     print("done.")

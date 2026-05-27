@@ -467,7 +467,7 @@ pub fn build_bbox_csr_2d(
 
 /// Minimum of four values, folded with `<` (matches Cython `min(a,b,c,d)` for
 /// the non-NaN corner coordinates the engine sees).
-fn min4(a: f64, b: f64, c: f64, d: f64) -> f64 {
+pub(crate) fn min4(a: f64, b: f64, c: f64, d: f64) -> f64 {
     let mut m = a;
     if b < m {
         m = b;
@@ -482,7 +482,7 @@ fn min4(a: f64, b: f64, c: f64, d: f64) -> f64 {
 }
 
 /// Maximum of four values, folded with `>` (matches Cython `max(a,b,c,d)`).
-fn max4(a: f64, b: f64, c: f64, d: f64) -> f64 {
+pub(crate) fn max4(a: f64, b: f64, c: f64, d: f64) -> f64 {
     let mut m = a;
     if b > m {
         m = b;
@@ -519,7 +519,7 @@ fn recenter_helper(azim: f64, period: f64, chi_disc_at_pi: bool) -> f64 {
 /// The radial coordinates (dim 0) are never touched. The 1D LUT only consumes
 /// the recentered corners (the signed-area return value is used solely by the
 /// 2D path), so this returns nothing.
-fn recenter(v8: &mut [[f64; 2]; 4], pos1_period: f64, chi_disc_at_pi: bool) {
+pub(crate) fn recenter(v8: &mut [[f64; 2]; 4], pos1_period: f64, chi_disc_at_pi: bool) {
     let area = area4p(v8);
     if pos1_period > 0.0 && area > 0.0 {
         let mut na1 = recenter_helper(v8[0][1], pos1_period, chi_disc_at_pi);
@@ -556,7 +556,7 @@ fn calc_area(i1: f64, i2: f64, slope: f64, intercept: f64) -> f64 {
 /// in bin units) drives the binning; `dim1` (azimuth) sets the line height. The
 /// buffer is f32 storage but each contribution is computed in f64 and added as
 /// `(old as f64 + area) as f32`, matching C's `float += double`.
-fn integrate1d(buffer: &mut [DataT], start0: f64, start1: f64, stop0: f64, stop1: f64) {
+pub(crate) fn integrate1d(buffer: &mut [DataT], start0: f64, start1: f64, stop0: f64, stop1: f64) {
     if stop0 == start0 {
         // slope is infinite, area is null: no change to the buffer.
         return;
@@ -612,7 +612,7 @@ fn integrate1d(buffer: &mut [DataT], start0: f64, start1: f64, stop0: f64, stop1
 /// an explicit `pos1_range` is given, which this path does not support yet.
 /// `allow_pos0_neg = false` clamps both ends to `>= 0`. The `±INF` seed yields
 /// the same fold as pyFAI's "seed with the first unmasked corner".
-fn calc_boundaries_full_1d(
+pub(crate) fn calc_boundaries_full_1d(
     corners: &[PositionT],
     mask: Option<&[i8]>,
     allow_pos0_neg: bool,
@@ -765,7 +765,7 @@ pub fn build_full_csr_1d(
 // (radial-major), applied by the same [`csr_integrate2d`] as the bbox path.
 
 /// Limit `value` to `[min_val, max_val]` — port of `_clip`.
-fn clip(value: f64, min_val: f64, max_val: f64) -> f64 {
+pub(crate) fn clip(value: f64, min_val: f64, max_val: f64) -> f64 {
     if value < min_val {
         min_val
     } else if value > max_val {
@@ -783,7 +783,7 @@ fn clip(value: f64, min_val: f64, max_val: f64) -> f64 {
 /// evaluated in f32 then widened). Returns `(pos0_min, pos0_maxin, pos1_min,
 /// pos1_maxin)`; the caller applies [`calc_upper_bound`] to the `*_maxin` values.
 /// Verified bit-exact against the engine's boundary attributes.
-fn calc_boundaries_full_2d(
+pub(crate) fn calc_boundaries_full_2d(
     corners: &[PositionT],
     mask: Option<&[i8]>,
     allow_pos0_neg: bool,
@@ -865,7 +865,7 @@ fn calc_area_2d_float(i1: f64, i2: f64, slope: f32, intercept: f32) -> f32 {
 /// f32 for segments bounded by the float `P` (see [`calc_area_2d_float`]). Each
 /// contribution `box[i,h] += copysign(dA, seg)` promotes the cell to f64, adds the
 /// libc-double `copysign` result, and narrows once — not a pure-f32 add.
-fn integrate2d(
+pub(crate) fn integrate2d(
     box_buf: &mut [DataT],
     shape1: usize,
     start0: f64,

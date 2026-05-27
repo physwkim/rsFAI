@@ -23,11 +23,19 @@
 //!   [`histogram2d_bbox`] (`ext/splitBBox.pyx` `histoBBox1d_engine` /
 //!   `histoBBox2d_engine`), the `("bbox", "histogram", "cython")` paths — same
 //!   bbox overlap fractions as the CSR build, but scattered straight into bins.
+//! - The full pixel-splitting histogram engines, [`histogram1d_full`] /
+//!   [`histogram2d_full`] (`ext/splitPixel.pyx` `fullSplit1D_engine` /
+//!   `fullSplit2D_engine`), the `("full", "histogram", "cython")` paths — same
+//!   trapezoidal overlap machinery as the full-CSR build, scattered straight
+//!   into bins.
 //!
-//! Per-pixel maps and CSR apply accumulate bit-exactly; the histogram-style
-//! scatter (no-split and bbox) is rayon-parallel and validated at relative error
-//! `<= 1e-6` because the f64 add order across pixels is non-deterministic. Golden
-//! generation is single-threaded.
+//! Per-pixel maps and CSR apply accumulate bit-exactly. The no-split histogram
+//! scatter is rayon-parallel and validated at relative error `<= 1e-6` because
+//! its f64 add order across pixels is non-deterministic. The direct-split
+//! histogram scatters (bbox and full) run **serially in pixel-index order**:
+//! their fractional split coefficients make per-bin f64 sums order-dependent, so
+//! serial accumulation reproduces the single-threaded pyFAI golden bit-for-bit.
+//! Golden generation is single-threaded.
 
 pub mod csr;
 pub mod histogram;
@@ -40,4 +48,4 @@ pub use csr::{
 pub use histogram::{
     histogram1d, histogram2d, histogram_preproc, Hist2dOptions, Integrate1d, Integrate2d,
 };
-pub use split_histogram::{histogram1d_bbox, histogram2d_bbox};
+pub use split_histogram::{histogram1d_bbox, histogram1d_full, histogram2d_bbox, histogram2d_full};

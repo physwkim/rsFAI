@@ -156,6 +156,29 @@ def run_rsfai(d, cfg):
                     "sem": out["sem"],
                 }
                 return fields, None
+            if split == "full":
+                # Full pixel-splitting histogram: corners widened to f64, flattened.
+                # 1D setup does not forward chiDiscAtPi/pos1_period (constructor
+                # defaults: chiDiscAtPi=True, pos1_period=2π).
+                corners = np.ascontiguousarray(load(d, "corners").astype(np.float64).reshape(-1))
+                out = rsfai.histogram1d_full(
+                    corners, prep, mask=mask, npt=cfg["npt"],
+                    error_model=em, empty=0.0, allow_pos0_neg=False,
+                    chi_disc_at_pi=True, pos1_period=2.0 * math.pi,
+                )
+                fields = {
+                    "radial": out["position"] * unit_scale,
+                    "intensity": out["intensity"],
+                    "sigma": out["sigma"],
+                    "count": out["count"],
+                    "sum_signal": out["sum_signal"],
+                    "sum_variance": out["sum_variance"],
+                    "sum_normalization": out["sum_normalization"],
+                    "sum_normalization2": out["sum_norm_sq"],
+                    "std": out["std"],
+                    "sem": out["sem"],
+                }
+                return fields, None
             out = rsfai.histogram1d(radial, prep, cfg["npt"], error_model=em, empty=0.0)
             fields = {
                 "radial": out["position"] * unit_scale,
@@ -173,6 +196,8 @@ def run_rsfai(d, cfg):
         # 2D histogram
         if split == "bbox":
             return run_rsfai_2d_bbox_histogram(d, cfg, prep, mask), None
+        if split == "full":
+            return run_rsfai_2d_full_histogram(d, cfg, prep, mask), None
         return run_rsfai_2d_histogram(d, cfg, prep, mask), None
 
     # CSR build + apply
@@ -253,6 +278,19 @@ def run_rsfai_2d_bbox_histogram(d, cfg, prep, mask):
         bins=(cfg["npt_rad"], cfg["npt_azim"]), mask=mask, allow_pos0_neg=False,
         chi_disc_at_pi=cfg["chi_disc_at_pi"], pos1_period=cfg["pos1_period"],
         error_model=cfg["error_model_code"], empty=0.0,
+    )
+    return _fields_2d(out, cfg)
+
+
+def run_rsfai_2d_full_histogram(d, cfg, prep, mask):
+    # Full pixel-splitting histogram: corners widened to f64, flattened. 2D setup
+    # forwards chiDiscAtPi and pos1_period = unit1.period (360, applied to radian
+    # azimuths — a pyFAI quirk).
+    corners = np.ascontiguousarray(load(d, "corners").astype(np.float64).reshape(-1))
+    out = rsfai.histogram2d_full(
+        corners, prep, bins=(cfg["npt_rad"], cfg["npt_azim"]), mask=mask,
+        allow_pos0_neg=False, chi_disc_at_pi=cfg["chi_disc_at_pi"],
+        pos1_period=cfg["pos1_period"], error_model=cfg["error_model_code"], empty=0.0,
     )
     return _fields_2d(out, cfg)
 
