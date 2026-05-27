@@ -41,6 +41,7 @@ import pyFAI
 import fabio
 from pyFAI.test.utilstest import UtilsTest
 from pyFAI.containers import ErrorModel
+from pyFAI import units
 import pyFAI.ext.preproc as ext_preproc
 
 HERE = Path(__file__).resolve().parent
@@ -150,6 +151,14 @@ def generate(detector_name, poni_image, configs):
 
         # ---- Tier-B geometry position arrays ----------------------------
         _save(arrays, out_dir, "pos0_center", ai.center_array(shape, unit=unit))
+        # The radial array the integration engines actually bin/build on is the
+        # UNSCALED centre (`center_array(scale=False)`); the reported position is
+        # `engine_position * unit.scale`. For q_nm^-1 the scale is 1.0 so the two
+        # coincide, but for 2th_deg (scale ≈ 57.3) they differ — and the unscaled
+        # value cannot be recovered from the scaled one by division without
+        # losing bits. Dump it explicitly as the Tier-A engine input.
+        _save(arrays, out_dir, "pos0_center_unscaled",
+              ai.center_array(shape, unit=unit, scale=False))
         _save(arrays, out_dir, "pos0_delta", ai.delta_array(shape, unit=unit))
         _save(arrays, out_dir, "chi_center", ai.center_array(shape, unit="chi_rad"))
         _save(arrays, out_dir, "chi_delta", ai.delta_array(shape, unit="chi_rad"))
@@ -267,6 +276,11 @@ def generate(detector_name, poni_image, configs):
             "config": {
                 "npt": npt,
                 "unit": unit,
+                # The engine bins/builds on the unscaled radial; the reported
+                # position is engine_position * unit_scale (see
+                # pos0_center_unscaled). Recorded so the Rust Tier-A tests can
+                # apply the single f64 multiply pyFAI does.
+                "unit_scale": float(units.to_unit(unit).scale),
                 "method": list(method),
                 "error_model": error_model,
                 "error_model_code": em_code,

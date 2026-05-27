@@ -15,6 +15,7 @@
   "config": {
     "npt": 1000,
     "unit": "2th_deg",
+    "unit_scale": 57.29577951308232,
     "method": [
       "bbox",
       "csr",
@@ -83,6 +84,13 @@
       ]
     },
     "pos0_center": {
+      "dtype": "float64",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "pos0_center_unscaled": {
       "dtype": "float64",
       "shape": [
         1043,
