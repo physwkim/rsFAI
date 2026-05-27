@@ -39,15 +39,18 @@ use rsfai_engine::{
 use rsfai_integrate::{
     build_bbox_csc_1d as rs_build_bbox_csc_1d, build_bbox_csc_2d as rs_build_bbox_csc_2d,
     build_bbox_csr_1d as rs_build_bbox_csr_1d, build_bbox_csr_2d as rs_build_bbox_csr_2d,
+    build_bbox_lut_1d as rs_build_bbox_lut_1d, build_bbox_lut_2d as rs_build_bbox_lut_2d,
     build_full_csc_1d as rs_build_full_csc_1d, build_full_csc_2d as rs_build_full_csc_2d,
     build_full_csr_1d as rs_build_full_csr_1d, build_full_csr_2d as rs_build_full_csr_2d,
+    build_full_lut_1d as rs_build_full_lut_1d, build_full_lut_2d as rs_build_full_lut_2d,
     csc_integrate1d as rs_csc_integrate1d, csc_integrate2d as rs_csc_integrate2d,
     csr_integrate1d as rs_csr_integrate1d, csr_integrate2d as rs_csr_integrate2d,
     histogram1d as rs_histogram1d, histogram1d_bbox as rs_histogram1d_bbox,
     histogram1d_full as rs_histogram1d_full, histogram2d as rs_histogram2d,
     histogram2d_bbox as rs_histogram2d_bbox, histogram2d_full as rs_histogram2d_full,
-    histogram_preproc as rs_histogram_preproc, Bbox2dBounds, Csc, Csr, CsrIntegrate1d,
-    Hist2dOptions, Integrate1d, Integrate2d,
+    histogram_preproc as rs_histogram_preproc, lut_integrate1d as rs_lut_integrate1d,
+    lut_integrate2d as rs_lut_integrate2d, Bbox2dBounds, Csc, Csr, CsrIntegrate1d, Hist2dOptions,
+    Integrate1d, Integrate2d, Lut,
 };
 use rsfai_preproc::{preproc4 as rs_preproc4, PreprocOptions};
 
@@ -67,6 +70,24 @@ type Csr2dPy<'py> = (
     Bound<'py, PyArray1<f32>>,
     Bound<'py, PyArray1<i32>>,
     Bound<'py, PyArray1<i32>>,
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, PyArray1<f64>>,
+);
+
+/// A built 1D dense LUT: `(idx, coef, lut_size, bin_centers)`. `idx`/`coef` are
+/// the flattened `(n_bins, lut_size)` row-major matrix.
+type Lut1dPy<'py> = (
+    Bound<'py, PyArray1<i32>>,
+    Bound<'py, PyArray1<f32>>,
+    usize,
+    Bound<'py, PyArray1<f64>>,
+);
+
+/// A built 2D dense LUT: `(idx, coef, lut_size, bin_centers0, bin_centers1)`.
+type Lut2dPy<'py> = (
+    Bound<'py, PyArray1<i32>>,
+    Bound<'py, PyArray1<f32>>,
+    usize,
     Bound<'py, PyArray1<f64>>,
     Bound<'py, PyArray1<f64>>,
 );
@@ -819,6 +840,197 @@ fn csc_integrate2d<'py>(
 }
 
 // --------------------------------------------------------------------------
+// LUT build + apply
+// --------------------------------------------------------------------------
+// The LUT is the CSR matrix densified (`to_lut`): a flattened `(n_bins, lut_size)`
+// row-major matrix of `{idx, coef}`, each bin's real entries in the leading
+// columns (CSR order) and the rest zero-padding (`idx=0, coef=0.0`). The build
+// tuples return `(idx, coef, lut_size, centers…)`; the apply gathers per bin,
+// skipping padding.
+
+/// `build_bbox_lut_1d`: returns `(idx, coef, lut_size, bin_centers)`.
+/// `delta_pos0 = None` is the `("no", "lut", …)` no-split case.
+#[pyfunction]
+#[pyo3(signature = (pos0, *, delta_pos0=None, mask=None, bins, allow_pos0_neg=false))]
+fn build_bbox_lut_1d<'py>(
+    py: Python<'py>,
+    pos0: PyReadonlyArray1<'py, f64>,
+    delta_pos0: Option<PyReadonlyArray1<'py, f64>>,
+    mask: Option<PyReadonlyArray1<'py, i8>>,
+    bins: usize,
+    allow_pos0_neg: bool,
+) -> PyResult<Lut1dPy<'py>> {
+    let pos0_s = as_slice_1d(&pos0)?;
+    let delta_s = match &delta_pos0 {
+        Some(d) => Some(as_slice_1d(d)?),
+        None => None,
+    };
+    let (lut, centers) =
+        rs_build_bbox_lut_1d(pos0_s, delta_s, mask_slice(&mask)?, bins, allow_pos0_neg);
+    Ok(lut_1d_tuple(py, lut, centers))
+}
+
+/// `build_bbox_lut_2d`: returns `(idx, coef, lut_size, bin_centers0, bin_centers1)`.
+/// `delta_pos0`/`delta_pos1` both given (bbox split) or both omitted (no-split).
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (
+    pos0, pos1, *, delta_pos0=None, delta_pos1=None, mask=None, bins,
+    allow_pos0_neg=false, chi_disc_at_pi=true, pos1_period,
+))]
+fn build_bbox_lut_2d<'py>(
+    py: Python<'py>,
+    pos0: PyReadonlyArray1<'py, f64>,
+    pos1: PyReadonlyArray1<'py, f64>,
+    delta_pos0: Option<PyReadonlyArray1<'py, f64>>,
+    delta_pos1: Option<PyReadonlyArray1<'py, f64>>,
+    mask: Option<PyReadonlyArray1<'py, i8>>,
+    bins: (usize, usize),
+    allow_pos0_neg: bool,
+    chi_disc_at_pi: bool,
+    pos1_period: f64,
+) -> PyResult<Lut2dPy<'py>> {
+    let d0 = match &delta_pos0 {
+        Some(d) => Some(as_slice_1d(d)?),
+        None => None,
+    };
+    let d1 = match &delta_pos1 {
+        Some(d) => Some(as_slice_1d(d)?),
+        None => None,
+    };
+    if d0.is_some() != d1.is_some() {
+        return Err(PyValueError::new_err(
+            "delta_pos0 and delta_pos1 must both be given (bbox split) or both omitted (no-split)",
+        ));
+    }
+    let bounds = Bbox2dBounds {
+        allow_pos0_neg,
+        chi_disc_at_pi,
+        pos1_period,
+    };
+    let (lut, bc0, bc1) = rs_build_bbox_lut_2d(
+        as_slice_1d(&pos0)?,
+        d0,
+        as_slice_1d(&pos1)?,
+        d1,
+        mask_slice(&mask)?,
+        bins,
+        &bounds,
+    );
+    Ok(lut_2d_tuple(py, lut, bc0, bc1))
+}
+
+/// `build_full_lut_1d`: `corners` pre-flattened to f64 (length `8*npix`).
+/// Returns `(idx, coef, lut_size, bin_centers)`.
+#[pyfunction]
+#[pyo3(signature = (corners, *, mask=None, bins, allow_pos0_neg=false, chi_disc_at_pi=true, pos1_period))]
+fn build_full_lut_1d<'py>(
+    py: Python<'py>,
+    corners: PyReadonlyArray1<'py, f64>,
+    mask: Option<PyReadonlyArray1<'py, i8>>,
+    bins: usize,
+    allow_pos0_neg: bool,
+    chi_disc_at_pi: bool,
+    pos1_period: f64,
+) -> PyResult<Lut1dPy<'py>> {
+    let (lut, centers) = rs_build_full_lut_1d(
+        as_slice_1d(&corners)?,
+        mask_slice(&mask)?,
+        bins,
+        allow_pos0_neg,
+        chi_disc_at_pi,
+        pos1_period,
+    );
+    Ok(lut_1d_tuple(py, lut, centers))
+}
+
+/// `build_full_lut_2d`: `corners` pre-flattened to f64 (length `8*npix`).
+/// Returns `(idx, coef, lut_size, bin_centers0, bin_centers1)`.
+#[pyfunction]
+#[pyo3(signature = (corners, *, mask=None, bins, allow_pos0_neg=false, chi_disc_at_pi=true, pos1_period))]
+fn build_full_lut_2d<'py>(
+    py: Python<'py>,
+    corners: PyReadonlyArray1<'py, f64>,
+    mask: Option<PyReadonlyArray1<'py, i8>>,
+    bins: (usize, usize),
+    allow_pos0_neg: bool,
+    chi_disc_at_pi: bool,
+    pos1_period: f64,
+) -> PyResult<Lut2dPy<'py>> {
+    let (lut, bc0, bc1) = rs_build_full_lut_2d(
+        as_slice_1d(&corners)?,
+        mask_slice(&mask)?,
+        bins,
+        allow_pos0_neg,
+        chi_disc_at_pi,
+        pos1_period,
+    );
+    Ok(lut_2d_tuple(py, lut, bc0, bc1))
+}
+
+/// Reassemble a [`Lut`] from numpy `idx`/`coef` (flattened `(n_bins, lut_size)`)
+/// and the row width `lut_size`.
+fn lut_from_parts(
+    idx: &PyReadonlyArray1<'_, i32>,
+    coef: &PyReadonlyArray1<'_, f32>,
+    lut_size: usize,
+) -> PyResult<Lut> {
+    Ok(Lut {
+        coef: as_slice_1d(coef)?.to_vec(),
+        idx: as_slice_1d(idx)?.to_vec(),
+        lut_size,
+    })
+}
+
+/// `lut_integrate1d`: apply a 1D dense LUT to a preprocessed `(npix, 4)` array.
+/// Returns a dict of the `Integrate1dtpl` fields.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (idx, coef, lut_size, prep, bin_centers, *, error_model=0, empty=0.0))]
+fn lut_integrate1d<'py>(
+    py: Python<'py>,
+    idx: PyReadonlyArray1<'py, i32>,
+    coef: PyReadonlyArray1<'py, f32>,
+    lut_size: usize,
+    prep: PyReadonlyArray2<'py, f32>,
+    bin_centers: PyReadonlyArray1<'py, f64>,
+    error_model: i32,
+    empty: f32,
+) -> PyResult<Bound<'py, PyDict>> {
+    let lut = lut_from_parts(&idx, &coef, lut_size)?;
+    let prep_s = as_slice_2d(&prep)?;
+    let centers = as_slice_1d(&bin_centers)?.to_vec();
+    let em = self::error_model(error_model)?;
+    let r = rs_lut_integrate1d(&lut, prep_s, centers, em, empty);
+    csr_integrate1d_to_dict(py, &r)
+}
+
+/// `lut_integrate2d`: apply a 2D dense LUT. Returns a dict of the
+/// `Integrate2dtpl` fields (flat (azimuthal, radial) C-order).
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (idx, coef, lut_size, prep, bin_centers0, bin_centers1, *, error_model=0, empty=0.0))]
+fn lut_integrate2d<'py>(
+    py: Python<'py>,
+    idx: PyReadonlyArray1<'py, i32>,
+    coef: PyReadonlyArray1<'py, f32>,
+    lut_size: usize,
+    prep: PyReadonlyArray2<'py, f32>,
+    bin_centers0: PyReadonlyArray1<'py, f64>,
+    bin_centers1: PyReadonlyArray1<'py, f64>,
+    error_model: i32,
+    empty: f32,
+) -> PyResult<Bound<'py, PyDict>> {
+    let lut = lut_from_parts(&idx, &coef, lut_size)?;
+    let prep_s = as_slice_2d(&prep)?;
+    let bc0 = as_slice_1d(&bin_centers0)?.to_vec();
+    let bc1 = as_slice_1d(&bin_centers1)?.to_vec();
+    let em = self::error_model(error_model)?;
+    let r = rs_lut_integrate2d(&lut, prep_s, bc0, bc1, em, empty);
+    integrate2d_to_dict(py, &r)
+}
+
+// --------------------------------------------------------------------------
 // High-level integrator (drop-in)
 // --------------------------------------------------------------------------
 
@@ -992,6 +1204,25 @@ fn csc_2d_tuple<'py>(py: Python<'py>, csc: Csc, bc0: Vec<f64>, bc1: Vec<f64>) ->
     )
 }
 
+fn lut_1d_tuple<'py>(py: Python<'py>, lut: Lut, centers: Vec<f64>) -> Lut1dPy<'py> {
+    (
+        lut.idx.into_pyarray(py),
+        lut.coef.into_pyarray(py),
+        lut.lut_size,
+        centers.into_pyarray(py),
+    )
+}
+
+fn lut_2d_tuple<'py>(py: Python<'py>, lut: Lut, bc0: Vec<f64>, bc1: Vec<f64>) -> Lut2dPy<'py> {
+    (
+        lut.idx.into_pyarray(py),
+        lut.coef.into_pyarray(py),
+        lut.lut_size,
+        bc0.into_pyarray(py),
+        bc1.into_pyarray(py),
+    )
+}
+
 fn integrate1d_to_dict<'py>(py: Python<'py>, r: &Integrate1d) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
     d.set_item("position", r.position.clone().into_pyarray(py))?;
@@ -1153,6 +1384,12 @@ fn rsfai(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(build_full_csc_2d, m)?)?;
     m.add_function(wrap_pyfunction!(csc_integrate1d, m)?)?;
     m.add_function(wrap_pyfunction!(csc_integrate2d, m)?)?;
+    m.add_function(wrap_pyfunction!(build_bbox_lut_1d, m)?)?;
+    m.add_function(wrap_pyfunction!(build_bbox_lut_2d, m)?)?;
+    m.add_function(wrap_pyfunction!(build_full_lut_1d, m)?)?;
+    m.add_function(wrap_pyfunction!(build_full_lut_2d, m)?)?;
+    m.add_function(wrap_pyfunction!(lut_integrate1d, m)?)?;
+    m.add_function(wrap_pyfunction!(lut_integrate2d, m)?)?;
     m.add_class::<PyAzimuthalIntegrator>()?;
     Ok(())
 }

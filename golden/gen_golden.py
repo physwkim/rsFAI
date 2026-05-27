@@ -296,6 +296,25 @@ def generate(detector_name, poni_image, configs):
                     _save(arrays, out_dir, f"{algo}_indices", np.asarray(eng.indices))
                     _save(arrays, out_dir, f"{algo}_indptr", np.asarray(eng.indptr))
                     break
+        elif method[1] == "lut":
+            # LUT engines (LutIntegrator) store a dense (output_size, lut_size)
+            # recarray under .lut, fields ("idx" int32, "coef" float32) — NOT the
+            # CSR .data/.indices/.indptr triple. Dump the two fields contiguously
+            # (output bins radial-major i*bins1+j for 2D, the matrix-row order, NOT
+            # the transposed result layout).
+            for m, engine_wrap in ai.engines.items():
+                if (getattr(m, "split_lower", None) != method[0]
+                        or getattr(m, "algo_lower", None) != "lut"
+                        or getattr(m, "dimension", None) != dim):
+                    continue
+                eng = getattr(engine_wrap, "engine", engine_wrap)
+                if hasattr(eng, "lut"):
+                    lut = eng.lut
+                    _save(arrays, out_dir, "lut_idx",
+                          np.ascontiguousarray(lut["idx"], dtype=np.int32))
+                    _save(arrays, out_dir, "lut_coef",
+                          np.ascontiguousarray(lut["coef"], dtype=np.float32))
+                    break
 
         # ---- Manifest ---------------------------------------------------
         if dim == 2:
@@ -644,6 +663,77 @@ def main():
                 "npt_azim": 36,
                 "unit": "q_nm^-1",
                 "method": ("full", "csc", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # No-split LUT: pyFAI's ("no","lut","cython") uses the same
+                # HistoBBox1d (splitBBoxLUT) as bbox-LUT with delta=None
+                # (do_split=False). The LUT is the SAME calc_lut() the CSR path
+                # builds, ending in .to_lut() (dense (n_bins, lut_size) {idx,coef}
+                # padded with {0,0.0}) instead of .to_csr(); the apply
+                # (LutIntegrator.integrate_ng) gathers per bin skipping coef==0
+                # padding — same entries/order as the CSR gather, so f64 sums match
+                # CSR. Own golden validates the densify + gather.
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("no", "lut", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": None,
+            },
+            {
+                # bbox LUT (splitBBoxLUT.HistoBBox1d): bbox LUT densified.
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "lut", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # full LUT (splitPixelFullLUT.HistoLUT1dFullSplit): full corner LUT
+                # densified. 1D full does not forward chiDiscAtPi/pos1_period
+                # (constructor defaults: chiDiscAtPi=True, pos1_period=2π).
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("full", "lut", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # 2D no-split LUT: HistoBBox2d (splitBBoxLUT) with delta=None.
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("no", "lut", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # 2D bbox LUT (splitBBoxLUT.HistoBBox2d): bbox 2D LUT densified.
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "lut", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # 2D full LUT (splitPixelFullLUT.HistoLUT2dFullSplit): full 2D corner
+                # LUT densified. common.py forwards chiDiscAtPi and pos1_period =
+                # unit1.period (360, applied to radian azimuths — pyFAI quirk).
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("full", "lut", "cython"),
                 "error_model": "poisson",
                 "correct_solid_angle": True,
                 "polarization_factor": 0.99,

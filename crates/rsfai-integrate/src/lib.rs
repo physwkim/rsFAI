@@ -34,6 +34,12 @@
 //!   `ext/splitPixelFullCSC.pyx` + `ext/CSC_common.pxi` — the
 //!   `("no"|"bbox"|"full", "csc", "cython")` 1D/2D paths. The build transposes the
 //!   CSR LUT (scipy `tocsc`); the apply scatters pixel-major.
+//! - The LUT paths, [`build_bbox_lut_1d`] / [`build_bbox_lut_2d`] /
+//!   [`build_full_lut_1d`] / [`build_full_lut_2d`] (build) + [`lut_integrate1d`] /
+//!   [`lut_integrate2d`] (apply), from `ext/splitBBoxLUT.pyx` /
+//!   `ext/splitPixelFullLUT.pyx` + `ext/LUT_common.pxi` — the
+//!   `("no"|"bbox"|"full", "lut", "cython")` 1D/2D paths. The build densifies the
+//!   CSR LUT (`to_lut`); the apply gathers per bin, skipping zero-padding.
 //!
 //! Per-pixel maps and CSR apply accumulate bit-exactly. The no-split histogram
 //! scatter is rayon-parallel and validated at relative error `<= 1e-6` because
@@ -46,6 +52,7 @@
 pub mod csc;
 pub mod csr;
 pub mod histogram;
+pub mod lut;
 pub mod split_histogram;
 
 pub use csc::{
@@ -58,5 +65,9 @@ pub use csr::{
 };
 pub use histogram::{
     histogram1d, histogram2d, histogram_preproc, Hist2dOptions, Integrate1d, Integrate2d,
+};
+pub use lut::{
+    build_bbox_lut_1d, build_bbox_lut_2d, build_full_lut_1d, build_full_lut_2d, lut_integrate1d,
+    lut_integrate2d, Lut,
 };
 pub use split_histogram::{histogram1d_bbox, histogram1d_full, histogram2d_bbox, histogram2d_full};

@@ -200,9 +200,67 @@ def run_rsfai(d, cfg):
             return run_rsfai_2d_full_histogram(d, cfg, prep, mask), None
         return run_rsfai_2d_histogram(d, cfg, prep, mask), None
 
+    if algo == "lut":
+        # LUT build + apply. The LUT is the CSR matrix densified (to_lut): a
+        # flattened (n_bins, lut_size) {idx, coef} matrix, the apply gathers per
+        # bin skipping zero-padding. `built` carries the (lut_idx, lut_coef) pairs
+        # (golden raveled C-order to match the flat rsfai matrix) for main().
+        npt = (cfg["npt_rad"], cfg["npt_azim"]) if dim == 2 else cfg["npt"]
+        if split in ("no", "bbox"):
+            do_split = split == "bbox"
+            if dim == 1:
+                pos0 = np.ascontiguousarray(load(d, "pos0_center_unscaled").reshape(-1))
+                dpos0 = np.ascontiguousarray(load(d, "pos0_delta").reshape(-1)) if do_split else None
+                idx, coef, lut_size, bc = rsfai.build_bbox_lut_1d(
+                    pos0, delta_pos0=dpos0, mask=mask, bins=npt, allow_pos0_neg=False
+                )
+            else:
+                pos0 = np.ascontiguousarray(load(d, "pos0_center_unscaled").reshape(-1))
+                pos1 = np.ascontiguousarray(load(d, "chi_center").reshape(-1))
+                dpos0 = np.ascontiguousarray(load(d, "pos0_delta").reshape(-1)) if do_split else None
+                dpos1 = np.ascontiguousarray(load(d, "chi_delta").reshape(-1)) if do_split else None
+                idx, coef, lut_size, bc0, bc1 = rsfai.build_bbox_lut_2d(
+                    pos0, pos1, delta_pos0=dpos0, delta_pos1=dpos1, mask=mask, bins=npt,
+                    allow_pos0_neg=False, chi_disc_at_pi=cfg["chi_disc_at_pi"],
+                    pos1_period=cfg["pos1_period"],
+                )
+        else:  # full split: corners (f32) widened to f64, flattened
+            corners = np.ascontiguousarray(load(d, "corners").astype(np.float64).reshape(-1))
+            if dim == 1:
+                idx, coef, lut_size, bc = rsfai.build_full_lut_1d(
+                    corners, mask=mask, bins=npt, allow_pos0_neg=False,
+                    chi_disc_at_pi=True, pos1_period=2.0 * math.pi,
+                )
+            else:
+                idx, coef, lut_size, bc0, bc1 = rsfai.build_full_lut_2d(
+                    corners, mask=mask, bins=npt, allow_pos0_neg=False,
+                    chi_disc_at_pi=cfg["chi_disc_at_pi"], pos1_period=cfg["pos1_period"],
+                )
+        built = [
+            ("lut_idx", idx, load(d, "lut_idx").reshape(-1)),
+            ("lut_coef", coef, load(d, "lut_coef").reshape(-1)),
+        ]
+        if dim == 1:
+            out = rsfai.lut_integrate1d(idx, coef, lut_size, prep, bc, error_model=em, empty=0.0)
+            fields = {
+                "radial": out["position"] * unit_scale,
+                "intensity": out["intensity"],
+                "sigma": out["sigma"],
+                "count": out["count"],
+                "sum_signal": out["sum_signal"],
+                "sum_variance": out["sum_variance"],
+                "sum_normalization": out["sum_normalization"],
+                "sum_normalization2": out["sum_norm_sq"],
+                "std": out["std"],
+                "sem": out["sem"],
+            }
+            return fields, built
+        out = rsfai.lut_integrate2d(idx, coef, lut_size, prep, bc0, bc1, error_model=em, empty=0.0)
+        return _fields_2d(out, cfg), built
+
     # CSR / CSC build + apply. The CSC matrix is the CSR LUT transposed (scipy
     # tocsc); the build/apply signatures are identical, so `algo` just selects the
-    # variant. `built` carries the algo so main() compares against csr_*/csc_*.
+    # variant. `built` carries (name, rsfai, golden) build-matrix triples for main().
     npt = (cfg["npt_rad"], cfg["npt_azim"]) if dim == 2 else cfg["npt"]
     if split in ("no", "bbox"):
         # pyFAI's ("no",…) and ("bbox",…) share the same HistoBBox class; no-split
@@ -242,7 +300,11 @@ def run_rsfai(d, cfg):
                 chi_disc_at_pi=cfg["chi_disc_at_pi"], pos1_period=cfg["pos1_period"],
             )
 
-    built = (algo, data, indices, indptr)
+    built = [
+        (f"{algo}_data", data, load(d, f"{algo}_data")),
+        (f"{algo}_indices", indices, load(d, f"{algo}_indices")),
+        (f"{algo}_indptr", indptr, load(d, f"{algo}_indptr")),
+    ]
     if dim == 1:
         integ = rsfai.csr_integrate1d if algo == "csr" else rsfai.csc_integrate1d
         out = integ(data, indices, indptr, prep, bc, error_model=em, empty=0.0)
@@ -369,13 +431,12 @@ def main():
         rsfai_fields, built = run_rsfai(d, cfg)
         live_fields = run_live(d, cfg)
 
-        # CSR / CSC build: the rsfai-built LUT vs the committed pyFAI LUT
-        # (csr_* or csc_*, per the algo carried in `built`).
+        # Sparse build: the rsfai-built matrix vs the committed pyFAI matrix.
+        # `built` is a list of (golden_name, rsfai_array, golden_array) triples —
+        # CSR/CSC carry 3 (data/indices/indptr), LUT carries 2 (idx/coef).
         if built is not None:
-            algo, data, indices, indptr = built
-            for nm, act in ((f"{algo}_data", data), (f"{algo}_indices", indices),
-                            (f"{algo}_indptr", indptr)):
-                ok, detail = compare(act, load(d, nm))
+            for nm, act, golden in built:
+                ok, detail = compare(act, golden)
                 total_checked += 1
                 total_fail += not ok
                 print(f"  build {nm:14s} rsfai==golden : {'PASS' if ok else 'FAIL'} ({detail})")
