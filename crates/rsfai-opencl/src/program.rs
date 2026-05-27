@@ -35,6 +35,16 @@ const LUT_KERNEL_SOURCES: &[&str] = &[
     include_str!("../kernels/ocl_azim_LUT.cl"),
 ];
 
+/// Histogram kernel sources, in `azim_hist.py`'s `kernel_files` order:
+/// `doubleword.cl`, `preprocess.cl`, `ocl_histo.cl`. Note there is **no**
+/// `memset.cl`: the histogram zeroing kernel (`memset_histograms`) lives in
+/// `ocl_histo.cl` itself.
+const HISTOGRAM_KERNEL_SOURCES: &[&str] = &[
+    include_str!("../kernels/doubleword.cl"),
+    include_str!("../kernels/preprocess.cl"),
+    include_str!("../kernels/ocl_histo.cl"),
+];
+
 /// Concatenate kernel sources the way silx's `concatenate_cl_kernel` does: join
 /// the files, dropping every line that starts with `#include ` (silx's "dummy
 /// preprocessor" — the only includes are the IDE stub `for_eclipse.h`).
@@ -60,6 +70,11 @@ pub fn csr_program_source() -> String {
 /// The concatenated LUT program source.
 pub fn lut_program_source() -> String {
     concatenate(LUT_KERNEL_SOURCES)
+}
+
+/// The concatenated histogram program source.
+pub fn histogram_program_source() -> String {
+    concatenate(HISTOGRAM_KERNEL_SOURCES)
 }
 
 /// Compile options matching pyFAI/silx on the Apple M4 Pro:
@@ -100,6 +115,32 @@ pub fn build_lut_program(
 ) -> Result<Program, String> {
     let source = lut_program_source();
     let options = lut_compile_options(nbins, nimage, nlut);
+    Program::create_and_build_from_source(context, &source, &options)
+}
+
+/// Histogram compile options (`azim_hist.py`): the Apple `-Dcl_khr_fp64=0` plus
+/// `-D NBINS -D NIMAGE -D WORKGROUP_SIZE`. Only `NIMAGE` is referenced by the
+/// sources (preprocess bounds); `NBINS`/`WORKGROUP_SIZE` are defined to match
+/// pyFAI's command verbatim. The doubleword Kahan atomic in `ocl_histo.cl` is
+/// selected at compile time by the device's `cl_khr_int64_base_atomics` support:
+/// the M4 Pro lacks it, so the 32-bit-atomic `#else` path (which commits only the
+/// high doubleword word) is taken — exactly as for pyFAI on this device.
+pub fn histogram_compile_options(nbins: usize, nimage: usize, workgroup_size: usize) -> String {
+    format!(
+        "-Dcl_khr_fp64=0 -D NBINS={nbins} -D NIMAGE={nimage} -D WORKGROUP_SIZE={workgroup_size}"
+    )
+}
+
+/// Build the histogram program for a given bin count, image size and work-group
+/// size on `context`. `Err` carries the OpenCL build log on failure.
+pub fn build_histogram_program(
+    context: &Context,
+    nbins: usize,
+    nimage: usize,
+    workgroup_size: usize,
+) -> Result<Program, String> {
+    let source = histogram_program_source();
+    let options = histogram_compile_options(nbins, nimage, workgroup_size);
     Program::create_and_build_from_source(context, &source, &options)
 }
 
@@ -154,6 +195,34 @@ mod tests {
 
         // Every kernel the LUT-NG path enqueues must resolve.
         for name in ["memset_out", "corrections4", "lut_integrate4"] {
+            Kernel::create(&program, name).unwrap_or_else(|e| panic!("kernel {name}: {e}"));
+        }
+    }
+
+    #[test]
+    fn pyfai_histogram_kernels_compile_on_device() {
+        let src = histogram_program_source();
+        assert!(!src.contains("#include "), "#include not stripped");
+        assert!(src.contains("dw_plus_fp"), "doubleword.cl not concatenated");
+        assert!(
+            src.contains("histogram_1d_preproc"),
+            "ocl_histo.cl not concatenated"
+        );
+
+        let (context, _device) = default_context(true).expect("context");
+        let _queue = create_queue(&context).expect("queue");
+        // Representative sizes (npt=1000, Pilatus1M pixel count, block_size=32).
+        let program = build_histogram_program(&context, 1000, 981 * 1043, 32)
+            .expect("histogram program build");
+
+        // Every kernel the histogram-NG path enqueues must resolve.
+        for name in [
+            "memset_histograms",
+            "corrections4",
+            "histogram_1d_preproc",
+            "histogram_2d_preproc",
+            "histogram_postproc",
+        ] {
             Kernel::create(&program, name).unwrap_or_else(|e| panic!("kernel {name}: {e}"));
         }
     }

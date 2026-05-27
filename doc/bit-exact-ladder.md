@@ -199,6 +199,42 @@ orchestration must match:
 `{no, bbox, full} × {1D npt=1000, 2D npt=100×36}` — are **bitwise-exact** (9/9
 fields) vs pyFAI's OpenCL output on this device.
 
+#### The histogram (atomic-add) path is *not* bit-exact — by physics
+
+The `OCL_Histogram1d`/`OCL_Histogram2d` path (`azim_hist.py`, kernels
+`doubleword.cl` + `preprocess.cl` + `ocl_histo.cl`) has **no sparse matrix**:
+`memset_histograms` → `corrections4` → `histogram_{1d,2d}_preproc` →
+`histogram_postproc`, where the preproc kernel scatters each pixel's `float4`
+into the bins with `atomic_add` (the bin is computed from the per-pixel
+`radial`/`azimuthal` arrays the host uploads). It shares the LUT path's
+image-pre-cast and 23-arg `corrections4`.
+
+This is the one Phase-2 path where bit-exactness is **physically impossible**,
+for two compounding reasons on the Apple M4 Pro:
+
+1. **Non-deterministic atomic order.** `atomic_cmpxchg` commit order across
+   work-items is not reproducible, so the per-bin running sum is reordered
+   every run.
+2. **No `cl_khr_int64_base_atomics`.** The doubleword-Kahan atomic
+   (`atomic_add_global_kahan`) falls back to its 32-bit `#else` branch, which
+   CASes only the **high** word — the doubleword low lane stays zero, so the
+   compensation is discarded and the accumulation is a plain `f32` atomic sum.
+
+pyFAI is therefore not reproducible against *itself*: over 8 independent runs of
+the identical config, intensity diverges by up to **~3.4e-6 (1D)** and
+**~7.0e-6 (2D)** pairwise (measured). The Rust port reproduces pyFAI's algorithm
+exactly (identical `corrections4` output, identical bin assignment); the residual
+is the same atomic-noise envelope. Validation therefore uses a **measured-noise
+gate of rel ≤ 5e-5** (`HIST_REL_TOL`, ~7× the measured ceiling — far below any
+genuine port error, robust against the frozen-golden vs live-run sampling), not
+the 1e-6 CSR/LUT gate. The `count` field (integer atomics, order-independent in
+value) stays **bit-exact**. This boundary is the GPU analogue of the OpenMP/
+parallel-reduction boundary the cython side pins by running single-threaded.
+
+**Measured (Pilatus1M, Poisson):** both `("no", "histogram")` tuples (1D npt=1000,
+2D npt=100×36) pass the 5e-5 gate; `count` is bit-exact; the noisy fields land at
+1–6e-6, inside the measured pyFAI self-divergence envelope.
+
 ## The arithmetic to reproduce (from `regrid_common.pxi`)
 
 - **preproc** (`preproc_value_inplace`, lines 149-237): `signal = data - dark`;

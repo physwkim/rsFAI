@@ -208,6 +208,41 @@ def generate(detector_name, poni_image, configs):
                 "block_size": int(integr.BLOCK_SIZE),
                 "lut_size": int(integr.lut_size),
             }
+        elif algo == "histogram":
+            klass = "OCL_Histogram2d" if dim == 2 else "OCL_Histogram1d"
+            integr = _find_ocl_integrator(ai, klass)
+            # No sparse matrix: the histogram consumes the per-pixel radial (and
+            # azimuthal) position arrays directly and atomic-adds into the bins.
+            # Dump the exact float32 buffers the GPU received (send_buffer casts
+            # to float32); the radial_mini/maxi/azim scalars are captured live so
+            # the bin assignment matches without recomputation.
+            _save(arrays, out_dir, "radial",
+                  np.ascontiguousarray(integr.radial, dtype=np.float32))
+            _save(arrays, out_dir, "azimuthal",
+                  np.ascontiguousarray(integr.azimuthal, dtype=np.float32))
+            corr_args = integr.cl_kernel_args["corrections4"]
+            # The per-CALL histogram-preproc args (integrate() mutates this dict
+            # in place): radial_mini/maxi and azim_mini/maxi reflect the actual
+            # radial_range/azimuth_range used. check_azim is the per-call flag
+            # (0 here: integrate1d passes no azimuth_range — so it is NOT the
+            # instance attribute, which is 1 merely because an azimuthal array
+            # exists). The 2D preproc kernel has no check_azim (it always
+            # range-checks azimuth).
+            hk = "histogram_2d_preproc" if dim == 2 else "histogram_1d_preproc"
+            hist_args = integr.cl_kernel_args[hk]
+            algo_params = {
+                "corrections4": {k: _scalar(corr_args[k]) for k in CORR4_SCALARS},
+                # histogram_{1d,2d}_preproc launch: global = ceil(size/block)*block
+                # (one thread per pixel); memset_histograms / histogram_postproc:
+                # global = ceil(bins/block)*block (one thread per bin).
+                "block_size": int(integr.BLOCK_SIZE),
+                "radial_mini": _scalar(hist_args["radial_mini"]),
+                "radial_maxi": _scalar(hist_args["radial_maxi"]),
+                "azim_mini": _scalar(hist_args["azim_mini"]),
+                "azim_maxi": _scalar(hist_args["azim_maxi"]),
+                **({"check_azim": int(_scalar(hist_args["check_azim"]))}
+                   if dim == 1 else {}),
+            }
         else:
             raise RuntimeError(f"unsupported algo {algo!r}")
 
@@ -355,6 +390,23 @@ def main():
             {
                 "dim": 2, "npt_rad": 100, "npt_azim": 36, "unit": "q_nm^-1",
                 "method": ("full", "lut", "opencl"),
+                "error_model": "poisson", "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            # ---- Histogram tuples (OCL_Histogram1d / OCL_Histogram2d) -------
+            # Atomic-add scatter (no sparse matrix): per-pixel radial/azimuthal
+            # arrays are histogrammed directly. The atomic_cmpxchg order is
+            # non-deterministic, so this path is tolerance-only (rel <= 1e-6);
+            # the doubleword Kahan accumulation bounds the error to ~f64.
+            {
+                "npt": 1000, "unit": "q_nm^-1",
+                "method": ("no", "histogram", "opencl"),
+                "error_model": "poisson", "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                "dim": 2, "npt_rad": 100, "npt_azim": 36, "unit": "q_nm^-1",
+                "method": ("no", "histogram", "opencl"),
                 "error_model": "poisson", "correct_solid_angle": True,
                 "polarization_factor": 0.99,
             },
