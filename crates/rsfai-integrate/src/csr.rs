@@ -186,7 +186,16 @@ pub fn build_bbox_csr_1d(
         }
     }
 
-    // Flatten to CSR in bin order, within-bin in insertion (ascending) order.
+    let bin_centers = numpy_linspace(pos0_min + 0.5 * delta, pos0_max - 0.5 * delta, bins);
+    (flatten_csr(&bin_idx, &bin_coef), bin_centers)
+}
+
+/// Flatten per-bin `(index, coef)` lists into a bin-major CSR matrix. Within each
+/// bin the entries keep insertion order — and since pixels are inserted in
+/// ascending index order, that order is ascending pixel index, matching pyFAI's
+/// `SparseBuilder.to_csr()` output.
+fn flatten_csr(bin_idx: &[Vec<IndexT>], bin_coef: &[Vec<DataT>]) -> Csr {
+    let bins = bin_idx.len();
     let mut indptr = vec![0 as IndexT; bins + 1];
     let nnz: usize = bin_idx.iter().map(|v| v.len()).sum();
     let mut indices = Vec::with_capacity(nnz);
@@ -196,16 +205,309 @@ pub fn build_bbox_csr_1d(
         data.extend_from_slice(&bin_coef[b]);
         indptr[b + 1] = indptr[b] + bin_idx[b].len() as IndexT;
     }
+    Csr {
+        data,
+        indices,
+        indptr,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Full pixel splitting (1D): port of `FullSplitIntegrator.calc_lut_1d`
+// (`ext/splitpixel_common.pyx`) + the `calc_boundaries`/`_recenter`/`_integrate1d`
+// helpers in `ext/regrid_common.pxi`. Each pixel is a quadrilateral with 4
+// corners (radial, azimuth); its overlap with each radial bin is the trapezoidal
+// area swept by the 4 edges, normalized so the per-pixel coefficients sum to 1.
+// The built CSR is applied by the same [`csr_integrate1d`] as the bbox path.
+
+/// Minimum of four values, folded with `<` (matches Cython `min(a,b,c,d)` for
+/// the non-NaN corner coordinates the engine sees).
+fn min4(a: f64, b: f64, c: f64, d: f64) -> f64 {
+    let mut m = a;
+    if b < m {
+        m = b;
+    }
+    if c < m {
+        m = c;
+    }
+    if d < m {
+        m = d;
+    }
+    m
+}
+
+/// Maximum of four values, folded with `>` (matches Cython `max(a,b,c,d)`).
+fn max4(a: f64, b: f64, c: f64, d: f64) -> f64 {
+    let mut m = a;
+    if b > m {
+        m = b;
+    }
+    if c > m {
+        m = c;
+    }
+    if d > m {
+        m = d;
+    }
+    m
+}
+
+/// Approximate signed area of quad ABCD, `0.5·(AC ⨯ BD)` — port of `area4p`.
+/// The literal pyFAI precedence is `(0.5 * X) - Y` (the `0.5` scales only the
+/// first cross-product term); reproduce it exactly. A positive area flags a
+/// pixel straddling the azimuthal discontinuity.
+fn area4p(p: &[[f64; 2]; 4]) -> f64 {
+    let [[a0, a1], [b0, b1], [c0, c1], [d0, d1]] = *p;
+    0.5 * ((c0 - a0) * (d1 - b1)) - ((c1 - a1) * (d0 - b0))
+}
+
+/// Shift one azimuth into the canonical period — port of `_recenter_helper`.
+fn recenter_helper(azim: f64, period: f64, chi_disc_at_pi: bool) -> f64 {
+    if (chi_disc_at_pi && azim < 0.0) || (!chi_disc_at_pi && azim < 0.5 * period) {
+        azim + period
+    } else {
+        azim
+    }
+}
+
+/// Recenter the azimuthal corner coordinates of one pixel **in place** when the
+/// pixel straddles the chi discontinuity (`area4p > 0`) — port of `_recenter`.
+/// The radial coordinates (dim 0) are never touched. The 1D LUT only consumes
+/// the recentered corners (the signed-area return value is used solely by the
+/// 2D path), so this returns nothing.
+fn recenter(v8: &mut [[f64; 2]; 4], pos1_period: f64, chi_disc_at_pi: bool) {
+    let area = area4p(v8);
+    if pos1_period > 0.0 && area > 0.0 {
+        let mut na1 = recenter_helper(v8[0][1], pos1_period, chi_disc_at_pi);
+        let mut nb1 = recenter_helper(v8[1][1], pos1_period, chi_disc_at_pi);
+        let mut nc1 = recenter_helper(v8[2][1], pos1_period, chi_disc_at_pi);
+        let mut nd1 = recenter_helper(v8[3][1], pos1_period, chi_disc_at_pi);
+        let center1 = 0.25 * (na1 + nb1 + nc1 + nd1);
+        let hi = if chi_disc_at_pi {
+            0.5 * pos1_period
+        } else {
+            pos1_period
+        };
+        if center1 > hi {
+            na1 -= pos1_period;
+            nb1 -= pos1_period;
+            nc1 -= pos1_period;
+            nd1 -= pos1_period;
+        }
+        v8[0][1] = na1;
+        v8[1][1] = nb1;
+        v8[2][1] = nc1;
+        v8[3][1] = nd1;
+    }
+}
+
+/// Area between `i1` and `i2` under a line of given slope & intercept — port of
+/// `_calc_area`: `(i2 - i1)·(0.5·slope·(i2 + i1) + intercept)`.
+fn calc_area(i1: f64, i2: f64, slope: f64, intercept: f64) -> f64 {
+    (i2 - i1) * (0.5 * slope * (i2 + i1) + intercept)
+}
+
+/// Accumulate the trapezoidal area of the segment `(start0,start1)→(stop0,stop1)`
+/// into the per-radial-bin `buffer` — port of `_integrate1d`. `dim0` (radial,
+/// in bin units) drives the binning; `dim1` (azimuth) sets the line height. The
+/// buffer is f32 storage but each contribution is computed in f64 and added as
+/// `(old as f64 + area) as f32`, matching C's `float += double`.
+fn integrate1d(buffer: &mut [DataT], start0: f64, start1: f64, stop0: f64, stop1: f64) {
+    if stop0 == start0 {
+        // slope is infinite, area is null: no change to the buffer.
+        return;
+    }
+    let bs = buffer.len() as i64;
+    let istart0 = start0.floor() as i64;
+    let istop0 = stop0.floor() as i64;
+    let slope = (stop1 - start1) / (stop0 - start0);
+    let intercept = start1 - slope * start0;
+
+    let mut acc = |i: i64, v: f64| {
+        let b = &mut buffer[i as usize];
+        *b = (*b as f64 + v) as DataT;
+    };
+
+    if bs > istop0 && istop0 == istart0 && istart0 >= 0 {
+        acc(istart0, calc_area(start0, stop0, slope, intercept));
+    } else if stop0 > start0 {
+        if (0.0..bs as f64).contains(&start0) {
+            acc(
+                istart0,
+                calc_area(start0, (start0 + 1.0).floor(), slope, intercept),
+            );
+        }
+        for i in (istart0 + 1).max(0)..istop0.min(bs) {
+            acc(i, calc_area(i as f64, (i + 1) as f64, slope, intercept));
+        }
+        if stop0 < bs as f64 && stop0 >= 0.0 {
+            acc(istop0, calc_area(istop0 as f64, stop0, slope, intercept));
+        }
+    } else {
+        if (0.0..bs as f64).contains(&start0) {
+            acc(istart0, calc_area(start0, istart0 as f64, slope, intercept));
+        }
+        let bound = (stop0.floor() as i64).max(-1);
+        let mut i = istart0.min(bs) - 1;
+        while i > bound {
+            acc(i, calc_area((i + 1) as f64, i as f64, slope, intercept));
+            i -= 1;
+        }
+        if stop0 < bs as f64 && stop0 >= 0.0 {
+            acc(
+                istop0,
+                calc_area((stop0 + 1.0).floor(), stop0, slope, intercept),
+            );
+        }
+    }
+}
+
+/// Radial boundaries for the full-split path: the `(pos0_min, pos0_maxin)` fold
+/// of `calc_boundaries` over the min/max corner radial of every unmasked pixel.
+/// The azimuthal bounds are not computed here — the 1D LUT only checks them when
+/// an explicit `pos1_range` is given, which this path does not support yet.
+/// `allow_pos0_neg = false` clamps both ends to `>= 0`. The `±INF` seed yields
+/// the same fold as pyFAI's "seed with the first unmasked corner".
+fn calc_boundaries_full_1d(
+    corners: &[PositionT],
+    mask: Option<&[i8]>,
+    allow_pos0_neg: bool,
+) -> (PositionT, PositionT) {
+    let size = corners.len() / 8;
+    let mut pos0_min = PositionT::INFINITY;
+    let mut pos0_max = PositionT::NEG_INFINITY;
+    for idx in 0..size {
+        if let Some(m) = mask {
+            if m[idx] != 0 {
+                continue;
+            }
+        }
+        let base = idx * 8;
+        let (r0, r1, r2, r3) = (
+            corners[base],
+            corners[base + 2],
+            corners[base + 4],
+            corners[base + 6],
+        );
+        let mn = min4(r0, r1, r2, r3);
+        let mx = max4(r0, r1, r2, r3);
+        if mx > pos0_max {
+            pos0_max = mx;
+        }
+        if mn < pos0_min {
+            pos0_min = mn;
+        }
+    }
+    if !allow_pos0_neg {
+        pos0_min = pos0_min.max(0.0);
+        pos0_max = pos0_max.max(0.0);
+    }
+    (pos0_min, pos0_max)
+}
+
+/// Build the full-split CSR matrix and (unscaled) bin centers — port of
+/// `FullSplitCSR_1d.__init__` + `FullSplitIntegrator.calc_lut_1d`. `corners` is
+/// the `(npix, 4, 2)` corner array flattened C-order — dim 0 radial (unscaled),
+/// dim 1 azimuth (chi, radians) — upcast to f64 before this call (pyFAI stores
+/// it as `position_d`). Masked pixels (`mask[i] != 0`) are skipped. A pixel
+/// confined to one bin gets coef 1.0; a split pixel's coefficients are its
+/// per-bin trapezoidal overlap normalized to sum to 1 (computed in f64, downcast
+/// to f32). For the standard radial units this path is invoked with
+/// `chi_disc_at_pi = true`, `pos1_period = 2π`, `allow_pos0_neg = false`.
+pub fn build_full_csr_1d(
+    corners: &[PositionT],
+    mask: Option<&[i8]>,
+    bins: usize,
+    allow_pos0_neg: bool,
+    chi_disc_at_pi: bool,
+    pos1_period: PositionT,
+) -> (Csr, Vec<PositionT>) {
+    assert!(bins >= 1, "bins must be >= 1");
+    assert_eq!(
+        corners.len() % 8,
+        0,
+        "corners must be (npix, 4, 2) flattened"
+    );
+    let size = corners.len() / 8;
+    if let Some(m) = mask {
+        assert_eq!(m.len(), size, "mask length mismatch");
+    }
+
+    let (pos0_min, pos0_maxin) = calc_boundaries_full_1d(corners, mask, allow_pos0_neg);
+    let pos0_max = calc_upper_bound(pos0_maxin);
+    let delta = (pos0_max - pos0_min) / (bins as PositionT);
+
+    let mut bin_idx: Vec<Vec<IndexT>> = vec![Vec::new(); bins];
+    let mut bin_coef: Vec<Vec<DataT>> = vec![Vec::new(); bins];
+    let mut buffer = vec![0.0 as DataT; bins];
+    let bins_i = bins as i64;
+
+    for idx in 0..size {
+        if let Some(m) = mask {
+            if m[idx] != 0 {
+                continue;
+            }
+        }
+        let base = idx * 8;
+        let mut v8 = [
+            [corners[base], corners[base + 1]],
+            [corners[base + 2], corners[base + 3]],
+            [corners[base + 4], corners[base + 5]],
+            [corners[base + 6], corners[base + 7]],
+        ];
+        recenter(&mut v8, pos1_period, chi_disc_at_pi);
+
+        // To bin space (radial); azimuth carried through for the line heights.
+        let a0 = (v8[0][0] - pos0_min) / delta;
+        let a1 = v8[0][1];
+        let b0 = (v8[1][0] - pos0_min) / delta;
+        let b1 = v8[1][1];
+        let c0 = (v8[2][0] - pos0_min) / delta;
+        let c1 = v8[2][1];
+        let d0 = (v8[3][0] - pos0_min) / delta;
+        let d1 = v8[3][1];
+
+        let min0 = min4(a0, b0, c0, d0);
+        let max0 = max4(a0, b0, c0, d0);
+        if max0 < 0.0 || min0 >= bins as f64 {
+            continue;
+        }
+        // pos1_range is None for this path -> no azimuthal range rejection.
+
+        let mut bin0_min = min0.floor() as i64;
+        let mut bin0_max = max0.floor() as i64;
+
+        let i = idx as IndexT;
+        if bin0_min == bin0_max {
+            let b = bin0_min as usize;
+            bin_idx[b].push(i);
+            bin_coef[b].push(1.0);
+        } else {
+            bin0_min = bin0_min.max(0);
+            bin0_max = (bin0_max + 1).min(bins_i);
+
+            integrate1d(&mut buffer, a0, a1, b0, b1); // A-B
+            integrate1d(&mut buffer, b0, b1, c0, c1); // B-C
+            integrate1d(&mut buffer, c0, c1, d0, d1); // C-D
+            integrate1d(&mut buffer, d0, d1, a0, a1); // D-A
+
+            let mut sum_area = 0.0f64;
+            for b in bin0_min..bin0_max {
+                sum_area += buffer[b as usize] as f64;
+            }
+            let inv_area = 1.0 / sum_area;
+            for b in bin0_min..bin0_max {
+                let bu = b as usize;
+                bin_idx[bu].push(i);
+                bin_coef[bu].push((buffer[bu] as f64 * inv_area) as DataT);
+            }
+            for b in bin0_min..bin0_max {
+                buffer[b as usize] = 0.0;
+            }
+        }
+    }
 
     let bin_centers = numpy_linspace(pos0_min + 0.5 * delta, pos0_max - 0.5 * delta, bins);
-    (
-        Csr {
-            data,
-            indices,
-            indptr,
-        },
-        bin_centers,
-    )
+    (flatten_csr(&bin_idx, &bin_coef), bin_centers)
 }
 
 /// Apply a CSR matrix to preprocessed rows — port of `CsrIntegrator.
@@ -334,6 +636,47 @@ mod tests {
         let (csr, _) = build_bbox_csr_1d(&pos0, Some(&delta), None, 10, false);
         let s: f32 = csr.data.iter().sum();
         assert!((s - 1.0).abs() < 1e-6, "split coefs sum to ~1, got {s}");
+    }
+
+    /// Two pixels as a flat `(2, 4, 2)` corner array: pixel 0 is radially tight
+    /// (one bin); pixel 1 is a rectangle spanning radial `[0, 4]` (splits).
+    fn two_pixel_corners() -> Vec<f64> {
+        vec![
+            // pixel 0: A,B,C,D all at radial 0.5 -> single bin.
+            0.5, 0.0, 0.5, 0.1, 0.5, 0.1, 0.5, 0.0, //
+            // pixel 1: rectangle radial in [0,4], chi in [0,0.5].
+            0.0, 0.0, 4.0, 0.0, 4.0, 0.5, 0.0, 0.5,
+        ]
+    }
+
+    #[test]
+    fn full_split_single_bin_pixel_keeps_unit_coef() {
+        let corners = two_pixel_corners();
+        let (csr, _) = build_full_csr_1d(&corners, None, 8, false, true, std::f64::consts::TAU);
+        // Pixel 0 stays within one bin -> exactly one entry, coef 1.0.
+        let p0: Vec<f32> = csr
+            .indices
+            .iter()
+            .zip(&csr.data)
+            .filter(|(&i, _)| i == 0)
+            .map(|(_, &c)| c)
+            .collect();
+        assert_eq!(p0, vec![1.0]);
+    }
+
+    #[test]
+    fn full_split_coefs_sum_to_one() {
+        let corners = two_pixel_corners();
+        let (csr, _) = build_full_csr_1d(&corners, None, 8, false, true, std::f64::consts::TAU);
+        // The split pixel's overlap coefficients are normalized to sum to 1.
+        let s: f32 = csr
+            .indices
+            .iter()
+            .zip(&csr.data)
+            .filter(|(&i, _)| i == 1)
+            .map(|(_, &c)| c)
+            .sum();
+        assert!((s - 1.0).abs() < 1e-5, "split coefs sum to ~1, got {s}");
     }
 
     #[test]
