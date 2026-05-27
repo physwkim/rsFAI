@@ -462,6 +462,25 @@ def main():
                 "correct_solid_angle": True,
                 "polarization_factor": 0.99,
             },
+            {
+                # 2D full pixel splitting -> CSR, Poisson: builds the 2D LUT
+                # (splitpixel_common.calc_lut_2d) by recentering each pixel's 4
+                # corners (_recenter, chi discontinuity), clipping into a small box
+                # and sweeping the 4 edges with _integrate2d (whose _calc_area
+                # fused type resolves per call site — f64 for same-unit/subsection
+                # segments, f32 for segments bounded by the float P local). The
+                # apply is the same CsrIntegrator.integrate_ng as 2D bbox. Unlike
+                # bbox-2D, common.py forwards chiDiscAtPi (True) and pos1_period =
+                # unit1.period (360, applied to radian azimuths — a pyFAI quirk).
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("full", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
         ],
     )
     print("done.")
