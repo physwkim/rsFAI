@@ -534,6 +534,7 @@ dependencies = [
  "opencl3",
  "rsfai-core",
  "rsfai-integrate",
+ "serde",
  "serde_json",
 ]
 

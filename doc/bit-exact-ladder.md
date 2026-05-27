@@ -140,6 +140,33 @@ Bitwise-exact is the *target*, achieved whenever Tier B is bitwise-exact
 (matching libm). When Tier B diverges by N ULP, Tier C inherits a bounded,
 documented divergence. Tier C is the integration test; **Tier A is the gate.**
 
+### Tier D — OpenCL/GPU backend (Phase 2, tolerance-gated)
+
+The `rsfai-opencl` crate targets pyFAI's **OpenCL** integrators, not the cython
+kernels. On the target device (Apple M4 Pro GPU) there is no f64
+(`CL_DEVICE_DOUBLE_FP_CONFIG == 0`), so pyFAI accumulates in a **doubleword**
+(two-f32 Kahan) representation and the work-group reductions reorder adds — so
+end-to-end bitwise identity is **not** promised by construction; the gate is
+**relative error `<= 1e-6`** (`golden/gen_golden_opencl.py` → `opencl_params.json`).
+
+Fidelity strategy: rather than re-implement the kernels (and risk silent
+arithmetic drift), the backend **reuses pyFAI's own MIT-licensed `.cl` kernels**
+— the same files, same concatenation order, same `-D` flags — and ports only the
+host orchestration (`memset_ng` → `corrections4a` → `csr_integrate4`) to Rust via
+`opencl3`. The exact scalar kernel arguments pyFAI used are captured from its live
+`cl_kernel_args` into `opencl_params.json` and replayed, so nothing is guessed.
+
+Because the kernel, device, compiler, and work-group size are identical, the GPU
+arithmetic — including the `csr_integrate4` tree reduction (`wg = wg_min = 32` on
+this device; `csr_integrate4_single` is only taken when `CL_KERNEL_WORK_GROUP_SIZE
+== 1`, the Apple *CPU* driver) — is deterministic and matches pyFAI's.
+
+**Measured (Pilatus1M, `("no","csr","opencl")`, 1D, Poisson):** all 9 exposed
+fields (`intensity`/`std`/`sem`/`sigma` and the `merged8` signal/variance/
+normalization/count/norm_sq columns) are **bitwise-exact** vs pyFAI's OpenCL
+output. The 1e-6 gate covers the general cross-work-group case; the observed
+divergence is 0.
+
 ## The arithmetic to reproduce (from `regrid_common.pxi`)
 
 - **preproc** (`preproc_value_inplace`, lines 149-237): `signal = data - dark`;
