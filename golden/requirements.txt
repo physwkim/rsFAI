@@ -1,0 +1,9 @@
+# Pinned environment for generating golden datasets (the `daq` conda env,
+# Python 3.14). Installed from ESRF prebuilt cp314 macOS-arm64 wheels — see the
+# provenance caveat in doc/bit-exact-ladder.md. Regenerate with:
+#   OMP_NUM_THREADS=1 /Users/stevek/mamba/envs/daq/bin/python golden/gen_golden.py
+pyFAI==2026.5.0
+fabio==2025.10.0
+silx==3.0.1
+scipy==1.17.1
+numpy==2.4.3

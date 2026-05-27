@@ -1,0 +1,145 @@
+{
+  "dataset": "Pilatus1M__no-histogram-cython__q_nmm1__npt1000__errnone",
+  "detector_name": "Pilatus1M",
+  "pyfai_version": "2026.5.0",
+  "numpy_version": "2.4.3",
+  "platform": "macOS-26.5-arm64-arm-64bit-Mach-O",
+  "omp_num_threads": "1",
+  "provenance_note": "pyFAI installed from ESRF prebuilt cp314 macOS-arm64 wheel (not a local source build); see doc/bit-exact-ladder.md",
+  "config": {
+    "npt": 1000,
+    "unit": "q_nm^-1",
+    "method": [
+      "no",
+      "histogram",
+      "cython"
+    ],
+    "error_model": null,
+    "error_model_code": 0,
+    "correct_solid_angle": true,
+    "polarization_factor": null,
+    "normalization_factor": 1.0,
+    "radial_range": null,
+    "azimuth_range": null
+  },
+  "geometry": {
+    "dist": 1.58323111834,
+    "poni1": 0.0334170169115,
+    "poni2": 0.0412277798782,
+    "rot1": 0.00648735642526,
+    "rot2": 0.00755810191106,
+    "rot3": 4.12987220385e-08,
+    "wavelength": 1e-10
+  },
+  "detector": {
+    "name": "Pilatus 1M",
+    "pixel1": 0.000172,
+    "pixel2": 0.000172,
+    "shape": [
+      1043,
+      981
+    ]
+  },
+  "ulp_budget": {
+    "pos0_center": 0,
+    "chi_center": 0
+  },
+  "arrays": {
+    "image": {
+      "dtype": "int32",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "mask": {
+      "dtype": "int8",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "solidangle": {
+      "dtype": "float64",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "pos0_center": {
+      "dtype": "float64",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "pos0_delta": {
+      "dtype": "float64",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "chi_center": {
+      "dtype": "float64",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "chi_delta": {
+      "dtype": "float64",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "corners": {
+      "dtype": "float32",
+      "shape": [
+        1043,
+        981,
+        4,
+        2
+      ]
+    },
+    "preproc": {
+      "dtype": "float32",
+      "shape": [
+        1043,
+        981,
+        4
+      ]
+    },
+    "out_radial": {
+      "dtype": "float64",
+      "shape": [
+        1000
+      ]
+    },
+    "out_intensity": {
+      "dtype": "float32",
+      "shape": [
+        1000
+      ]
+    },
+    "out_count": {
+      "dtype": "float32",
+      "shape": [
+        1000
+      ]
+    },
+    "out_sum_signal": {
+      "dtype": "float32",
+      "shape": [
+        1000
+      ]
+    },
+    "out_sum_normalization": {
+      "dtype": "float32",
+      "shape": [
+        1000
+      ]
+    }
+  }
+}

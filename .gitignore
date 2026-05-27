@@ -1,0 +1,21 @@
+/target
+**/*.rs.bk
+Cargo.lock.orig
+
+# Python build artifacts from maturin / rsfai-py
+__pycache__/
+*.pyc
+*.so
+.venv/
+
+# Golden datasets: per-pixel arrays (image, mask, positions, corners, preproc,
+# corrections, CSR matrix) are large (~100 MB/config) and fully regenerable by
+# golden/gen_golden.py (deterministic under OMP_NUM_THREADS=1). We commit only
+# the small golden OUTPUT curves (out_*.npy, KB each), the manifest, and the
+# .poni, so the repo stays lean. Regenerate the rest locally; git-LFS is the
+# eventual home once a remote is configured (see golden/README.md).
+golden/datasets/**/*.npy
+!golden/datasets/**/out_*.npy
+golden/datasets/**/*.edf
+golden/datasets/**/*.cbf
+golden/datasets/**/*.h5
