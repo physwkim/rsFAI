@@ -17,8 +17,8 @@ use rsfai_core::compare::{compare_f32, compare_f64};
 use rsfai_core::dtype::ErrorModel;
 use rsfai_core::golden::{load_manifest, load_npy_f32, load_npy_f64, load_npy_i32, load_npy_i8};
 use rsfai_integrate::{
-    build_bbox_csr_1d, build_bbox_csr_2d, build_full_csr_1d, csr_integrate1d, csr_integrate2d,
-    Bbox2dBounds, Csr,
+    build_bbox_csr_1d, build_bbox_csr_2d, build_full_csr_1d, build_full_csr_2d, csr_integrate1d,
+    csr_integrate2d, Bbox2dBounds, Csr,
 };
 
 fn datasets_root() -> PathBuf {
@@ -522,5 +522,188 @@ fn bbox_csr_2d_build_and_apply_bit_exact() {
     assert!(
         checked > 0,
         "no 2D bbox-csr golden datasets found; run golden/gen_golden.py"
+    );
+}
+
+/// Tier-A validation of the 2D full pixel-splitting CSR path: the built 2D LUT
+/// (`build_full_csr_2d` ← `splitpixel_common.calc_lut_2d`, sweeping each pixel's
+/// recentered corners with `_integrate2d`) and the applied output
+/// (`csr_integrate2d`) must be bit-exact vs golden, fed the identical corner array
+/// pyFAI's `FullSplitIntegrator` received (`corners`, f32 upcast to f64 = the
+/// engine's `pos`). The build is checked against the golden `csr_*`; the apply is
+/// fed the *golden* CSR + *golden* preproc rows. Unlike the bbox-2D and 1D-full
+/// paths, `common.py` forwards `chiDiscAtPi` and `pos1_period = unit1.period`
+/// (360) to `FullSplitCSR_2d`; both come from the manifest.
+#[test]
+fn full_csr_2d_build_and_apply_bit_exact() {
+    let mut checked = 0usize;
+    for dir in dataset_dirs() {
+        let manifest = load_manifest(dir.join("manifest.json")).expect("manifest");
+        let cfg = &manifest.config;
+
+        // 2D full-split CSR path: dim == 2, method == ("full","csr",_).
+        if cfg["dim"].as_u64().unwrap_or(1) != 2 {
+            continue;
+        }
+        let is_full_csr = cfg["method"]
+            .as_array()
+            .map(|m| m.len() >= 3 && m[0].as_str() == Some("full") && m[1].as_str() == Some("csr"))
+            .unwrap_or(false);
+        if !is_full_csr {
+            continue;
+        }
+
+        let npt_rad = cfg["npt_rad"].as_u64().expect("npt_rad") as usize;
+        let npt_azim = cfg["npt_azim"].as_u64().expect("npt_azim") as usize;
+        let unit_scale = cfg["unit_scale"].as_f64().expect("unit_scale");
+        let azim_scale = cfg["azim_scale"].as_f64().expect("azim_scale");
+        let pos1_period = cfg["pos1_period"].as_f64().expect("pos1_period");
+        let chi_disc_at_pi = cfg["chi_disc_at_pi"].as_bool().unwrap_or(true);
+        let error_model = error_model_from_code(cfg["error_model_code"].as_i64().unwrap_or(0));
+        // Standard radial unit (q) cannot be negative -> allow_pos0_neg=false.
+        let allow_pos0_neg = false;
+
+        // --- Build: the corner array pyFAI's FullSplitIntegrator received ---
+        let corners = corners_f64(&dir);
+        let mask = load_npy_i8(dir.join("mask.npy"))
+            .expect("mask")
+            .as_slice()
+            .expect("contiguous")
+            .to_vec();
+
+        let (built, bin_centers0, bin_centers1) = build_full_csr_2d(
+            &corners,
+            Some(&mask),
+            (npt_rad, npt_azim),
+            allow_pos0_neg,
+            chi_disc_at_pi,
+            pos1_period,
+        );
+
+        let g_data = vec_f32(&dir, "csr_data.npy");
+        let g_indices = vec_i32(&dir, "csr_indices.npy");
+        let g_indptr = vec_i32(&dir, "csr_indptr.npy");
+
+        let r_data = compare_f32(&built.data, &g_data);
+        let indices_eq = built.indices == g_indices;
+        let indptr_eq = built.indptr == g_indptr;
+        eprintln!(
+            "{}: 2D full csr nnz={} (golden {}) | data mism={} | indices eq={} | indptr eq={}",
+            manifest.dataset,
+            built.data.len(),
+            g_data.len(),
+            r_data.bit_mismatches,
+            indices_eq,
+            indptr_eq,
+        );
+        assert!(indptr_eq, "{}: csr_indptr mismatch", manifest.dataset);
+        assert!(indices_eq, "{}: csr_indices mismatch", manifest.dataset);
+        assert!(
+            r_data.is_bit_exact(),
+            "{}: csr_data not bit-exact: {r_data:?}",
+            manifest.dataset
+        );
+
+        // --- Apply: feed the GOLDEN CSR + GOLDEN preproc rows ---
+        let golden_csr = Csr {
+            data: g_data,
+            indices: g_indices,
+            indptr: g_indptr,
+        };
+        let prep = vec_f32(&dir, "preproc.npy");
+        let out = csr_integrate2d(
+            &golden_csr,
+            &prep,
+            bin_centers0,
+            bin_centers1,
+            error_model,
+            0.0,
+        );
+
+        let scaled_rad: Vec<f64> = out.radial.iter().map(|&p| p * unit_scale).collect();
+        let g_radial = vec_f64(&dir, "out_radial.npy");
+        let r_radial = compare_f64(&scaled_rad, &g_radial);
+        assert!(
+            r_radial.is_bit_exact(),
+            "{}: out_radial not bit-exact: {r_radial:?}",
+            manifest.dataset
+        );
+        let scaled_azim: Vec<f64> = out.azimuthal.iter().map(|&p| p * azim_scale).collect();
+        let g_azim = vec_f64(&dir, "out_azimuthal.npy");
+        let r_azim = compare_f64(&scaled_azim, &g_azim);
+        assert!(
+            r_azim.is_bit_exact(),
+            "{}: out_azimuthal not bit-exact: {r_azim:?}",
+            manifest.dataset
+        );
+
+        let check_f64 = |file: &str, actual: &[f64], required: bool| -> bool {
+            let p = dir.join(file);
+            if !p.exists() {
+                assert!(!required, "{}: missing required {file}", manifest.dataset);
+                return false;
+            }
+            let g = load_npy_f64(&p)
+                .unwrap()
+                .as_slice()
+                .expect("contiguous")
+                .to_vec();
+            let r = compare_f64(actual, &g);
+            assert!(
+                r.is_bit_exact(),
+                "{}: {file} not bit-exact: {r:?}",
+                manifest.dataset
+            );
+            true
+        };
+        let check_f32 = |file: &str, actual: &[f32], required: bool| -> bool {
+            let p = dir.join(file);
+            if !p.exists() {
+                assert!(!required, "{}: missing required {file}", manifest.dataset);
+                return false;
+            }
+            let g = load_npy_f32(&p)
+                .unwrap()
+                .as_slice()
+                .expect("contiguous")
+                .to_vec();
+            let r = compare_f32(actual, &g);
+            assert!(
+                r.is_bit_exact(),
+                "{}: {file} not bit-exact: {r:?}",
+                manifest.dataset
+            );
+            true
+        };
+
+        check_f64("out_sum_signal.npy", &out.signal, true);
+        check_f64("out_sum_normalization.npy", &out.normalization, true);
+        check_f64("out_count.npy", &out.count, true);
+        check_f32("out_intensity.npy", &out.intensity, true);
+
+        // Variance-family fields: exposed only when do_variance (error_model != No).
+        let mut em_fields = 0;
+        em_fields += i32::from(check_f64("out_sum_variance.npy", &out.variance, false));
+        em_fields += i32::from(check_f64("out_sum_normalization2.npy", &out.norm_sq, false));
+        em_fields += i32::from(check_f32("out_std.npy", &out.std, false));
+        em_fields += i32::from(check_f32("out_sem.npy", &out.sem, false));
+        em_fields += i32::from(check_f32("out_sigma.npy", &out.sigma, false));
+        if error_model != ErrorModel::No {
+            assert!(
+                em_fields > 0,
+                "{}: error-model dataset exposed no variance/std/sem fields to validate",
+                manifest.dataset
+            );
+        }
+
+        eprintln!(
+            "{}: 2D full build + apply all fields bit-exact (radial ulp={}, azim ulp={}, {em_fields} error-model fields)",
+            manifest.dataset, r_radial.max_ulp, r_azim.max_ulp,
+        );
+        checked += 1;
+    }
+    assert!(
+        checked > 0,
+        "no 2D full-csr golden datasets found; run golden/gen_golden.py"
     );
 }

@@ -734,6 +734,366 @@ pub fn build_full_csr_1d(
     (flatten_csr(&bin_idx, &bin_coef), bin_centers)
 }
 
+// ---------------------------------------------------------------------------
+// Full pixel splitting (2D): port of `FullSplitIntegrator.calc_lut_2d`
+// (`ext/splitpixel_common.pyx`) + the corner-based `calc_boundaries` and the
+// `_integrate2d` box clipping in `ext/regrid_common.pxi`. Each pixel
+// quadrilateral is clipped into a small `(w0+1)·(w1+1)` box of relative areas
+// (the four edges swept by `_integrate2d`); the per-cell area normalized by the
+// box total gives the CSR coefficients. Output bin index is `bin0·bins1 + bin1`
+// (radial-major), applied by the same [`csr_integrate2d`] as the bbox path.
+
+/// Limit `value` to `[min_val, max_val]` — port of `_clip`.
+fn clip(value: f64, min_val: f64, max_val: f64) -> f64 {
+    if value < min_val {
+        min_val
+    } else if value > max_val {
+        max_val
+    } else {
+        value
+    }
+}
+
+/// 2D full-split boundaries — port of the corner-based `calc_boundaries`
+/// (`splitpixel_common.pyx`): folds the min/max corner of every unmasked pixel in
+/// both radial (dim 0) and azimuthal (dim 1), clamps the radial axis to `>= 0`
+/// when `!allow_pos0_neg`, and (when `pos1_period > 0`) clips the azimuthal axis
+/// to `[-π, π]` (`chi_disc_at_pi`) or `[0, 2π]` with **f32 π** (`(2-chiDiscAtPi)·pi`
+/// evaluated in f32 then widened). Returns `(pos0_min, pos0_maxin, pos1_min,
+/// pos1_maxin)`; the caller applies [`calc_upper_bound`] to the `*_maxin` values.
+/// Verified bit-exact against the engine's boundary attributes.
+fn calc_boundaries_full_2d(
+    corners: &[PositionT],
+    mask: Option<&[i8]>,
+    allow_pos0_neg: bool,
+    chi_disc_at_pi: bool,
+    pos1_period: PositionT,
+) -> (PositionT, PositionT, PositionT, PositionT) {
+    let size = corners.len() / 8;
+    let mut pos0_min = PositionT::INFINITY;
+    let mut pos0_max = PositionT::NEG_INFINITY;
+    let mut pos1_min = PositionT::INFINITY;
+    let mut pos1_max = PositionT::NEG_INFINITY;
+    for idx in 0..size {
+        if let Some(m) = mask {
+            if m[idx] != 0 {
+                continue;
+            }
+        }
+        let base = idx * 8;
+        let (r0, r1, r2, r3) = (
+            corners[base],
+            corners[base + 2],
+            corners[base + 4],
+            corners[base + 6],
+        );
+        let (z0, z1, z2, z3) = (
+            corners[base + 1],
+            corners[base + 3],
+            corners[base + 5],
+            corners[base + 7],
+        );
+        pos0_max = pos0_max.max(max4(r0, r1, r2, r3));
+        pos0_min = pos0_min.min(min4(r0, r1, r2, r3));
+        pos1_max = pos1_max.max(max4(z0, z1, z2, z3));
+        pos1_min = pos1_min.min(min4(z0, z1, z2, z3));
+    }
+    if !allow_pos0_neg {
+        pos0_min = pos0_min.max(0.0);
+        pos0_max = pos0_max.max(0.0);
+    }
+    if pos1_period > 0.0 {
+        let cd: i32 = if chi_disc_at_pi { 1 } else { 0 };
+        let pi32 = std::f32::consts::PI;
+        let max_bound = ((2 - cd) as f32 * pi32) as PositionT;
+        let min_bound = (-(cd as f32) * pi32) as PositionT;
+        pos1_max = pos1_max.min(max_bound);
+        pos1_min = pos1_min.max(min_bound);
+    }
+    (pos0_min, pos0_max, pos1_min, pos1_max)
+}
+
+/// DOUBLE (`fuse_1`) specialization of `_calc_area`: all operands f64. Used for
+/// the same-unit `(start0, stop0)` and subsection `((double)i, (double)(i±1))`
+/// segments, whose operands are `floating` (f64).
+fn calc_area_2d_double(i1: f64, i2: f64, slope: f32, intercept: f32) -> f32 {
+    calc_area(i1, i2, slope as f64, intercept as f64) as f32
+}
+
+/// FLOAT (`fuse_0`) specialization of `_calc_area`, used for the segments bounded
+/// by the f32 `P` local (the dP and Pn→B segments) — Cython resolves the fused
+/// `_calc_area` per call site, and a call with one `float` operand selects the
+/// float specialization. Narrow `i1`,`i2` to f32; `(I2-I1)` and `(I2+I1)` are
+/// computed in f32 (both operands float), but `0.5·slope`, the products and
+/// `+intercept` promote to f64 (the `0.5` C double literal), with a final narrow
+/// to f32. Getting this fused resolution wrong is a ~110-ULP systematic error on
+/// ~19% of coefficients (see the rsfai-port memory note).
+fn calc_area_2d_float(i1: f64, i2: f64, slope: f32, intercept: f32) -> f32 {
+    let i1f = i1 as f32;
+    let i2f = i2 as f32;
+    let sub = i2f - i1f;
+    let s = i2f + i1f;
+    let inner = 0.5 * slope as f64 * s as f64 + intercept as f64;
+    (sub as f64 * inner) as f32
+}
+
+/// Accumulate the area of the segment `(start0,start1)→(stop0,stop1)` into the 2D
+/// `box_buf` (row-major, `shape1` columns) — port of `_integrate2d`. The float
+/// locals (`slope`, `intercept`, `P`, `dP`, the spread amounts) are f32 while the
+/// inputs are f64; the segment area is f64 for same-unit/subsection segments and
+/// f32 for segments bounded by the float `P` (see [`calc_area_2d_float`]). Each
+/// contribution `box[i,h] += copysign(dA, seg)` promotes the cell to f64, adds the
+/// libc-double `copysign` result, and narrows once — not a pure-f32 add.
+fn integrate2d(
+    box_buf: &mut [DataT],
+    shape1: usize,
+    start0: f64,
+    start1: f64,
+    stop0: f64,
+    stop1: f64,
+) {
+    if start0 == stop0 {
+        return;
+    }
+    let slope = ((stop1 - start1) / (stop0 - start0)) as f32;
+    let intercept = (stop1 - slope as f64 * stop0) as f32;
+
+    // Distribute |seg| across the azimuthal columns `h` of one box row, in chunks
+    // of `da` (the first chunk capped at the remaining area).
+    let mut spread = |row: i64, seg: f32, da0: f64| {
+        if seg == 0.0 {
+            return;
+        }
+        let mut abs_area = seg.abs();
+        let mut da = da0 as f32;
+        let mut h: usize = 0;
+        while abs_area > 0.0 && h < shape1 {
+            if da > abs_area {
+                da = abs_area;
+                abs_area = -1.0;
+            }
+            let cell = row as usize * shape1 + h;
+            box_buf[cell] = (box_buf[cell] as f64 + (da as f64).copysign(seg as f64)) as DataT;
+            abs_area -= da;
+            h += 1;
+        }
+    };
+
+    if start0 < stop0 {
+        // Positive contribution.
+        let p = start0.ceil() as f32;
+        let dp = (p as f64 - start0) as f32;
+        if p as f64 > stop0 {
+            // start0 and stop0 in the same unit.
+            spread(
+                start0 as i64,
+                calc_area_2d_double(start0, stop0, slope, intercept),
+                stop0 - start0,
+            );
+        } else {
+            if dp > 0.0 {
+                spread(
+                    p as i64 - 1,
+                    calc_area_2d_float(start0, p as f64, slope, intercept),
+                    dp as f64,
+                );
+            }
+            // Subsection P1->Pn (whole-unit segments).
+            let lo = (p as f64).floor() as i64;
+            let hi = stop0.floor() as i64;
+            for i in lo..hi {
+                spread(
+                    i,
+                    calc_area_2d_double(i as f64, (i + 1) as f64, slope, intercept),
+                    1.0,
+                );
+            }
+            // Section Pn->B.
+            let p2 = stop0.floor() as f32;
+            let dp2 = (stop0 - p2 as f64) as f32;
+            if dp2 > 0.0 {
+                spread(
+                    p2 as i64,
+                    calc_area_2d_float(p2 as f64, stop0, slope, intercept),
+                    (dp2 as f64).abs(),
+                );
+            }
+        }
+    } else {
+        // Negative contribution (start0 > stop0; start0 == stop0 returned above).
+        let p = start0.floor() as f32;
+        if stop0 > p as f64 {
+            spread(
+                start0 as i64,
+                calc_area_2d_double(start0, stop0, slope, intercept),
+                start0 - stop0,
+            );
+        } else {
+            let dp = (p as f64 - start0) as f32;
+            if dp < 0.0 {
+                spread(
+                    p as i64,
+                    calc_area_2d_float(start0, p as f64, slope, intercept),
+                    (dp as f64).abs(),
+                );
+            }
+            // Subsection P1->Pn, descending.
+            let mut i = start0 as i64;
+            let stop_excl = stop0.ceil() as i64;
+            while i > stop_excl {
+                spread(
+                    i - 1,
+                    calc_area_2d_double(i as f64, (i - 1) as f64, slope, intercept),
+                    1.0,
+                );
+                i -= 1;
+            }
+            // Section Pn->B.
+            let p2 = stop0.ceil() as f32;
+            let dp2 = (stop0 - p2 as f64) as f32;
+            if dp2 < 0.0 {
+                spread(
+                    stop0 as i64,
+                    calc_area_2d_float(p2 as f64, stop0, slope, intercept),
+                    (dp2 as f64).abs(),
+                );
+            }
+        }
+    }
+}
+
+/// Build the 2D full-split CSR matrix and the (unscaled) radial / radian
+/// azimuthal bin centers — port of `FullSplitIntegrator.__init__` + `calc_lut_2d`
+/// (`ext/splitpixel_common.pyx`). `corners` is the `(npix, 4, 2)` corner array
+/// flattened C-order (dim 0 radial unscaled, dim 1 chi radians), upcast to f64.
+/// Masked pixels (`mask[i] != 0`) are skipped. `bins` is `(radial, azimuthal)`.
+/// Each pixel is clipped into a small box, swept by [`integrate2d`], normalized so
+/// its coefficients sum to 1 (computed in f64, downcast to f32); the output bin
+/// index is `bin0·bins1 + bin1` (radial-major). Unlike the bbox-2D and full-1D
+/// paths, `common.py` **forwards** `chiDiscAtPi` (default `true`) and
+/// `pos1_period = unit1.period` (360, degrees — applied to radian azimuths, a
+/// pyFAI quirk replicated here) to this path. Returns `(csr, bin_centers0,
+/// bin_centers1)`.
+pub fn build_full_csr_2d(
+    corners: &[PositionT],
+    mask: Option<&[i8]>,
+    bins: (usize, usize),
+    allow_pos0_neg: bool,
+    chi_disc_at_pi: bool,
+    pos1_period: PositionT,
+) -> (Csr, Vec<PositionT>, Vec<PositionT>) {
+    let (bins0, bins1) = bins;
+    assert!(bins0 >= 1 && bins1 >= 1, "bins must be >= 1 in each dim");
+    assert_eq!(
+        corners.len() % 8,
+        0,
+        "corners must be (npix, 4, 2) flattened"
+    );
+    let size = corners.len() / 8;
+    if let Some(m) = mask {
+        assert_eq!(m.len(), size, "mask length mismatch");
+    }
+
+    let (pos0_min, pos0_maxin, pos1_min, pos1_maxin) =
+        calc_boundaries_full_2d(corners, mask, allow_pos0_neg, chi_disc_at_pi, pos1_period);
+    let pos0_max = calc_upper_bound(pos0_maxin);
+    let pos1_max = calc_upper_bound(pos1_maxin);
+    let delta0 = (pos0_max - pos0_min) / (bins0 as PositionT);
+    let delta1 = (pos1_max - pos1_min) / (bins1 as PositionT);
+
+    let n_out = bins0 * bins1;
+    let mut bin_idx: Vec<Vec<IndexT>> = vec![Vec::new(); n_out];
+    let mut bin_coef: Vec<Vec<DataT>> = vec![Vec::new(); n_out];
+    let b1i = bins1 as i64;
+
+    for idx in 0..size {
+        if let Some(m) = mask {
+            if m[idx] != 0 {
+                continue;
+            }
+        }
+        let base = idx * 8;
+        let mut v8 = [
+            [corners[base], corners[base + 1]],
+            [corners[base + 2], corners[base + 3]],
+            [corners[base + 4], corners[base + 5]],
+            [corners[base + 6], corners[base + 7]],
+        ];
+        recenter(&mut v8, pos1_period, chi_disc_at_pi);
+        let (mut a0, mut a1) = (v8[0][0], v8[0][1]);
+        let (mut b0, mut b1) = (v8[1][0], v8[1][1]);
+        let (mut c0, mut c1) = (v8[2][0], v8[2][1]);
+        let (mut d0, mut d1) = (v8[3][0], v8[3][1]);
+
+        let min0 = min4(a0, b0, c0, d0);
+        let max0 = max4(a0, b0, c0, d0);
+        let min1 = min4(a1, b1, c1, d1);
+        let max1 = max4(a1, b1, c1, d1);
+        if max0 < pos0_min || min0 > pos0_maxin || max1 < pos1_min || min1 >= pos1_max {
+            continue;
+        }
+
+        // Switch to bin space (radial dim 0, azimuthal dim 1), clipping into range.
+        a0 = (clip(a0, pos0_min, pos0_maxin) - pos0_min) / delta0;
+        a1 = (clip(a1, pos1_min, pos1_maxin) - pos1_min) / delta1;
+        b0 = (clip(b0, pos0_min, pos0_maxin) - pos0_min) / delta0;
+        b1 = (clip(b1, pos1_min, pos1_maxin) - pos1_min) / delta1;
+        c0 = (clip(c0, pos0_min, pos0_maxin) - pos0_min) / delta0;
+        c1 = (clip(c1, pos1_min, pos1_maxin) - pos1_min) / delta1;
+        d0 = (clip(d0, pos0_min, pos0_maxin) - pos0_min) / delta0;
+        d1 = (clip(d1, pos1_min, pos1_maxin) - pos1_min) / delta1;
+
+        let min0 = min4(a0, b0, c0, d0);
+        let max0 = max4(a0, b0, c0, d0);
+        let min1 = min4(a1, b1, c1, d1);
+        let max1 = max4(a1, b1, c1, d1);
+        let foffset0 = min0.floor();
+        let foffset1 = min1.floor();
+        let ioffset0 = foffset0 as i64;
+        let ioffset1 = foffset1 as i64;
+        let w0 = (max0.ceil() - foffset0) as i64;
+        let w1 = (max1.ceil() - foffset1) as i64;
+
+        a0 -= foffset0;
+        a1 -= foffset1;
+        b0 -= foffset0;
+        b1 -= foffset1;
+        c0 -= foffset0;
+        c1 -= foffset1;
+        d0 -= foffset0;
+        d1 -= foffset1;
+
+        let shape1 = (w1 + 1) as usize;
+        let mut box_buf = vec![0.0 as DataT; ((w0 + 1) * (w1 + 1)) as usize];
+        // ABCD is anti-trigonometric order: feed the four edges in turn.
+        integrate2d(&mut box_buf, shape1, a0, a1, b0, b1);
+        integrate2d(&mut box_buf, shape1, b0, b1, c0, c1);
+        integrate2d(&mut box_buf, shape1, c0, c1, d0, d1);
+        integrate2d(&mut box_buf, shape1, d0, d1, a0, a1);
+
+        let mut sum_area = 0.0f64; // position_t
+        for i in 0..w0 {
+            for j in 0..w1 {
+                sum_area += box_buf[(i * (w1 + 1) + j) as usize] as f64;
+            }
+        }
+        let inv_area = 1.0 / sum_area;
+        let pix = idx as IndexT;
+        for i in 0..w0 {
+            for j in 0..w1 {
+                let coef = (box_buf[(i * (w1 + 1) + j) as usize] as f64 * inv_area) as DataT;
+                let b = ((ioffset0 + i) * b1i + ioffset1 + j) as usize;
+                bin_idx[b].push(pix);
+                bin_coef[b].push(coef);
+            }
+        }
+    }
+
+    let bin_centers0 = numpy_linspace(pos0_min + 0.5 * delta0, pos0_max - 0.5 * delta0, bins0);
+    let bin_centers1 = numpy_linspace(pos1_min + 0.5 * delta1, pos1_max - 0.5 * delta1, bins1);
+    (flatten_csr(&bin_idx, &bin_coef), bin_centers0, bin_centers1)
+}
+
 /// The per-bin reduction outputs shared by the 1D and 2D CSR apply — the body of
 /// `CsrIntegrator.integrate_ng` before the dimension-specific packaging. All
 /// vectors are flat, indexed by output bin (length `indptr.len() - 1`). `sum_*`
