@@ -1,14 +1,22 @@
-//! M4 Tier-A validation: the 1D histogram engine [`histogram1d`] must be
-//! **bit-exact** vs pyFAI's golden `Integrate1dtpl` fields, fed the identical
-//! inputs pyFAI binned — the dumped radial array (`pos0_center.npy`) and the
-//! dumped preprocessed rows (`preproc.npy`).
+//! Validation of the 1D/2D histogram engines vs pyFAI's golden
+//! `Integrate1dtpl`/`Integrate2dtpl` fields, fed the identical inputs pyFAI
+//! binned — the dumped radial array (`pos0_center.npy`) and preprocessed rows
+//! (`preproc.npy`).
+//!
+//! The histogram **accumulation** is parallelized with a rayon fold/reduce
+//! (non-deterministic f64 add order), so the accumulator-derived fields
+//! (signal/variance/normalization/count/norm²/intensity/std/sem/sigma) are
+//! **not** bit-exact against the serial golden; they are validated at relative
+//! error `<= REL_TOL` (1e-6). The bin-center **axes** (`out_radial` /
+//! `out_azimuthal`) derive from the order-independent min/max + `linspace`, so
+//! they stay **bit-exact**. See `doc/bit-exact-ladder.md`.
 //!
 //! The integrator bins the **unscaled** radial (`center_array(unit,
 //! scale=False)`) and reports `position * unit.scale`. For `q_nm^-1` the scale
 //! is exactly `1.0`, so `pos0_center.npy` is bit-identical to the engine input
-//! and `out_radial == position`. This test only runs the `("no", "histogram",
-//! ...)` datasets (the histogram engine), all of which use `q_nm^-1` here; a
-//! future non-unit-scale histogram golden would need the scale factor recorded.
+//! and `out_radial == position`. The 1D test only runs the `("no", "histogram",
+//! ...)` datasets, all of which use `q_nm^-1` here; a future non-unit-scale
+//! histogram golden would need the scale factor recorded.
 
 use std::path::PathBuf;
 
@@ -16,6 +24,10 @@ use rsfai_core::compare::{compare_f32, compare_f64};
 use rsfai_core::dtype::ErrorModel;
 use rsfai_core::golden::{load_manifest, load_npy_f32, load_npy_f64, load_npy_i8};
 use rsfai_integrate::{histogram1d, histogram2d, Hist2dOptions};
+
+/// Relative-error gate for the parallel-histogram accumulator fields (the f64
+/// reorder error is ~n·eps ≈ 2e-10, well under this; see the module docs).
+const REL_TOL: f64 = 1e-6;
 
 fn datasets_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../golden/datasets")
@@ -45,7 +57,7 @@ fn error_model_from_code(code: i64) -> ErrorModel {
 }
 
 #[test]
-fn histogram1d_bit_exact() {
+fn histogram1d_within_tolerance() {
     let mut checked = 0usize;
     for dir in dataset_dirs() {
         let manifest = load_manifest(dir.join("manifest.json")).expect("manifest");
@@ -115,10 +127,12 @@ fn histogram1d_bit_exact() {
             manifest.dataset
         );
 
-        // Each remaining field is f32. Mandatory fields are always exposed; the
-        // error-model fields (variance/norm²/std/sem/sigma) only when
-        // do_variance, so they are checked when the dataset dumped them. Returns
-        // whether the file existed (and was therefore validated).
+        // Each remaining field is f32 and is an accumulator output of the
+        // parallel histogram -> validated at relative error <= REL_TOL (not
+        // bitwise). Mandatory fields are always exposed; the error-model fields
+        // (variance/norm²/std/sem/sigma) only when do_variance, so they are
+        // checked when the dataset dumped them. Returns whether the file existed
+        // (and was therefore validated).
         let check_f32 = |file: &str, actual: &[f32], required: bool| -> bool {
             let p = dir.join(file);
             if !p.exists() {
@@ -132,8 +146,8 @@ fn histogram1d_bit_exact() {
                 .to_vec();
             let r = compare_f32(actual, &g);
             assert!(
-                r.is_bit_exact(),
-                "{}: {file} not bit-exact: {r:?}",
+                r.within_rel(REL_TOL),
+                "{}: {file} exceeds rel tol {REL_TOL:e}: {r:?}",
                 manifest.dataset
             );
             true
@@ -161,7 +175,8 @@ fn histogram1d_bit_exact() {
             );
         }
         eprintln!(
-            "{}: all fields bit-exact (radial max_ulp={}, {em_fields} error-model fields)",
+            "{}: radial bit-exact (max_ulp={}); accumulator fields within rel {REL_TOL:e} \
+             ({em_fields} error-model fields)",
             manifest.dataset, r_radial.max_ulp,
         );
         checked += 1;
@@ -184,7 +199,7 @@ fn histogram1d_bit_exact() {
 /// the variance-family fields (variance, norm², std, sem, sigma) appear only
 /// when `do_variance`, so they are validated when the dataset dumped them.
 #[test]
-fn histogram2d_bit_exact() {
+fn histogram2d_within_tolerance() {
     let mut checked = 0usize;
     for dir in dataset_dirs() {
         let manifest = load_manifest(dir.join("manifest.json")).expect("manifest");
@@ -287,7 +302,8 @@ fn histogram2d_bit_exact() {
             manifest.dataset
         );
 
-        // f64 accumulator fields: the 2D engine exposes the binned sums at full
+        // Accumulator fields of the parallel histogram -> relative error <=
+        // REL_TOL (not bitwise). The 2D engine exposes the binned sums at full
         // f64 (`out_data[...,k].T`), NOT downcast to f32 like the 1D histogram.
         let check_f64 = |file: &str, actual: &[f64], required: bool| -> bool {
             let p = dir.join(file);
@@ -302,8 +318,8 @@ fn histogram2d_bit_exact() {
                 .to_vec();
             let r = compare_f64(actual, &g);
             assert!(
-                r.is_bit_exact(),
-                "{}: {file} not bit-exact: {r:?}",
+                r.within_rel(REL_TOL),
+                "{}: {file} exceeds rel tol {REL_TOL:e}: {r:?}",
                 manifest.dataset
             );
             true
@@ -321,8 +337,8 @@ fn histogram2d_bit_exact() {
                 .to_vec();
             let r = compare_f32(actual, &g);
             assert!(
-                r.is_bit_exact(),
-                "{}: {file} not bit-exact: {r:?}",
+                r.within_rel(REL_TOL),
+                "{}: {file} exceeds rel tol {REL_TOL:e}: {r:?}",
                 manifest.dataset
             );
             true
@@ -349,7 +365,8 @@ fn histogram2d_bit_exact() {
         }
 
         eprintln!(
-            "{}: 2D all fields bit-exact (radial ulp={}, azim ulp={}, {em_fields} error-model fields)",
+            "{}: 2D axes bit-exact (radial ulp={}, azim ulp={}); accumulator fields within \
+             rel {REL_TOL:e} ({em_fields} error-model fields)",
             manifest.dataset, r_radial.max_ulp, r_azim.max_ulp,
         );
         checked += 1;

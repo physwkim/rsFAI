@@ -11,12 +11,21 @@
 //! `get_dummies`/`calc_mask` → `preproc4` → `histogram1d`/`2d`) composed
 //! correctly. Fields the dataset does not expose (e.g. the variance family
 //! under the `no` error model) are skipped.
+//!
+//! The histogram **accumulation** is parallelized (non-deterministic f64 add
+//! order), so the accumulator-derived fields are validated at relative error
+//! `<= REL_TOL` (1e-6), while the bin-center **axes** (`radial`/`azimuthal`),
+//! which derive from the order-independent min/max + `linspace`, stay
+//! **bit-exact**. See `doc/bit-exact-ladder.md`.
 
 use std::path::{Path, PathBuf};
 
 use rsfai::{AzimuthalIntegrator, ErrorModelKind, IntegrationOptions, RadialUnit};
 use rsfai_core::compare::{compare_f32, compare_f64};
 use rsfai_core::golden::{load_manifest, load_npy_f32, load_npy_f64, load_npy_i32};
+
+/// Relative-error gate for the parallel-histogram accumulator fields.
+const REL_TOL: f64 = 1e-6;
 
 fn datasets_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../golden/datasets")
@@ -57,9 +66,11 @@ fn error_model_from_code(code: i64) -> ErrorModelKind {
     }
 }
 
-/// f32 golden field at `out_<name>.npy`, compared bit-exact against `actual`.
-/// `None` ⇒ the dataset does not expose this field (skip); `Some(ok)` ⇒ checked.
-fn cmp_f32(dir: &Path, name: &str, actual: &[f32]) -> Option<bool> {
+/// f32 golden field at `out_<name>.npy` vs `actual`. `exact` selects the gate:
+/// bit-exact for the order-independent bin-center axes, relative `<= REL_TOL`
+/// for the parallel-histogram accumulator fields. `None` ⇒ the dataset does not
+/// expose this field (skip); `Some(ok)` ⇒ checked.
+fn cmp_f32(dir: &Path, name: &str, actual: &[f32], exact: bool) -> Option<bool> {
     let p = dir.join(format!("out_{name}.npy"));
     if !p.exists() {
         return None;
@@ -67,19 +78,25 @@ fn cmp_f32(dir: &Path, name: &str, actual: &[f32]) -> Option<bool> {
     let g = load_npy_f32(&p).unwrap();
     let g = g.as_slice().expect("golden C-contiguous");
     let r = compare_f32(actual, g);
-    let ok = r.is_bit_exact();
+    let ok = if exact {
+        r.is_bit_exact()
+    } else {
+        r.within_rel(REL_TOL)
+    };
     eprintln!(
-        "    out_{name:22} {}  max_ulp={} mismatches={}/{}",
+        "    out_{name:22} {}  {}  max_ulp={} max_rel={:e} mismatches={}/{}",
         if ok { "PASS" } else { "FAIL" },
+        if exact { "exact" } else { " rel " },
         r.max_ulp,
+        r.max_rel_diff,
         r.bit_mismatches,
         r.total
     );
     Some(ok)
 }
 
-/// f64 golden field at `out_<name>.npy`, compared bit-exact against `actual`.
-fn cmp_f64(dir: &Path, name: &str, actual: &[f64]) -> Option<bool> {
+/// f64 golden field at `out_<name>.npy` vs `actual`; `exact` as in [`cmp_f32`].
+fn cmp_f64(dir: &Path, name: &str, actual: &[f64], exact: bool) -> Option<bool> {
     let p = dir.join(format!("out_{name}.npy"));
     if !p.exists() {
         return None;
@@ -87,11 +104,17 @@ fn cmp_f64(dir: &Path, name: &str, actual: &[f64]) -> Option<bool> {
     let g = load_npy_f64(&p).unwrap();
     let g = g.as_slice().expect("golden C-contiguous");
     let r = compare_f64(actual, g);
-    let ok = r.is_bit_exact();
+    let ok = if exact {
+        r.is_bit_exact()
+    } else {
+        r.within_rel(REL_TOL)
+    };
     eprintln!(
-        "    out_{name:22} {}  max_ulp={} mismatches={}/{}",
+        "    out_{name:22} {}  {}  max_ulp={} max_rel={:e} mismatches={}/{}",
         if ok { "PASS" } else { "FAIL" },
+        if exact { "exact" } else { " rel " },
         r.max_ulp,
+        r.max_rel_diff,
         r.bit_mismatches,
         r.total
     );
@@ -99,7 +122,7 @@ fn cmp_f64(dir: &Path, name: &str, actual: &[f64]) -> Option<bool> {
 }
 
 #[test]
-fn histogram_dropin_bit_exact() {
+fn histogram_dropin_within_tolerance() {
     let mut datasets_checked = 0usize;
     let mut total_fail = 0usize;
 
@@ -140,33 +163,55 @@ fn histogram_dropin_bit_exact() {
         if dim == 1 {
             let npt = cfg["npt"].as_u64().expect("npt") as usize;
             let res = ai.integrate1d(&image, npt, unit, &opts);
-            results.push(cmp_f64(&dir, "radial", &res.radial));
-            results.push(cmp_f32(&dir, "intensity", &res.intensity));
-            results.push(cmp_f32(&dir, "sigma", &res.sigma));
-            results.push(cmp_f32(&dir, "count", &res.count));
-            results.push(cmp_f32(&dir, "sum_signal", &res.sum_signal));
-            results.push(cmp_f32(&dir, "sum_variance", &res.sum_variance));
-            results.push(cmp_f32(&dir, "sum_normalization", &res.sum_normalization));
-            results.push(cmp_f32(&dir, "sum_normalization2", &res.sum_normalization2));
-            results.push(cmp_f32(&dir, "std", &res.std));
-            results.push(cmp_f32(&dir, "sem", &res.sem));
+            // Axis: bit-exact. Accumulator fields: relative <= REL_TOL.
+            results.push(cmp_f64(&dir, "radial", &res.radial, true));
+            results.push(cmp_f32(&dir, "intensity", &res.intensity, false));
+            results.push(cmp_f32(&dir, "sigma", &res.sigma, false));
+            results.push(cmp_f32(&dir, "count", &res.count, false));
+            results.push(cmp_f32(&dir, "sum_signal", &res.sum_signal, false));
+            results.push(cmp_f32(&dir, "sum_variance", &res.sum_variance, false));
+            results.push(cmp_f32(
+                &dir,
+                "sum_normalization",
+                &res.sum_normalization,
+                false,
+            ));
+            results.push(cmp_f32(
+                &dir,
+                "sum_normalization2",
+                &res.sum_normalization2,
+                false,
+            ));
+            results.push(cmp_f32(&dir, "std", &res.std, false));
+            results.push(cmp_f32(&dir, "sem", &res.sem, false));
         } else {
             let npt_rad = cfg["npt_rad"].as_u64().expect("npt_rad") as usize;
             let npt_azim = cfg["npt_azim"].as_u64().expect("npt_azim") as usize;
             let res = ai.integrate2d(&image, npt_rad, npt_azim, unit, &opts);
             // 2D: radial/azimuthal/intensity/sigma/std/sem are f32-or-f64 per
-            // the engine; sums and count are full-precision f64.
-            results.push(cmp_f64(&dir, "radial", &res.radial));
-            results.push(cmp_f64(&dir, "azimuthal", &res.azimuthal));
-            results.push(cmp_f32(&dir, "intensity", &res.intensity));
-            results.push(cmp_f32(&dir, "sigma", &res.sigma));
-            results.push(cmp_f64(&dir, "count", &res.count));
-            results.push(cmp_f64(&dir, "sum_signal", &res.sum_signal));
-            results.push(cmp_f64(&dir, "sum_variance", &res.sum_variance));
-            results.push(cmp_f64(&dir, "sum_normalization", &res.sum_normalization));
-            results.push(cmp_f64(&dir, "sum_normalization2", &res.sum_normalization2));
-            results.push(cmp_f32(&dir, "std", &res.std));
-            results.push(cmp_f32(&dir, "sem", &res.sem));
+            // the engine; sums and count are full-precision f64. Axes bit-exact;
+            // accumulator fields relative <= REL_TOL.
+            results.push(cmp_f64(&dir, "radial", &res.radial, true));
+            results.push(cmp_f64(&dir, "azimuthal", &res.azimuthal, true));
+            results.push(cmp_f32(&dir, "intensity", &res.intensity, false));
+            results.push(cmp_f32(&dir, "sigma", &res.sigma, false));
+            results.push(cmp_f64(&dir, "count", &res.count, false));
+            results.push(cmp_f64(&dir, "sum_signal", &res.sum_signal, false));
+            results.push(cmp_f64(&dir, "sum_variance", &res.sum_variance, false));
+            results.push(cmp_f64(
+                &dir,
+                "sum_normalization",
+                &res.sum_normalization,
+                false,
+            ));
+            results.push(cmp_f64(
+                &dir,
+                "sum_normalization2",
+                &res.sum_normalization2,
+                false,
+            ));
+            results.push(cmp_f32(&dir, "std", &res.std, false));
+            results.push(cmp_f32(&dir, "sem", &res.sem, false));
         }
 
         let checked = results.iter().filter(|r| r.is_some()).count();

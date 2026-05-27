@@ -1109,6 +1109,19 @@ struct CsrReduction {
     sem: Vec<DataT>,
 }
 
+/// One output bin's reduction outputs, produced independently per bin and then
+/// scattered into the flat [`CsrReduction`] arrays.
+struct BinReduction {
+    sum_signal: AccT,
+    sum_variance: AccT,
+    sum_normalization: AccT,
+    sum_norm_sq: AccT,
+    count: AccT,
+    intensity: DataT,
+    std: DataT,
+    sem: DataT,
+}
+
 /// The per-output-bin weighted-mean reduction at the heart of
 /// `CsrIntegrator.integrate_ng`, dimension-agnostic: it iterates the
 /// `indptr.len() - 1` output bins (which is `bins` for 1D and `bins0·bins1` for
@@ -1119,78 +1132,101 @@ struct CsrReduction {
 /// `sem` are downcast to f32 (`std`/`sem` via libc double `sqrt`). The
 /// `acc_norm_sq > 0` guard mirrors pyFAI exactly.
 ///
-/// Per-bin accumulation is bit-reproducible regardless of threads: pyFAI's
-/// `prange` assigns each output bin wholly to one thread.
+/// Parallelized over output bins, and **bit-exact** while parallel: each bin
+/// reads only its own CSR row (`indptr[i]..indptr[i+1]`) in ascending entry
+/// order and writes only its own slot, so the per-bin accumulation order is
+/// identical to the serial code. (pyFAI's `prange` likewise assigns each output
+/// bin wholly to one thread — the same partition.)
 fn csr_reduce(csr: &Csr, prep: &[DataT], error_model: ErrorModel, empty: DataT) -> CsrReduction {
+    use rayon::prelude::*;
+
     let bins = csr.indptr.len() - 1;
     let do_variance = error_model != ErrorModel::No;
 
-    let mut sum_signal = vec![0.0f64; bins];
-    let mut sum_variance = vec![0.0f64; bins];
-    let mut sum_normalization = vec![0.0f64; bins];
-    let mut sum_norm_sq = vec![0.0f64; bins];
-    let mut count = vec![0.0f64; bins];
-    let mut intensity = vec![0.0f32; bins];
-    let mut std = vec![0.0f32; bins];
-    let mut sem = vec![0.0f32; bins];
+    let per_bin: Vec<BinReduction> = (0..bins)
+        .into_par_iter()
+        .map(|i| {
+            let mut acc_sig: AccT = 0.0;
+            let mut acc_var: AccT = 0.0;
+            let mut acc_norm: AccT = 0.0;
+            let mut acc_norm_sq: AccT = 0.0;
+            let mut acc_count: AccT = 0.0;
 
-    for i in 0..bins {
-        let mut acc_sig: AccT = 0.0;
-        let mut acc_var: AccT = 0.0;
-        let mut acc_norm: AccT = 0.0;
-        let mut acc_norm_sq: AccT = 0.0;
-        let mut acc_count: AccT = 0.0;
-
-        let lo = csr.indptr[i] as usize;
-        let hi = csr.indptr[i + 1] as usize;
-        for j in lo..hi {
-            let coef = csr.data[j] as AccT; // data_t -> acc_t
-            if coef == 0.0 {
-                continue;
-            }
-            let idx = csr.indices[j] as usize;
-            let sig = prep[4 * idx] as AccT;
-            let var = prep[4 * idx + 1] as AccT;
-            let norm = prep[4 * idx + 2] as AccT;
-            let cnt = prep[4 * idx + 3] as AccT;
-
-            acc_count += coef * cnt;
-            match error_model {
-                ErrorModel::Azimuthal => {
-                    unimplemented!("azimuthal (Welford) CSR variance not yet ported")
+            let lo = csr.indptr[i] as usize;
+            let hi = csr.indptr[i + 1] as usize;
+            for j in lo..hi {
+                let coef = csr.data[j] as AccT; // data_t -> acc_t
+                if coef == 0.0 {
+                    continue;
                 }
-                _ => {
-                    acc_sig += coef * sig;
-                    if do_variance {
-                        acc_var += coef * coef * var;
+                let idx = csr.indices[j] as usize;
+                let sig = prep[4 * idx] as AccT;
+                let var = prep[4 * idx + 1] as AccT;
+                let norm = prep[4 * idx + 2] as AccT;
+                let cnt = prep[4 * idx + 3] as AccT;
+
+                acc_count += coef * cnt;
+                match error_model {
+                    ErrorModel::Azimuthal => {
+                        unimplemented!("azimuthal (Welford) CSR variance not yet ported")
                     }
-                    let w = coef * norm;
-                    acc_norm += w;
-                    acc_norm_sq += w * w;
+                    _ => {
+                        acc_sig += coef * sig;
+                        if do_variance {
+                            acc_var += coef * coef * var;
+                        }
+                        let w = coef * norm;
+                        acc_norm += w;
+                        acc_norm_sq += w * w;
+                    }
                 }
             }
-        }
 
-        sum_signal[i] = acc_sig;
-        sum_variance[i] = acc_var;
-        sum_normalization[i] = acc_norm;
-        sum_norm_sq[i] = acc_norm_sq;
-        count[i] = acc_count;
-        if acc_norm_sq > 0.0 {
-            intensity[i] = (acc_sig / acc_norm) as DataT;
-            if do_variance {
-                // libc double sqrt on f64 accumulators, then downcast to f32.
-                std[i] = (acc_var / acc_norm_sq).sqrt() as DataT;
-                sem[i] = (acc_var.sqrt() / acc_norm) as DataT;
+            let (intensity, std, sem) = if acc_norm_sq > 0.0 {
+                let intensity = (acc_sig / acc_norm) as DataT;
+                if do_variance {
+                    // libc double sqrt on f64 accumulators, then downcast to f32.
+                    let std = (acc_var / acc_norm_sq).sqrt() as DataT;
+                    let sem = (acc_var.sqrt() / acc_norm) as DataT;
+                    (intensity, std, sem)
+                } else {
+                    (intensity, empty, empty)
+                }
             } else {
-                std[i] = empty;
-                sem[i] = empty;
+                (empty, empty, empty)
+            };
+
+            BinReduction {
+                sum_signal: acc_sig,
+                sum_variance: acc_var,
+                sum_normalization: acc_norm,
+                sum_norm_sq: acc_norm_sq,
+                count: acc_count,
+                intensity,
+                std,
+                sem,
             }
-        } else {
-            intensity[i] = empty;
-            std[i] = empty;
-            sem[i] = empty;
-        }
+        })
+        .collect();
+
+    // Scatter the per-bin results into the flat output arrays (serial, O(bins)).
+    let mut sum_signal = Vec::with_capacity(bins);
+    let mut sum_variance = Vec::with_capacity(bins);
+    let mut sum_normalization = Vec::with_capacity(bins);
+    let mut sum_norm_sq = Vec::with_capacity(bins);
+    let mut count = Vec::with_capacity(bins);
+    let mut intensity = Vec::with_capacity(bins);
+    let mut std = Vec::with_capacity(bins);
+    let mut sem = Vec::with_capacity(bins);
+    for b in per_bin {
+        sum_signal.push(b.sum_signal);
+        sum_variance.push(b.sum_variance);
+        sum_normalization.push(b.sum_normalization);
+        sum_norm_sq.push(b.sum_norm_sq);
+        count.push(b.count);
+        intensity.push(b.intensity);
+        std.push(b.std);
+        sem.push(b.sem);
     }
 
     CsrReduction {

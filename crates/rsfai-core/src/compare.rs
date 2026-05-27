@@ -20,6 +20,15 @@ pub struct CompareReport {
     pub max_ulp: u64,
     /// Worst-case absolute difference over finite elements.
     pub max_abs_diff: f64,
+    /// Worst-case relative difference `|actual - golden| / |golden|` over finite
+    /// elements. When `golden == 0` the element is exact iff `actual == 0`
+    /// (relative error is then `0`); a non-zero `actual` against a zero `golden`
+    /// yields `+inf`, failing any finite tolerance. Used by [`within_rel`] for
+    /// the non-bit-reproducible parallel histogram reduction (the f64 reorder
+    /// error is bounded by `~n·eps`, far under the 1e-6 gate).
+    ///
+    /// [`within_rel`]: CompareReport::within_rel
+    pub max_rel_diff: f64,
     /// First differing element: `(flat_index, actual, golden)`.
     pub first_mismatch: Option<(usize, f64, f64)>,
 }
@@ -35,6 +44,33 @@ impl CompareReport {
     #[inline]
     pub fn within_ulp(&self, budget: u64) -> bool {
         self.max_ulp <= budget && self.nan_only_one_side == 0
+    }
+
+    /// True iff every element is within `tol` relative error (and no one-sided
+    /// NaNs). The pass criterion for parallel-histogram reduction outputs, whose
+    /// f64 accumulation order is non-deterministic: see [`max_rel_diff`].
+    ///
+    /// [`max_rel_diff`]: CompareReport::max_rel_diff
+    #[inline]
+    pub fn within_rel(&self, tol: f64) -> bool {
+        self.max_rel_diff <= tol && self.nan_only_one_side == 0
+    }
+}
+
+/// Per-element relative difference `|a - g| / |g|`, with the zero-golden
+/// convention documented on [`CompareReport::max_rel_diff`]. Operands are passed
+/// as f64 (f32 callers widen first).
+#[inline]
+fn rel_diff(a: f64, g: f64) -> f64 {
+    let denom = g.abs();
+    if denom == 0.0 {
+        if a == g {
+            0.0
+        } else {
+            f64::INFINITY
+        }
+    } else {
+        (a - g).abs() / denom
     }
 }
 
@@ -76,6 +112,7 @@ pub fn compare_f64(actual: &[f64], golden: &[f64]) -> CompareReport {
         nan_only_one_side: 0,
         max_ulp: 0,
         max_abs_diff: 0.0,
+        max_rel_diff: 0.0,
         first_mismatch: None,
     };
     for (i, (&a, &g)) in actual.iter().zip(golden.iter()).enumerate() {
@@ -99,6 +136,10 @@ pub fn compare_f64(actual: &[f64], golden: &[f64]) -> CompareReport {
         if abs > report.max_abs_diff {
             report.max_abs_diff = abs;
         }
+        let rel = rel_diff(a, g);
+        if rel > report.max_rel_diff {
+            report.max_rel_diff = rel;
+        }
     }
     report
 }
@@ -119,6 +160,7 @@ pub fn compare_f32(actual: &[f32], golden: &[f32]) -> CompareReport {
         nan_only_one_side: 0,
         max_ulp: 0,
         max_abs_diff: 0.0,
+        max_rel_diff: 0.0,
         first_mismatch: None,
     };
     for (i, (&a, &g)) in actual.iter().zip(golden.iter()).enumerate() {
@@ -141,6 +183,11 @@ pub fn compare_f32(actual: &[f32], golden: &[f32]) -> CompareReport {
         let abs = (a as f64 - g as f64).abs();
         if abs > report.max_abs_diff {
             report.max_abs_diff = abs;
+        }
+        // Relative error in f64 (the f32 operands are widened, matching abs).
+        let rel = rel_diff(a as f64, g as f64);
+        if rel > report.max_rel_diff {
+            report.max_rel_diff = rel;
         }
     }
     report
@@ -188,5 +235,28 @@ mod tests {
         let next = f32::from_bits(x.to_bits() + 1);
         let r = compare_f32(&[next], &[x]);
         assert_eq!(r.max_ulp, 1);
+    }
+
+    #[test]
+    fn relative_diff_within_tolerance() {
+        // 1e6 vs (1e6 + 0.5): relative error 5e-7, under a 1e-6 gate but not
+        // bit-exact — the shape of a parallel-reduction reorder difference.
+        let g = 1.0e6_f64;
+        let a = g + 0.5;
+        let r = compare_f64(&[a], &[g]);
+        assert!(!r.is_bit_exact());
+        assert!(r.within_rel(1e-6));
+        assert!(!r.within_rel(1e-7));
+    }
+
+    #[test]
+    fn zero_golden_requires_zero_actual() {
+        // Empty histogram bins are exactly 0 on both sides -> relative error 0.
+        let r0 = compare_f64(&[0.0], &[0.0]);
+        assert!(r0.within_rel(1e-6));
+        // A non-zero actual against a zero golden is an infinite relative error.
+        let r1 = compare_f64(&[1e-12], &[0.0]);
+        assert!(!r1.within_rel(1e-6));
+        assert_eq!(r1.max_rel_diff, f64::INFINITY);
     }
 }

@@ -93,10 +93,14 @@ pub fn center_value(unit: Unit, x: f64, y: f64, z: f64, wavelength: f64) -> f64 
 }
 
 /// Apply [`center_value`] over flat lab-coordinate slices.
+///
+/// Per-pixel map (each element independent) -> bit-exact under parallelism.
 pub fn center_array(unit: Unit, x: &[f64], y: &[f64], z: &[f64], wavelength: f64) -> Vec<f64> {
+    use rayon::prelude::*;
     assert_eq!(x.len(), y.len());
     assert_eq!(x.len(), z.len());
     (0..x.len())
+        .into_par_iter()
         .map(|i| center_value(unit, x[i], y[i], z[i], wavelength))
         .collect()
 }

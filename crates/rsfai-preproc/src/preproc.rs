@@ -44,7 +44,13 @@ pub struct PreprocOptions<'a> {
 /// normalization, count]`-per-pixel `f32` array of length `4 * data.len()`.
 ///
 /// Bit-exact port of `c4_preproc`; see the module docs for the arithmetic.
+///
+/// Parallelized per pixel: each output row is an independent pure function of
+/// its index ([`preproc_one`]), so the result is bit-identical to the serial
+/// order regardless of thread count — this stays a Tier-A bit-exact stage.
 pub fn preproc4(data: &[f32], opt: &PreprocOptions) -> Vec<f32> {
+    use rayon::prelude::*;
+
     let size = data.len();
     let check = |o: &Option<&[f32]>| {
         if let Some(s) = o {
@@ -62,85 +68,87 @@ pub fn preproc4(data: &[f32], opt: &PreprocOptions) -> Vec<f32> {
         assert_eq!(m.len(), size, "mask length mismatch");
     }
 
-    let mut out = Vec::with_capacity(4 * size);
-    for i in 0..size {
-        let mut one_num = data[i];
-        let mut one_den = opt.normalization_factor;
-        let mut one_var = if opt.poissonian {
-            one_num.max(1.0)
-        } else if let Some(v) = opt.variance {
-            v[i]
-        } else {
-            0.0
-        };
+    let mut out = vec![0.0f32; 4 * size];
+    out.par_chunks_mut(4).enumerate().for_each(|(i, row)| {
+        row.copy_from_slice(&preproc_one(i, data, opt));
+    });
+    out
+}
 
-        let mut is_valid = one_num.is_finite();
-        if is_valid {
-            if let Some(m) = opt.mask {
-                is_valid = m[i] == 0;
-            }
-        }
-        if is_valid && opt.check_dummy {
-            is_valid = dummy_ok(one_num, opt.dummy, opt.delta_dummy);
-        }
-        if is_valid {
-            if let Some(flat) = opt.flat {
-                is_valid = dummy_ok(flat[i], opt.dummy, opt.delta_dummy);
-            }
-        }
+/// The per-pixel `c4_preproc` body for pixel `i`, returning `[signal, variance,
+/// normalization, count]`. Pure in `(i, data, opt)` — no cross-pixel state — so
+/// running it in any order yields identical bits (the basis for parallelizing
+/// [`preproc4`]).
+#[inline]
+fn preproc_one(i: usize, data: &[f32], opt: &PreprocOptions) -> [f32; 4] {
+    let mut one_num = data[i];
+    let mut one_den = opt.normalization_factor;
+    let mut one_var = if opt.poissonian {
+        one_num.max(1.0)
+    } else if let Some(v) = opt.variance {
+        v[i]
+    } else {
+        0.0
+    };
 
-        let one_count;
-        if is_valid {
-            if let Some(dark) = opt.dark {
-                one_num -= dark[i];
-                if let Some(dv) = opt.dark_variance {
-                    one_var += dv[i];
-                }
+    let mut is_valid = one_num.is_finite();
+    if is_valid {
+        if let Some(m) = opt.mask {
+            is_valid = m[i] == 0;
+        }
+    }
+    if is_valid && opt.check_dummy {
+        is_valid = dummy_ok(one_num, opt.dummy, opt.delta_dummy);
+    }
+    if is_valid {
+        if let Some(flat) = opt.flat {
+            is_valid = dummy_ok(flat[i], opt.dummy, opt.delta_dummy);
+        }
+    }
+
+    let one_count;
+    if is_valid {
+        if let Some(dark) = opt.dark {
+            one_num -= dark[i];
+            if let Some(dv) = opt.dark_variance {
+                one_var += dv[i];
             }
-            // Order matters for bit-exactness: flat, polarization, solidangle,
-            // absorption (c4_preproc lines 450-457).
-            if let Some(flat) = opt.flat {
-                one_den *= flat[i];
-            }
-            if let Some(pol) = opt.polarization {
-                one_den *= pol[i];
-            }
-            if let Some(sa) = opt.solidangle {
-                one_den *= sa[i];
-            }
-            if let Some(ab) = opt.absorption {
-                one_den *= ab[i];
-            }
-            if !(one_num.is_finite()
-                && one_den.is_finite()
-                && one_var.is_finite()
-                && one_den != 0.0)
-            {
-                one_num = 0.0;
-                one_var = 0.0;
-                one_den = 0.0;
-                one_count = 0.0;
-            } else {
-                one_count = 1.0;
-                if opt.apply_normalization {
-                    one_num /= one_den;
-                    one_var /= one_den * one_den;
-                    one_den = 1.0;
-                }
-            }
-        } else {
+        }
+        // Order matters for bit-exactness: flat, polarization, solidangle,
+        // absorption (c4_preproc lines 450-457).
+        if let Some(flat) = opt.flat {
+            one_den *= flat[i];
+        }
+        if let Some(pol) = opt.polarization {
+            one_den *= pol[i];
+        }
+        if let Some(sa) = opt.solidangle {
+            one_den *= sa[i];
+        }
+        if let Some(ab) = opt.absorption {
+            one_den *= ab[i];
+        }
+        if !(one_num.is_finite() && one_den.is_finite() && one_var.is_finite() && one_den != 0.0) {
             one_num = 0.0;
             one_var = 0.0;
             one_den = 0.0;
             one_count = 0.0;
+        } else {
+            one_count = 1.0;
+            if opt.apply_normalization {
+                one_num /= one_den;
+                one_var /= one_den * one_den;
+                one_den = 1.0;
+            }
         }
-
-        out.push(one_num);
-        out.push(one_var);
-        out.push(one_den);
-        out.push(one_count);
+    } else {
+        one_num = 0.0;
+        one_var = 0.0;
+        one_den = 0.0;
+        one_count = 0.0;
     }
-    out
+
+    [one_num, one_var, one_den, one_count]
 }
 
 /// Dummy-validity test (`c4_preproc` lines 433-436/440-443): a value is valid

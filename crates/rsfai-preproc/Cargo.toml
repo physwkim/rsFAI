@@ -9,3 +9,4 @@ description = "Per-pixel preprocessing (dark/flat/solidangle/polarization/normal
 [dependencies]
 rsfai-core.workspace = true
 ndarray.workspace = true
+rayon.workspace = true

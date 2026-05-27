@@ -35,10 +35,18 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 num-traits = "0.2"
 thiserror = "2"
+rayon = "1"
 
-# Bit-exact accumulation requires a deterministic, serial summation order in the
-# default build. Parallelism (rayon) is opt-in behind a feature flag and is never
-# the bit-exact gate (see doc/bit-exact-ladder.md).
+# Parallelism (rayon) is ON by default. The two classes of work parallelize
+# differently w.r.t. bit-exactness (see doc/bit-exact-ladder.md):
+#   * per-pixel MAPs (preproc, geometry transform, solid-angle/polarization,
+#     unit centers) and CSR *apply* (one output bin per thread) stay bit-exact —
+#     each output element is an order-independent pure function of its index, so
+#     the golden gate for those stages remains 0-ULP.
+#   * the histogram cross-pixel *accumulation* sums into shared bins; the rayon
+#     fold/reduce reorders f64 adds, so it is NOT bit-reproducible and is
+#     validated at relative error <= 1e-6 (f64 reorder error ~ n·eps ≈ 2e-10).
+# CSR *build* stays serial (the per-bin LUT entry order is order-sensitive).
 [profile.release]
 # No fast-math / FMA contraction: we need IEEE-754 semantics to match pyFAI.
 # (codegen-units left default; determinism here comes from serial accumulation,

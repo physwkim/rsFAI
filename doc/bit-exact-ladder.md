@@ -38,8 +38,30 @@ and boundary 3 removed at the source.
 - Every golden dataset records provenance in `manifest.json`: pyFAI version,
   numpy version, platform, `OMP_NUM_THREADS`, the method tuple, and the dtype of
   each array.
-- The Rust default test path is **serial**; `rayon` is opt-in behind a feature
-  flag and is never the bit-exact gate — only ever checked at tolerance.
+- **rsFAI parallelism is ON by default** (`rayon`, no feature flag). The two
+  classes of work parallelize differently with respect to the golden gate:
+  - **Bit-exact under parallelism (0-ULP gate unchanged).** Per-pixel **maps** —
+    `preproc4`, `calc_pos_zyx`, `center_array`, `solid_angle_array`,
+    `polarization_array` — and the **CSR apply** (`csr_reduce`, parallelized
+    over output bins, each bin's row summed serially on one thread) produce each
+    output element as an order-independent pure function of its index. The bits
+    do not depend on thread count, so these stay validated bit-for-bit.
+    (Verified: identical guard sums and 0-ULP golden at 1 and 8 threads.)
+  - **Tolerance-gated (non-bit-reproducible).** The histogram **accumulation**
+    (`histogram_preproc`, `histogram2d`) sums many pixels into shared bins via a
+    rayon fold/reduce over thread-local bin arrays; the f64 add order across
+    workers is nondeterministic (this is boundary 1 above, now in rsFAI's own
+    code). The accumulator-derived fields are gated at **relative error
+    `<= 1e-6`**, not bitwise. The bound: f64 accumulators (`acc_t`) make the
+    reorder error `~n·eps_f64 ≈ 1e6 · 2.2e-16 ≈ 2e-10` relative for ~1e6
+    pixels, far under 1e-6. The bin-center **axes** (`position`/`radial`/
+    `azimuthal`) derive from order-independent min/max + `linspace`, so they
+    stay bit-exact. (In practice, for the Pilatus1M golden datasets the per-bin
+    f64 sum spans <53 bits and is therefore exact regardless of grouping, so the
+    observed divergence is 0; the 1e-6 gate covers the general case.)
+  - **Serial by construction.** The CSR **build** (`build_*_csr`) stays serial:
+    each bin's LUT entry order must match pyFAI's `SparseBuilder` insertion order
+    (ascending pixel index), which a parallel build would scramble.
 - **No-FMA source build.** Golden is generated from pyFAI 2026.5.0 **rebuilt
   from the local `~/codes/pyFAI` source** into the `daq` env with FMA
   contraction disabled:

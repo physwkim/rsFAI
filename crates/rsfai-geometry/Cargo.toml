@@ -11,6 +11,7 @@ thiserror.workspace = true
 # Solid-angle / polarization are Geometry-level corrections (they need PONI +
 # the detector's pixel positions), matching pyFAI where they are Geometry methods.
 rsfai-detectors.workspace = true
+rayon.workspace = true
 
 [dev-dependencies]
 # Golden tests load .npy + compare (rsfai-core) and reshape with ndarray.

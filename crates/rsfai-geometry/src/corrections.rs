@@ -17,6 +17,7 @@
 //!   `scale=False`) through a numexpr expression in **f64**, then casts the
 //!   result to **f32**.
 
+use rayon::prelude::*;
 use rsfai_detectors::Detector;
 
 use crate::units::equation;
@@ -44,8 +45,9 @@ pub fn solid_angle_array(
     let (p1, p2) = det.centers_f32(); // raw f32 pixel centres, before PONI
     let poni1 = poni1 as f32;
     let poni2 = poni2 as f32;
-    p1.iter()
-        .zip(&p2)
+    // Per-pixel map (each element independent) -> bit-exact under parallelism.
+    p1.par_iter()
+        .zip(p2.par_iter())
         .map(|(&a, &b)| {
             // PONI subtraction stays in f32 (numpy weak promotion), then f_cosa
             // upcasts to f64.
@@ -74,7 +76,9 @@ pub fn polarization_array(
 ) -> Vec<f32> {
     assert_eq!(x.len(), y.len());
     assert_eq!(x.len(), z.len());
+    // Per-pixel map (each element independent) -> bit-exact under parallelism.
     (0..x.len())
+        .into_par_iter()
         .map(|i| {
             // tth/chi are the scale=False unit equations (rad).
             let tth = equation(Space::TwoTheta, x[i], y[i], z[i], 1.0);

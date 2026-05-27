@@ -12,3 +12,4 @@ rsfai-geometry.workspace = true
 rsfai-detectors.workspace = true
 rsfai-preproc.workspace = true
 ndarray.workspace = true
+rayon.workspace = true

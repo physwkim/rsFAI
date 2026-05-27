@@ -1,9 +1,16 @@
 //! Port of pyFAI's pure-Cython 1D histogram engine: `histogram_preproc` and
 //! `histogram1d_engine` (`pyFAI/ext/histogram.pyx`), the `("no", "histogram",
-//! "cython")` integration path. This is the **Tier-A** correctness gate for the
-//! histogram engine: given the identical radial array and preprocessed
-//! `(signal, variance, norm, count)` rows pyFAI binned, every output field must
-//! be bit-exact (single-thread; `histogram_preproc` is serial, never `prange`).
+//! "cython")` integration path.
+//!
+//! Unlike the per-pixel maps and the CSR apply, the histogram **accumulation**
+//! sums many pixels into shared bins. It is parallelized with a rayon
+//! fold/reduce into thread-local bin arrays, which reorders the f64 adds and is
+//! therefore **not** bit-reproducible against pyFAI's serial golden. The f64
+//! accumulators bound the reorder error at `~n·eps` (≈ 2e-10 relative for
+//! ~1e6 pixels), so the golden gate for these outputs is relative error
+//! `<= 1e-6`, not bitwise (see `doc/bit-exact-ladder.md`). The bin-center axes
+//! (`position`) stay bit-exact — they derive from the order-independent
+//! min/max + `linspace`.
 //!
 //! ## What the integrator feeds this engine
 //!
@@ -27,6 +34,7 @@
 //!   downcast to f32 — *not* `sqrtf`. This can differ from `sqrtf` by a ULP via
 //!   double-rounding, so we match it exactly.
 
+use rayon::prelude::*;
 use rsfai_core::dtype::{calc_upper_bound, AccT, DataT, ErrorModel, PositionT};
 
 /// The `Integrate1dtpl` fields (`pyFAI/containers.py`), in pyFAI's dtypes:
@@ -101,8 +109,9 @@ pub(crate) fn numpy_linspace(start: f64, stop: f64, num: usize) -> Vec<f64> {
 /// flat `[signal, variance, norm, count]`-per-pixel f32 array (length `4*size`),
 /// exactly the `preproc(..., split_result=4)` output. `bin_range`, when `Some`,
 /// pins `(min0, maxin0) = (min, max)` of the pair; otherwise they are the data
-/// min/max. The accumulation loop is serial in pixel order — the only
-/// bit-reproducible order.
+/// min/max. The accumulation is a rayon fold/reduce over thread-local bin
+/// arrays (non-deterministic add order, see the module docs); validated at
+/// relative error `<= 1e-6`, not bitwise.
 pub fn histogram_preproc(
     radial: &[PositionT],
     prep: &[DataT],
@@ -135,20 +144,23 @@ pub fn histogram_preproc(
     let max0 = calc_upper_bound(maxin0);
     let delta = (max0 - min0) / (npt as f64);
 
-    let mut out_prop = vec![[0.0f64; 5]; npt];
-    for i in 0..size {
+    // Parallel histogram: each rayon worker folds its pixel chunk into a private
+    // `npt`-bin accumulator, then `reduce` merges the per-worker accumulators
+    // element-wise. The add order across workers (and across each worker's
+    // chunk split) is non-deterministic; validated at relative error <= 1e-6.
+    let accumulate = |acc: &mut [[AccT; 5]], i: usize| {
         let a = radial[i];
         let fbin = (a - min0) / delta; // get_bin_number
         let bin = fbin as i64; // <Py_ssize_t>: truncate toward zero
         if bin < 0 || bin >= npt as i64 {
-            continue;
+            return;
         }
         let bin = bin as usize;
         let s = prep[4 * i];
         let v = prep[4 * i + 1];
         let n = prep[4 * i + 2];
         let c = prep[4 * i + 3];
-        let row = &mut out_prop[bin];
+        let row = &mut acc[bin];
         match error_model {
             // error_model == 0: norm² via `tmp*tmp` with tmp an f32 (data_t).
             ErrorModel::No => {
@@ -175,10 +187,35 @@ pub fn histogram_preproc(
                 row[3] += cnt;
             }
         }
-    }
+    };
+
+    let out_prop = (0..size)
+        .into_par_iter()
+        .fold(
+            || vec![[0.0f64; 5]; npt],
+            |mut acc, i| {
+                accumulate(&mut acc, i);
+                acc
+            },
+        )
+        .reduce(|| vec![[0.0f64; 5]; npt], merge_bins);
 
     let position = numpy_linspace(min0 + 0.5 * delta, max0 - 0.5 * delta, npt);
     (out_prop, position)
+}
+
+/// Element-wise add of two equal-length `[acc; 5]` bin accumulators — the
+/// `reduce` combiner that merges per-worker partial histograms. Float addition
+/// is not associative, so the merge order (chosen by rayon) makes the result
+/// non-bit-reproducible; the error is bounded by `~n·eps` (see the module docs).
+fn merge_bins(mut a: Vec<[AccT; 5]>, b: Vec<[AccT; 5]>) -> Vec<[AccT; 5]> {
+    debug_assert_eq!(a.len(), b.len());
+    for (ra, rb) in a.iter_mut().zip(b.iter()) {
+        for k in 0..5 {
+            ra[k] += rb[k];
+        }
+    }
+    a
 }
 
 /// Port of `histogram1d_engine` (`ext/histogram.pyx`): run [`histogram_preproc`]
@@ -410,11 +447,13 @@ pub fn histogram2d(
     let delta1 = (pos1_max - pos1_min) / (bins1 as PositionT);
 
     // Accumulator grid in (radial, azimuthal) order: cell (i, j) at i*bins1 + j.
-    let mut out = vec![[0.0f64; 5]; bins0 * bins1];
-    for idx in 0..size {
+    // Parallel histogram via thread-local grids merged by `merge_bins` (the same
+    // non-deterministic fold/reduce as the 1D engine; validated at rel <= 1e-6).
+    let n_grid = bins0 * bins1;
+    let accumulate = |acc: &mut [[AccT; 5]], idx: usize| {
         if let Some(m) = mask {
             if m[idx] != 0 {
-                continue;
+                return;
             }
         }
         let fbin0 = (radial[idx] - pos0_min) / delta0; // get_bin_number
@@ -422,17 +461,27 @@ pub fn histogram2d(
         let bin0 = fbin0 as i64; // <Py_ssize_t>: truncate toward zero
         let bin1 = fbin1 as i64;
         if bin0 < 0 || bin0 >= bins0 as i64 || bin1 < 0 || bin1 >= bins1 as i64 {
-            continue;
+            return;
         }
         let n = prep[4 * idx + 2];
-        let cell = &mut out[bin0 as usize * bins1 + bin1 as usize];
+        let cell = &mut acc[bin0 as usize * bins1 + bin1 as usize];
         // update_2d_accumulator with weight 1.0 (w2 = 1.0).
         cell[0] += prep[4 * idx] as AccT;
         cell[1] += prep[4 * idx + 1] as AccT;
         cell[2] += n as AccT;
         cell[3] += prep[4 * idx + 3] as AccT;
         cell[4] += (n * n) as AccT; // f32 multiply, then promote
-    }
+    };
+    let out = (0..size)
+        .into_par_iter()
+        .fold(
+            || vec![[0.0f64; 5]; n_grid],
+            |mut acc, idx| {
+                accumulate(&mut acc, idx);
+                acc
+            },
+        )
+        .reduce(|| vec![[0.0f64; 5]; n_grid], merge_bins);
 
     let do_variance = opts.error_model != ErrorModel::No;
     let n_cells = bins0 * bins1;
