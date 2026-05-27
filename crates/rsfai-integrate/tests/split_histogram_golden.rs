@@ -11,6 +11,10 @@
 //!   `("full", "histogram", "cython")`), fed the per-pixel corner array
 //!   (`corners.npy`, f32 upcast to f64 — the bits pyFAI's `FullSplitIntegrator`
 //!   received) and the preproc rows.
+//! - pseudo: [`histogram2d_pseudo`] (`splitPixel.pseudoSplit2D_engine`,
+//!   `("pseudo", "histogram", "cython")`, 2D only), fed the same corner array and
+//!   preproc rows as full. The engine forwards no `pos1_period`, so the boundary
+//!   fold uses `calc_boundaries` with `clip_pos1=False`.
 //!
 //! Every engine scatters each pixel's split into bins **serially** in pixel-index
 //! order, reproducing pyFAI's single-threaded accumulation bit-for-bit, so every
@@ -31,7 +35,8 @@ use rsfai_core::compare::{compare_f32, compare_f64};
 use rsfai_core::dtype::ErrorModel;
 use rsfai_core::golden::{load_manifest, load_npy_f32, load_npy_f64, load_npy_i8};
 use rsfai_integrate::{
-    histogram1d_bbox, histogram1d_full, histogram2d_bbox, histogram2d_full, Bbox2dBounds,
+    histogram1d_bbox, histogram1d_full, histogram2d_bbox, histogram2d_full, histogram2d_pseudo,
+    Bbox2dBounds,
 };
 
 fn datasets_root() -> PathBuf {
@@ -613,5 +618,130 @@ fn histogram2d_full_bit_exact() {
     assert!(
         checked > 0,
         "no 2D full-histogram golden datasets found; run golden/gen_golden.py"
+    );
+}
+
+#[test]
+fn histogram2d_pseudo_bit_exact() {
+    let mut checked = 0usize;
+    for dir in dataset_dirs() {
+        let manifest = load_manifest(dir.join("manifest.json")).expect("manifest");
+        let cfg = &manifest.config;
+
+        let is_pseudo_histogram = cfg["method"]
+            .as_array()
+            .map(|m| {
+                m.len() >= 3
+                    && m[0].as_str() == Some("pseudo")
+                    && m[1].as_str() == Some("histogram")
+            })
+            .unwrap_or(false);
+        if cfg["dim"].as_u64().unwrap_or(1) != 2 || !is_pseudo_histogram {
+            continue;
+        }
+
+        let npt_rad = cfg["npt_rad"].as_u64().expect("npt_rad") as usize;
+        let npt_azim = cfg["npt_azim"].as_u64().expect("npt_azim") as usize;
+        let unit_scale = cfg["unit_scale"].as_f64().expect("unit_scale");
+        let azim_scale = cfg["azim_scale"].as_f64().expect("azim_scale");
+        // The pseudo engine forwards no pos1_period (calc_boundaries clip_pos1=False);
+        // it passes chiDiscAtPi=self.chiDiscAtPi and allow_pos0_neg=not radial_unit.positive.
+        let chi_disc_at_pi = cfg["chi_disc_at_pi"].as_bool().unwrap_or(true);
+        let error_model = error_model_from_code(cfg["error_model_code"].as_i64().unwrap_or(0));
+
+        let corners = load_corners_f64(dir.join("corners.npy"));
+        let prep = load_vec_f32(dir.join("preproc.npy"));
+        let mask = load_npy_i8(dir.join("mask.npy"))
+            .expect("mask")
+            .as_slice()
+            .expect("contiguous")
+            .to_vec();
+
+        let out = histogram2d_pseudo(
+            &corners,
+            &prep,
+            Some(&mask),
+            (npt_rad, npt_azim),
+            false, // standard radial unit (q) cannot be negative
+            chi_disc_at_pi,
+            error_model,
+            0.0,
+        );
+
+        let scaled_rad: Vec<f64> = out.radial.iter().map(|&p| p * unit_scale).collect();
+        let g_radial = load_vec_f64(dir.join("out_radial.npy"));
+        let r_radial = compare_f64(&scaled_rad, &g_radial);
+        assert!(
+            r_radial.is_bit_exact(),
+            "{}: out_radial not bit-exact: {r_radial:?}",
+            manifest.dataset
+        );
+        let scaled_azim: Vec<f64> = out.azimuthal.iter().map(|&p| p * azim_scale).collect();
+        let g_azim = load_vec_f64(dir.join("out_azimuthal.npy"));
+        let r_azim = compare_f64(&scaled_azim, &g_azim);
+        assert!(
+            r_azim.is_bit_exact(),
+            "{}: out_azimuthal not bit-exact: {r_azim:?}",
+            manifest.dataset
+        );
+
+        let check_f64 = |file: &str, actual: &[f64], required: bool| -> bool {
+            let p = dir.join(file);
+            if !p.exists() {
+                assert!(!required, "{}: missing required {file}", manifest.dataset);
+                return false;
+            }
+            let g = load_vec_f64(p);
+            let r = compare_f64(actual, &g);
+            assert!(
+                r.is_bit_exact(),
+                "{}: {file} not bit-exact: {r:?}",
+                manifest.dataset
+            );
+            true
+        };
+        let check_f32 = |file: &str, actual: &[f32], required: bool| -> bool {
+            let p = dir.join(file);
+            if !p.exists() {
+                assert!(!required, "{}: missing required {file}", manifest.dataset);
+                return false;
+            }
+            let g = load_vec_f32(p);
+            let r = compare_f32(actual, &g);
+            assert!(
+                r.is_bit_exact(),
+                "{}: {file} not bit-exact: {r:?}",
+                manifest.dataset
+            );
+            true
+        };
+
+        check_f64("out_sum_signal.npy", &out.signal, true);
+        check_f64("out_sum_normalization.npy", &out.normalization, true);
+        check_f64("out_count.npy", &out.count, true);
+        check_f32("out_intensity.npy", &out.intensity, true);
+
+        let mut em = 0;
+        em += i32::from(check_f64("out_sum_variance.npy", &out.variance, false));
+        em += i32::from(check_f64("out_sum_normalization2.npy", &out.norm_sq, false));
+        em += i32::from(check_f32("out_std.npy", &out.std, false));
+        em += i32::from(check_f32("out_sem.npy", &out.sem, false));
+        em += i32::from(check_f32("out_sigma.npy", &out.sigma, false));
+        if error_model != ErrorModel::No {
+            assert!(
+                em > 0,
+                "{}: error-model dataset exposed no variance/std/sem fields",
+                manifest.dataset
+            );
+        }
+        eprintln!(
+            "{}: 2D pseudo all fields bit-exact (radial ulp={}, azim ulp={}); {em} error-model fields",
+            manifest.dataset, r_radial.max_ulp, r_azim.max_ulp,
+        );
+        checked += 1;
+    }
+    assert!(
+        checked > 0,
+        "no 2D pseudo-histogram golden datasets found; run golden/gen_golden.py"
     );
 }

@@ -738,6 +738,28 @@ def main():
                 "correct_solid_angle": True,
                 "polarization_factor": 0.99,
             },
+            {
+                # 2D pseudo direct-split histogram (splitPixel.pseudoSplit2D_engine,
+                # 2D only — there is no 1D pseudo engine). Each pixel is approximated
+                # by an axis-aligned rectangle carrying the pixel's true area4
+                # quadrilateral area at the aspect ratio of its corner bounding box
+                # (new_height = sqrt(area·height/width)), centred on the corner
+                # centroid; a pseudo-rect that would exceed the bbox (chi-disc
+                # straddler) keeps the original box. Then range-clip (the clip
+                # fraction scales the value in f32), chi-disc collapse, and the same
+                # separable 4-branch bbox split scattered via update_2d_accumulator.
+                # Boundaries: calc_boundaries with clip_pos1=False (NO azimuthal
+                # clip — the engine forwards no pos1_period); chiDiscAtPi = True;
+                # allow_pos0_neg = not radial_unit.positive (False for q).
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("pseudo", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
         ],
     )
     print("done.")

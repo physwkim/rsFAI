@@ -1,7 +1,8 @@
 //! Direct-split histogram engines — the `(_, "histogram", "cython")` paths with
 //! pixel splitting: the **bbox** split (`splitBBox.histoBBox1d_engine` /
-//! `histoBBox2d_engine`) and the **full** pixel split
-//! (`splitPixel.fullSplit1D_engine` / `fullSplit2D_engine`).
+//! `histoBBox2d_engine`), the **full** pixel split
+//! (`splitPixel.fullSplit1D_engine` / `fullSplit2D_engine`), and the **pseudo**
+//! split (`splitPixel.pseudoSplit2D_engine`, 2D only).
 //!
 //! All four reuse the boundary fold and per-pixel overlap of the matching CSR
 //! build — bbox via [`calc_boundaries_1d`]/[`calc_boundaries_2d`] + the bbox
@@ -702,6 +703,357 @@ pub fn histogram2d_full(
                 let w = box_buf[(i * (w1 + 1) + j) as usize] as f64 * inv_area;
                 let cell = ((ioffset0 + i) * b1i + ioffset1 + j) as usize;
                 accumulate_2d(&mut out, cell, s, v, n, c, w);
+            }
+        }
+    }
+
+    let radial_centers = numpy_linspace(pos0_min + 0.5 * delta0, pos0_max - 0.5 * delta0, bins0);
+    let azim_centers = numpy_linspace(pos1_min + 0.5 * delta1, pos1_max - 0.5 * delta1, bins1);
+    reduce_2d(
+        &out,
+        (bins0, bins1),
+        radial_centers,
+        azim_centers,
+        error_model,
+        empty,
+    )
+}
+
+/// Exact quadrilateral area of corners A,B,C,D — port of `area4`
+/// (`regrid_common.pxi`), the Bretschneider-style formula (NOT the approximate
+/// `area4p` cross-product the full-CSR build uses). All operands and the `sqrt`s
+/// are f64 (pyFAI instantiates `floating = double` here, the corners being
+/// `position_t`); `x**2` is Cython-unrolled to `x*x` (verified bit-exact against
+/// pyFAI's `_sp_area4` over 50k random inputs).
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn area4(a0: f64, a1: f64, b0: f64, b1: f64, c0: f64, c1: f64, d0: f64, d1: f64) -> f64 {
+    let a = ((b1 - a1) * (b1 - a1) + (b0 - a0) * (b0 - a0)).sqrt(); // AB
+    let b = ((b1 - c1) * (b1 - c1) + (b0 - c0) * (b0 - c0)).sqrt(); // BC
+    let c = ((c1 - d1) * (c1 - d1) + (c0 - d0) * (c0 - d0)).sqrt(); // CD
+    let d = ((d1 - a1) * (d1 - a1) + (d0 - a0) * (d0 - a0)).sqrt(); // DA
+    let p = ((c1 - a1) * (c1 - a1) + (c0 - a0) * (c0 - a0)).sqrt(); // AC
+    let q = ((b1 - d1) * (b1 - d1) + (b0 - d0) * (b0 - d0)).sqrt(); // BD
+    let diff = b * b + d * d - a * a - c * c;
+    0.25 * (4.0 * p * p * q * q - diff * diff).sqrt()
+}
+
+/// Port of `splitPixel.pseudoSplit2D_engine`: 2D **pseudo** pixel-splitting
+/// histogram (2D only — there is no 1D pseudo path). `corners` is the
+/// `(npix, 4, 2)` corner array flattened C-order (dim 0 radial unscaled, dim 1 chi
+/// radians), upcast to f64 — used **raw**, not `recenter`-ed.
+///
+/// Unlike the full split, each pixel is approximated by an **axis-aligned
+/// rectangle** with the pixel's true quadrilateral [`area4`] but the aspect ratio
+/// of its corner bounding box (`new_height = sqrt(area·height/width)`), centered on
+/// the corner centroid. A pixel whose pseudo-rectangle would exceed its bounding
+/// box (one straddling the chi discontinuity) keeps its original box. That box is
+/// then range-clipped (the clip fraction scaling `value` in f32), collapsed across
+/// the chi discontinuity (`(max1-min1)/delta1 > bins1/2`), and distributed across
+/// the cells it overlaps with the same separable 4-branch fractional split as
+/// [`histogram2d_bbox`] — except the both-axes-spread `inv_area` is pyFAI's
+/// `(1/Δbin0)·Δbin1` (the literal operator order in `pseudoSplit2D_engine`, NOT
+/// `1/(Δbin0·Δbin1)`). Boundaries use the raw corner fold (`calc_boundaries` with
+/// `clip_pos1=False`, i.e. [`calc_boundaries_full_2d`] with `pos1_period = 0`); the
+/// final reduction guards on **count** via [`reduce_2d`]. Serial scatter is the
+/// bit-exact construction (see the module scatter note).
+#[allow(clippy::too_many_arguments)]
+pub fn histogram2d_pseudo(
+    corners: &[PositionT],
+    prep: &[DataT],
+    mask: Option<&[i8]>,
+    bins: (usize, usize),
+    allow_pos0_neg: bool,
+    chi_disc_at_pi: bool,
+    error_model: ErrorModel,
+    empty: DataT,
+) -> Integrate2d {
+    let (bins0, bins1) = bins;
+    assert!(bins0 >= 1 && bins1 >= 1, "bins must be >= 1 in each dim");
+    assert_eq!(
+        corners.len() % 8,
+        0,
+        "corners must be (npix, 4, 2) flattened"
+    );
+    let size = corners.len() / 8;
+    assert_eq!(prep.len(), 4 * size, "prep length must be 4 * npix");
+    if let Some(m) = mask {
+        assert_eq!(m.len(), size, "mask length mismatch");
+    }
+
+    // `calc_boundaries(..., clip_pos1=False)`: raw corner fold + pos0>=0 clamp, no
+    // azimuthal clip (pos1_period = 0 disables the clip block).
+    let (pos0_min, pos0_maxin, pos1_min, pos1_maxin) =
+        calc_boundaries_full_2d(corners, mask, allow_pos0_neg, chi_disc_at_pi, 0.0);
+    let pos0_max = calc_upper_bound(pos0_maxin);
+    let pos1_max = calc_upper_bound(pos1_maxin);
+    let delta0 = (pos0_max - pos0_min) / (bins0 as PositionT);
+    let delta1 = (pos1_max - pos1_min) / (bins1 as PositionT);
+    let b1i = bins1 as i64;
+
+    // Chi-clamp bounds: `(2 - chiDiscAtPi)·pi` / `(-chiDiscAtPi)·pi` with pyFAI's
+    // f32 `pi = <float> M_PI`, the int·float product in f32, then widened to f64.
+    let cd: i32 = if chi_disc_at_pi { 1 } else { 0 };
+    let max_chi = ((2 - cd) as f32 * std::f32::consts::PI) as f64;
+    let min_chi = ((-cd) as f32 * std::f32::consts::PI) as f64;
+
+    // pyFAI's `new_*` are C locals declared once outside the loop: a pixel with
+    // width==0 or height==0 skips their recompute and the pathological check then
+    // reads the previous pixel's values. Replicate that carry-over (every physical
+    // Pilatus pixel has nonzero extent, so they are in practice always freshly set).
+    let mut new_min0 = 0.0f64;
+    let mut new_max0 = 0.0f64;
+    let mut new_min1 = 0.0f64;
+    let mut new_max1 = 0.0f64;
+
+    let mut out = vec![[0.0f64; 5]; bins0 * bins1];
+    for idx in 0..size {
+        if let Some(m) = mask {
+            if m[idx] != 0 {
+                continue;
+            }
+        }
+        let base = idx * 8;
+        let a0 = corners[base];
+        let a1 = corners[base + 1];
+        let b0 = corners[base + 2];
+        let b1 = corners[base + 3];
+        let c0 = corners[base + 4];
+        let c1 = corners[base + 5];
+        let d0 = corners[base + 6];
+        let d1 = corners[base + 7];
+
+        let mut min0 = min4(a0, b0, c0, d0);
+        let mut max0 = max4(a0, b0, c0, d0);
+        let mut min1 = min4(a1, b1, c1, d1);
+        let mut max1 = max4(a1, b1, c1, d1);
+
+        if max0 < pos0_min || min0 > pos0_maxin || max1 < pos1_min || min1 > pos1_maxin {
+            continue;
+        }
+
+        // Pseudo-rectangle: same area as the true quad, aspect ratio of the bbox.
+        let center0 = (a0 + b0 + c0 + d0) / 4.0;
+        let center1 = (a1 + b1 + c1 + d1) / 4.0;
+        let area = area4(a0, a1, b0, b1, c0, c1, d0, d1).abs();
+        let width = max1 - min1;
+        let height = max0 - min0;
+        if width != 0.0 && height != 0.0 {
+            let new_height = (area * height / width).sqrt();
+            let new_width = new_height * width / height;
+            new_min0 = center0 - new_width / 2.0;
+            new_max0 = center0 + new_width / 2.0;
+            new_min1 = center1 - new_height / 2.0;
+            new_max1 = center1 + new_height / 2.0;
+        }
+        if new_min0 < min0 || new_max0 > max0 || new_min1 < min1 || new_max1 > max1 {
+            // Pathological pixel on the chi discontinuity: keep the original box.
+        } else {
+            min0 = new_min0;
+            max0 = new_max0;
+            min1 = new_min1;
+            max1 = new_max1;
+        }
+
+        if !allow_pos0_neg {
+            min0 = min0.max(0.0);
+            max0 = max0.max(0.0);
+        }
+        if max1 > max_chi {
+            max1 = max_chi;
+        }
+        if min1 < min_chi {
+            min1 = min_chi;
+        }
+
+        let mut s = prep[4 * idx];
+        let mut v = prep[4 * idx + 1];
+        let mut n = prep[4 * idx + 2];
+        let mut c = prep[4 * idx + 3];
+
+        // Range clip with the area-fraction scale (pyFAI's `scale` is data_t/f32:
+        // each `scale * f64 / f64` narrows back to f32). min/max are mutated in
+        // sequence, so a later branch sees the earlier branch's clamped bound.
+        let mut scale: f32 = 1.0;
+        if min0 < pos0_min {
+            scale = ((scale as f64) * (pos0_min - min0) / (max0 - min0)) as f32;
+            min0 = pos0_min;
+        }
+        if min1 < pos1_min {
+            scale = ((scale as f64) * (pos1_min - min1) / (max1 - min1)) as f32;
+            min1 = pos1_min;
+        }
+        if max0 > pos0_maxin {
+            scale = ((scale as f64) * (max0 - pos0_maxin) / (max0 - min0)) as f32;
+            max0 = pos0_maxin;
+        }
+        if max1 > pos1_maxin {
+            scale = ((scale as f64) * (max1 - pos1_maxin) / (max1 - min1)) as f32;
+            max1 = pos1_maxin;
+        }
+        if scale != 1.0 {
+            s *= scale;
+            n *= scale;
+            v *= scale * scale;
+            c *= scale;
+        }
+
+        // Collapse a pixel spanning more than half the azimuthal range onto the
+        // nearer edge (the chi-discontinuity heuristic).
+        if (max1 - min1) / delta1 > (bins1 as f64) / 2.0 {
+            if pos1_maxin - max1 > min1 - pos1_min {
+                min1 = max1;
+                max1 = pos1_maxin;
+            } else {
+                max1 = min1;
+                min1 = pos1_min;
+            }
+        }
+
+        let fbin0_min = (min0 - pos0_min) / delta0; // get_bin_number
+        let fbin0_max = (max0 - pos0_min) / delta0;
+        let fbin1_min = (min1 - pos1_min) / delta1;
+        let fbin1_max = (max1 - pos1_min) / delta1;
+
+        let bin0_min = fbin0_min as i64; // <Py_ssize_t>: trunc toward zero
+        let bin0_max = fbin0_max as i64;
+        let bin1_min = fbin1_min as i64;
+        let bin1_max = fbin1_max as i64;
+
+        let cell = |bin0: i64, bin1: i64| -> usize { (bin0 * b1i + bin1) as usize };
+
+        if bin0_min == bin0_max {
+            if bin1_min == bin1_max {
+                accumulate_2d(&mut out, cell(bin0_min, bin1_min), s, v, n, c, 1.0);
+            } else {
+                let delta_down = (bin1_min + 1) as PositionT - fbin1_min;
+                let delta_up = fbin1_max - bin1_max as PositionT;
+                let inv_area = 1.0 / (fbin1_max - fbin1_min);
+                accumulate_2d(
+                    &mut out,
+                    cell(bin0_min, bin1_min),
+                    s,
+                    v,
+                    n,
+                    c,
+                    inv_area * delta_down,
+                );
+                accumulate_2d(
+                    &mut out,
+                    cell(bin0_min, bin1_max),
+                    s,
+                    v,
+                    n,
+                    c,
+                    inv_area * delta_up,
+                );
+                for j in (bin1_min + 1)..bin1_max {
+                    accumulate_2d(&mut out, cell(bin0_min, j), s, v, n, c, inv_area);
+                }
+            }
+        } else if bin1_min == bin1_max {
+            let inv_area = 1.0 / (fbin0_max - fbin0_min);
+            let delta_left = (bin0_min + 1) as PositionT - fbin0_min;
+            accumulate_2d(
+                &mut out,
+                cell(bin0_min, bin1_min),
+                s,
+                v,
+                n,
+                c,
+                inv_area * delta_left,
+            );
+            let delta_right = fbin0_max - bin0_max as PositionT;
+            accumulate_2d(
+                &mut out,
+                cell(bin0_max, bin1_min),
+                s,
+                v,
+                n,
+                c,
+                inv_area * delta_right,
+            );
+            for i in (bin0_min + 1)..bin0_max {
+                accumulate_2d(&mut out, cell(i, bin1_min), s, v, n, c, inv_area);
+            }
+        } else {
+            // pyFAI's literal `1.0 / (Δbin0) * (Δbin1)` — operator order makes this
+            // `(1/Δbin0)·Δbin1`, NOT `1/(Δbin0·Δbin1)`; reproduce it verbatim.
+            let inv_area = 1.0 / (fbin0_max - fbin0_min) * (fbin1_max - fbin1_min);
+            let delta_left = (bin0_min + 1) as PositionT - fbin0_min;
+            let delta_right = fbin0_max - bin0_max as PositionT;
+            let delta_down = (bin1_min + 1) as PositionT - fbin1_min;
+            let delta_up = fbin1_max - bin1_max as PositionT;
+            accumulate_2d(
+                &mut out,
+                cell(bin0_min, bin1_min),
+                s,
+                v,
+                n,
+                c,
+                inv_area * delta_left * delta_down,
+            );
+            accumulate_2d(
+                &mut out,
+                cell(bin0_min, bin1_max),
+                s,
+                v,
+                n,
+                c,
+                inv_area * delta_left * delta_up,
+            );
+            accumulate_2d(
+                &mut out,
+                cell(bin0_max, bin1_min),
+                s,
+                v,
+                n,
+                c,
+                inv_area * delta_right * delta_down,
+            );
+            accumulate_2d(
+                &mut out,
+                cell(bin0_max, bin1_max),
+                s,
+                v,
+                n,
+                c,
+                inv_area * delta_right * delta_up,
+            );
+            for i in (bin0_min + 1)..bin0_max {
+                accumulate_2d(
+                    &mut out,
+                    cell(i, bin1_min),
+                    s,
+                    v,
+                    n,
+                    c,
+                    inv_area * delta_down,
+                );
+                for j in (bin1_min + 1)..bin1_max {
+                    accumulate_2d(&mut out, cell(i, j), s, v, n, c, inv_area);
+                }
+                accumulate_2d(&mut out, cell(i, bin1_max), s, v, n, c, inv_area * delta_up);
+            }
+            for j in (bin1_min + 1)..bin1_max {
+                accumulate_2d(
+                    &mut out,
+                    cell(bin0_min, j),
+                    s,
+                    v,
+                    n,
+                    c,
+                    inv_area * delta_left,
+                );
+                accumulate_2d(
+                    &mut out,
+                    cell(bin0_max, j),
+                    s,
+                    v,
+                    n,
+                    c,
+                    inv_area * delta_right,
+                );
             }
         }
     }

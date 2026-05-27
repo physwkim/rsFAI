@@ -48,6 +48,7 @@ use rsfai_integrate::{
     histogram1d as rs_histogram1d, histogram1d_bbox as rs_histogram1d_bbox,
     histogram1d_full as rs_histogram1d_full, histogram2d as rs_histogram2d,
     histogram2d_bbox as rs_histogram2d_bbox, histogram2d_full as rs_histogram2d_full,
+    histogram2d_pseudo as rs_histogram2d_pseudo,
     histogram_preproc as rs_histogram_preproc, lut_integrate1d as rs_lut_integrate1d,
     lut_integrate2d as rs_lut_integrate2d, Bbox2dBounds, Csc, Csr, CsrIntegrate1d, Hist2dOptions,
     Integrate1d, Integrate2d, Lut,
@@ -457,6 +458,46 @@ fn histogram2d_full<'py>(
         pos1_period,
     };
     let r = rs_histogram2d_full(corners_s, prep_s, mask_slice(&mask)?, bins, &bounds, em, empty);
+    integrate2d_to_dict(py, &r)
+}
+
+/// `histogram2d_pseudo`: 2D pseudo pixel-splitting histogram
+/// (`pseudoSplit2D_engine`, 2D only). `corners` is the `(npix, 4, 2)` array
+/// pre-flattened to f64. The engine forwards no `pos1_period` (boundaries use
+/// `calc_boundaries` with `clip_pos1=False`), so unlike `histogram2d_full` this
+/// takes no `pos1_period`. Returns a dict of the `Integrate2dtpl` fields; the 2D
+/// arrays are flat in (azimuthal, radial) C-order — reshape to `(bins_azim,
+/// bins_rad)`.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (
+    corners, prep, *, bins, mask=None,
+    allow_pos0_neg=false, chi_disc_at_pi=true, error_model=0, empty=0.0,
+))]
+fn histogram2d_pseudo<'py>(
+    py: Python<'py>,
+    corners: PyReadonlyArray1<'py, f64>,
+    prep: PyReadonlyArray2<'py, f32>,
+    bins: (usize, usize),
+    mask: Option<PyReadonlyArray1<'py, i8>>,
+    allow_pos0_neg: bool,
+    chi_disc_at_pi: bool,
+    error_model: i32,
+    empty: f32,
+) -> PyResult<Bound<'py, PyDict>> {
+    let corners_s = as_slice_1d(&corners)?;
+    let prep_s = as_slice_2d(&prep)?;
+    let em = self::error_model(error_model)?;
+    let r = rs_histogram2d_pseudo(
+        corners_s,
+        prep_s,
+        mask_slice(&mask)?,
+        bins,
+        allow_pos0_neg,
+        chi_disc_at_pi,
+        em,
+        empty,
+    );
     integrate2d_to_dict(py, &r)
 }
 
@@ -1372,6 +1413,7 @@ fn rsfai(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(histogram2d_bbox, m)?)?;
     m.add_function(wrap_pyfunction!(histogram1d_full, m)?)?;
     m.add_function(wrap_pyfunction!(histogram2d_full, m)?)?;
+    m.add_function(wrap_pyfunction!(histogram2d_pseudo, m)?)?;
     m.add_function(wrap_pyfunction!(build_bbox_csr_1d, m)?)?;
     m.add_function(wrap_pyfunction!(build_bbox_csr_2d, m)?)?;
     m.add_function(wrap_pyfunction!(build_full_csr_1d, m)?)?;

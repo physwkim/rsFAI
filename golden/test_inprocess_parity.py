@@ -198,6 +198,8 @@ def run_rsfai(d, cfg):
             return run_rsfai_2d_bbox_histogram(d, cfg, prep, mask), None
         if split == "full":
             return run_rsfai_2d_full_histogram(d, cfg, prep, mask), None
+        if split == "pseudo":
+            return run_rsfai_2d_pseudo_histogram(d, cfg, prep, mask), None
         return run_rsfai_2d_histogram(d, cfg, prep, mask), None
 
     if algo == "lut":
@@ -360,6 +362,20 @@ def run_rsfai_2d_full_histogram(d, cfg, prep, mask):
         corners, prep, bins=(cfg["npt_rad"], cfg["npt_azim"]), mask=mask,
         allow_pos0_neg=False, chi_disc_at_pi=cfg["chi_disc_at_pi"],
         pos1_period=cfg["pos1_period"], error_model=cfg["error_model_code"], empty=0.0,
+    )
+    return _fields_2d(out, cfg)
+
+
+def run_rsfai_2d_pseudo_histogram(d, cfg, prep, mask):
+    # Pseudo pixel-splitting histogram: corners widened to f64, flattened. The
+    # engine forwards no pos1_period (calc_boundaries clip_pos1=False); the
+    # integrator passes chiDiscAtPi=self.chiDiscAtPi and
+    # allow_pos0_neg=not radial_unit.positive (False for q).
+    corners = np.ascontiguousarray(load(d, "corners").astype(np.float64).reshape(-1))
+    out = rsfai.histogram2d_pseudo(
+        corners, prep, bins=(cfg["npt_rad"], cfg["npt_azim"]), mask=mask,
+        allow_pos0_neg=False, chi_disc_at_pi=cfg["chi_disc_at_pi"],
+        error_model=cfg["error_model_code"], empty=0.0,
     )
     return _fields_2d(out, cfg)
 

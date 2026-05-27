@@ -28,6 +28,12 @@
 //!   `fullSplit2D_engine`), the `("full", "histogram", "cython")` paths — same
 //!   trapezoidal overlap machinery as the full-CSR build, scattered straight
 //!   into bins.
+//! - The pseudo pixel-splitting histogram engine, [`histogram2d_pseudo`]
+//!   (`ext/splitPixel.pyx` `pseudoSplit2D_engine`), the
+//!   `("pseudo", "histogram", "cython")` 2D path (2D only — there is no 1D pseudo
+//!   engine). Each pixel is approximated by an axis-aligned rectangle carrying the
+//!   pixel's true `area4` quadrilateral area at the aspect ratio of its corner
+//!   bounding box, then scattered with the same separable bbox split.
 //! - The CSC paths, [`build_bbox_csc_1d`] / [`build_bbox_csc_2d`] /
 //!   [`build_full_csc_1d`] / [`build_full_csc_2d`] (build) + [`csc_integrate1d`] /
 //!   [`csc_integrate2d`] (apply), from `ext/splitBBoxCSC.pyx` /
@@ -44,9 +50,10 @@
 //! Per-pixel maps and CSR apply accumulate bit-exactly. The no-split histogram
 //! scatter is rayon-parallel and validated at relative error `<= 1e-6` because
 //! its f64 add order across pixels is non-deterministic. The direct-split
-//! histogram scatters (bbox and full) run **serially in pixel-index order**:
-//! their fractional split coefficients make per-bin f64 sums order-dependent, so
-//! serial accumulation reproduces the single-threaded pyFAI golden bit-for-bit.
+//! histogram scatters (bbox, full, and pseudo) run **serially in pixel-index
+//! order**: their fractional split coefficients make per-bin f64 sums
+//! order-dependent, so serial accumulation reproduces the single-threaded pyFAI
+//! golden bit-for-bit.
 //! Golden generation is single-threaded.
 
 pub mod csc;
@@ -70,4 +77,6 @@ pub use lut::{
     build_bbox_lut_1d, build_bbox_lut_2d, build_full_lut_1d, build_full_lut_2d, lut_integrate1d,
     lut_integrate2d, Lut,
 };
-pub use split_histogram::{histogram1d_bbox, histogram1d_full, histogram2d_bbox, histogram2d_full};
+pub use split_histogram::{
+    histogram1d_bbox, histogram1d_full, histogram2d_bbox, histogram2d_full, histogram2d_pseudo,
+};
