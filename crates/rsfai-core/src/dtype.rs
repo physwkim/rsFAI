@@ -68,6 +68,14 @@ impl ErrorModel {
             ErrorModel::Azimuthal => 3,
         }
     }
+
+    /// Whether the variance is taken as the signal (`max(1.0, data)`), matching
+    /// pyFAI's `ErrorModel.poissonian`. True for Poisson (and Hybrid, which is
+    /// not yet modelled here); false otherwise.
+    #[inline]
+    pub fn poissonian(self) -> bool {
+        matches!(self, ErrorModel::Poisson)
+    }
 }
 
 #[cfg(test)]
