@@ -390,6 +390,7 @@ version = "0.0.0"
 dependencies = [
  "ndarray",
  "rsfai-core",
+ "rsfai-detectors",
  "thiserror",
 ]
 
