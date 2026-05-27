@@ -176,12 +176,21 @@ def generate(detector_name, poni_image, configs):
         # consumes. dtype defaults to float32 (data_t) — matching pyFAI.
         em = _error_model(error_model)
         em_code = int(em)
+        # The integrator masks pixels at the detector's dummy value (Pilatus
+        # marks dead/gap pixels as -2 with a ±1.5 tolerance). integrate1d_ng
+        # derives these via _normalize_dummies(None, None, data) when the caller
+        # passes no dummy, then feeds them to preproc. Reproduce that *exactly*
+        # so the dumped preproc is the engine's true input — omitting the dummy
+        # leaves a handful of dead pixels valid and shifts the binned sums.
+        dummy_v, delta_dummy_v = ai._normalize_dummies(None, None, data)
         preq = ext_preproc.preproc(
             data.astype(np.float32),
             solidangle=solidangle,
             polarization=polarization,
             normalization_factor=normalization_factor,
             mask=mask,
+            dummy=dummy_v,
+            delta_dummy=delta_dummy_v,
             error_model=em,
             split_result=4,  # -> (signal, variance, norm, count)
         )
@@ -266,6 +275,12 @@ def generate(detector_name, poni_image, configs):
                 "normalization_factor": normalization_factor,
                 "radial_range": radial_range,
                 "azimuth_range": azimuth_range,
+                # Dummy (dead/gap-pixel) masking the integrator applies, derived
+                # from the detector. Recorded as f32-exact floats so the Rust
+                # preproc test can reproduce the engine's masking (f32→f64→f32
+                # round-trips losslessly). delta_dummy may be null (exact match).
+                "dummy": float(dummy_v),
+                "delta_dummy": None if delta_dummy_v is None else float(delta_dummy_v),
             },
             "geometry": geom,
             "detector": det,

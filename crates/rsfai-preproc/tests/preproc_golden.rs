@@ -76,12 +76,24 @@ fn preproc4_bit_exact() {
         let code = manifest.config["error_model_code"].as_i64().unwrap_or(0) as i32;
         let poissonian = code == ErrorModel::Poisson.code();
 
+        // Dummy (dead/gap-pixel) masking the integrator applies, recorded in the
+        // manifest as f32-exact floats. `delta_dummy` may be null (exact match,
+        // i.e. delta 0). pyFAI always passes these to preproc, so the golden
+        // `preproc.npy` reflects them — reproduce them here.
+        let dummy = manifest.config["dummy"].as_f64();
+        let check_dummy = dummy.is_some();
+        let dummy_v = dummy.unwrap_or(0.0) as f32;
+        let delta_dummy = manifest.config["delta_dummy"].as_f64().unwrap_or(0.0) as f32;
+
         let opt = PreprocOptions {
             solidangle: solidangle.as_deref(),
             polarization: polarization.as_deref(),
             mask: Some(&mask),
             normalization_factor: norm,
             poissonian,
+            check_dummy,
+            dummy: dummy_v,
+            delta_dummy,
             ..Default::default()
         };
         let out = preproc4(&data, &opt);
