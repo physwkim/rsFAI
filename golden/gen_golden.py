@@ -420,6 +420,21 @@ def main():
                 "polarization_factor": 0.99,
             },
             {
+                # No-split CSR: pyFAI's ("no","csr","cython") uses the SAME
+                # HistoBBox1d class as bbox-CSR but with delta=None
+                # (do_split=False), so each pixel's bounding box collapses to its
+                # centre -> one coef-1.0 entry per pixel. Mathematically equals the
+                # no-split histogram, but the CSR apply reduces per-bin (ascending
+                # pixel index) instead of in pixel-scan order, so the bits differ
+                # -> its own golden. Poisson exercises the variance fields.
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("no", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": None,
+            },
+            {
                 # 2D histogram (no split): bins each pixel centre into a
                 # (radial, azimuthal) cell via histogram2d_engine. errnone exercises
                 # the cnt>0 reduction without the variance branch.
@@ -477,6 +492,20 @@ def main():
                 "npt_azim": 36,
                 "unit": "q_nm^-1",
                 "method": ("full", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # 2D no-split CSR: HistoBBox2d with delta=None -> each pixel
+                # centre to one (radial, azimuthal) cell, coef 1.0. Same apply
+                # (CsrIntegrator.integrate_ng) as 2D bbox-CSR. chiDiscAtPi default
+                # True (not forwarded), pos1_period = CHI_DEG.period (clip flag).
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("no", "csr", "cython"),
                 "error_model": "poisson",
                 "correct_solid_angle": True,
                 "polarization_factor": 0.99,

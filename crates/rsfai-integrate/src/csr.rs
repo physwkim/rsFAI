@@ -236,18 +236,20 @@ pub struct Bbox2dBounds {
     pub pos1_period: PositionT,
 }
 
-/// 2D bbox boundaries — port of `calc_boundaries` with `delta != None`
-/// (`do_split = True`): folds each pixel's bounding box `c0±d0` (radial) and
-/// `c1±d1` (azimuthal), clamps the radial axis, and clips the azimuthal axis
-/// with f32 π (see [`Bbox2dBounds`]). Returns `(pos0_min, pos0_maxin, pos1_min,
-/// pos1_maxin)`; the caller applies [`calc_upper_bound`] to the `*_maxin`
-/// values. The `±INF` seed yields the same fold as pyFAI's "seed with the first
-/// unmasked pixel's box".
+/// 2D bbox boundaries — port of `calc_boundaries`: folds each pixel's bounding
+/// box `c0±d0` (radial) and `c1±d1` (azimuthal), clamps the radial axis, and
+/// clips the azimuthal axis with f32 π (see [`Bbox2dBounds`]). `delta_pos0`/
+/// `delta_pos1` are `Some` for bbox splitting (`do_split = True`) or `None` for
+/// the no-split path (pyFAI's `if dpos0 is None: do_split = False`), where each
+/// pixel's box collapses to its center (`d = 0`). Returns `(pos0_min,
+/// pos0_maxin, pos1_min, pos1_maxin)`; the caller applies [`calc_upper_bound`]
+/// to the `*_maxin` values. The `±INF` seed yields the same fold as pyFAI's
+/// "seed with the first unmasked pixel's box".
 fn calc_boundaries_2d(
     pos0: &[PositionT],
-    delta_pos0: &[PositionT],
+    delta_pos0: Option<&[PositionT]>,
     pos1: &[PositionT],
-    delta_pos1: &[PositionT],
+    delta_pos1: Option<&[PositionT]>,
     mask: Option<&[i8]>,
     bounds: &Bbox2dBounds,
 ) -> (PositionT, PositionT, PositionT, PositionT) {
@@ -262,11 +264,13 @@ fn calc_boundaries_2d(
             }
         }
         let c0 = pos0[idx];
-        let d0 = delta_pos0[idx];
+        let c1 = pos1[idx];
+        let (d0, d1) = match (delta_pos0, delta_pos1) {
+            (Some(a), Some(b)) => (a[idx], b[idx]),
+            _ => (0.0, 0.0),
+        };
         pos0_max = pos0_max.max(c0 + d0);
         pos0_min = pos0_min.min(c0 - d0);
-        let c1 = pos1[idx];
-        let d1 = delta_pos1[idx];
         pos1_max = pos1_max.max(c1 + d1);
         pos1_min = pos1_min.min(c1 - d1);
     }
@@ -290,16 +294,20 @@ fn calc_boundaries_2d(
 /// Build the 2D bbox CSR matrix and the (unscaled) radial / radian azimuthal bin
 /// centers — port of `SplitBBoxIntegrator.calc_lut_2d`. `pos0`/`delta_pos0` are
 /// the unscaled radial center / half-width; `pos1`/`delta_pos1` the azimuthal
-/// (chi, radians) center / half-width per pixel. Masked pixels (`mask[i] != 0`)
-/// are skipped. `bins` is `(radial, azimuthal)`. The output bin index is
-/// `bin0·bins1 + bin1` (radial-major); a pixel confined to one cell gets coef
-/// 1.0, otherwise its overlap fractions (computed in f64, downcast to f32) tile
-/// the spanned cells. Returns `(csr, bin_centers0, bin_centers1)`.
+/// (chi, radians) center / half-width per pixel. `delta_pos0`/`delta_pos1` are
+/// both `Some` for bbox splitting or both `None` for the no-split path — pyFAI's
+/// `("no", "csr", …)` reuses this same `HistoBBox2d` with `delta=None`, gating
+/// `do_split = False` so every unmasked pixel becomes a single coef-1.0 entry at
+/// its center cell. Masked pixels (`mask[i] != 0`) are skipped. `bins` is
+/// `(radial, azimuthal)`. The output bin index is `bin0·bins1 + bin1`
+/// (radial-major); a pixel confined to one cell gets coef 1.0, otherwise its
+/// overlap fractions (computed in f64, downcast to f32) tile the spanned cells.
+/// Returns `(csr, bin_centers0, bin_centers1)`.
 pub fn build_bbox_csr_2d(
     pos0: &[PositionT],
-    delta_pos0: &[PositionT],
+    delta_pos0: Option<&[PositionT]>,
     pos1: &[PositionT],
-    delta_pos1: &[PositionT],
+    delta_pos1: Option<&[PositionT]>,
     mask: Option<&[i8]>,
     bins: (usize, usize),
     bounds: &Bbox2dBounds,
@@ -307,9 +315,20 @@ pub fn build_bbox_csr_2d(
     let (bins0, bins1) = bins;
     assert!(bins0 >= 1 && bins1 >= 1, "bins must be >= 1 in each dim");
     let size = pos0.len();
-    assert_eq!(delta_pos0.len(), size, "delta_pos0 length mismatch");
     assert_eq!(pos1.len(), size, "pos1 length mismatch");
-    assert_eq!(delta_pos1.len(), size, "delta_pos1 length mismatch");
+    // delta_pos0/delta_pos1 are both Some (bbox split) or both None (no-split,
+    // do_split=False) — mirroring pyFAI's `if dpos0 is None: do_split=False`.
+    assert_eq!(
+        delta_pos0.is_some(),
+        delta_pos1.is_some(),
+        "delta_pos0 and delta_pos1 must both be Some (split) or both None (no-split)"
+    );
+    if let Some(d) = delta_pos0 {
+        assert_eq!(d.len(), size, "delta_pos0 length mismatch");
+    }
+    if let Some(d) = delta_pos1 {
+        assert_eq!(d.len(), size, "delta_pos1 length mismatch");
+    }
     if let Some(m) = mask {
         assert_eq!(m.len(), size, "mask length mismatch");
     }
@@ -334,9 +353,11 @@ pub fn build_bbox_csr_2d(
             }
         }
         let c0 = pos0[idx];
-        let d0 = delta_pos0[idx];
         let c1 = pos1[idx];
-        let d1 = delta_pos1[idx];
+        let (d0, d1) = match (delta_pos0, delta_pos1) {
+            (Some(a), Some(b)) => (a[idx], b[idx]),
+            _ => (0.0, 0.0),
+        };
 
         let fbin0_min = (c0 - d0 - pos0_min) / delta0; // get_bin_number
         let fbin0_max = (c0 + d0 - pos0_min) / delta0;

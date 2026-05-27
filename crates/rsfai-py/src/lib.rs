@@ -300,24 +300,39 @@ fn build_bbox_csr_1d<'py>(
 }
 
 /// `build_bbox_csr_2d`: returns `(data, indices, indptr, bin_centers0, bin_centers1)`.
+/// `delta_pos0`/`delta_pos1` are both given (bbox split) or both omitted
+/// (`("no", "csr", …)` no-split: each pixel collapses to one coef-1.0 entry).
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
-    pos0, delta_pos0, pos1, delta_pos1, *, mask=None, bins,
+    pos0, pos1, *, delta_pos0=None, delta_pos1=None, mask=None, bins,
     allow_pos0_neg=false, chi_disc_at_pi=true, pos1_period,
 ))]
 fn build_bbox_csr_2d<'py>(
     py: Python<'py>,
     pos0: PyReadonlyArray1<'py, f64>,
-    delta_pos0: PyReadonlyArray1<'py, f64>,
     pos1: PyReadonlyArray1<'py, f64>,
-    delta_pos1: PyReadonlyArray1<'py, f64>,
+    delta_pos0: Option<PyReadonlyArray1<'py, f64>>,
+    delta_pos1: Option<PyReadonlyArray1<'py, f64>>,
     mask: Option<PyReadonlyArray1<'py, i8>>,
     bins: (usize, usize),
     allow_pos0_neg: bool,
     chi_disc_at_pi: bool,
     pos1_period: f64,
 ) -> PyResult<Csr2dPy<'py>> {
+    let d0 = match &delta_pos0 {
+        Some(d) => Some(as_slice_1d(d)?),
+        None => None,
+    };
+    let d1 = match &delta_pos1 {
+        Some(d) => Some(as_slice_1d(d)?),
+        None => None,
+    };
+    if d0.is_some() != d1.is_some() {
+        return Err(PyValueError::new_err(
+            "delta_pos0 and delta_pos1 must both be given (bbox split) or both omitted (no-split)",
+        ));
+    }
     let bounds = Bbox2dBounds {
         allow_pos0_neg,
         chi_disc_at_pi,
@@ -325,9 +340,9 @@ fn build_bbox_csr_2d<'py>(
     };
     let (csr, bc0, bc1) = rs_build_bbox_csr_2d(
         as_slice_1d(&pos0)?,
-        as_slice_1d(&delta_pos0)?,
+        d0,
         as_slice_1d(&pos1)?,
-        as_slice_1d(&delta_pos1)?,
+        d1,
         mask_slice(&mask)?,
         bins,
         &bounds,

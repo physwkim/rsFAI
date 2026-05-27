@@ -155,20 +155,25 @@ def run_rsfai(d, cfg):
 
     # CSR build + apply
     npt = (cfg["npt_rad"], cfg["npt_azim"]) if dim == 2 else cfg["npt"]
-    if split == "bbox":
+    if split in ("no", "bbox"):
+        # pyFAI's ("no","csr",…) and ("bbox","csr",…) share the same HistoBBox
+        # class; no-split passes delta=None (do_split=False), collapsing each
+        # pixel to one coef-1.0 entry. Mirror that here: same builder, deltas
+        # only for the bbox split.
+        do_split = split == "bbox"
         if dim == 1:
             pos0 = np.ascontiguousarray(load(d, "pos0_center_unscaled").reshape(-1))
-            dpos0 = np.ascontiguousarray(load(d, "pos0_delta").reshape(-1))
+            dpos0 = np.ascontiguousarray(load(d, "pos0_delta").reshape(-1)) if do_split else None
             data, indices, indptr, bc = rsfai.build_bbox_csr_1d(
                 pos0, delta_pos0=dpos0, mask=mask, bins=npt, allow_pos0_neg=False
             )
         else:
             pos0 = np.ascontiguousarray(load(d, "pos0_center_unscaled").reshape(-1))
-            dpos0 = np.ascontiguousarray(load(d, "pos0_delta").reshape(-1))
             pos1 = np.ascontiguousarray(load(d, "chi_center").reshape(-1))
-            dpos1 = np.ascontiguousarray(load(d, "chi_delta").reshape(-1))
+            dpos0 = np.ascontiguousarray(load(d, "pos0_delta").reshape(-1)) if do_split else None
+            dpos1 = np.ascontiguousarray(load(d, "chi_delta").reshape(-1)) if do_split else None
             data, indices, indptr, bc0, bc1 = rsfai.build_bbox_csr_2d(
-                pos0, dpos0, pos1, dpos1, mask=mask, bins=npt,
+                pos0, pos1, delta_pos0=dpos0, delta_pos1=dpos1, mask=mask, bins=npt,
                 allow_pos0_neg=False, chi_disc_at_pi=cfg["chi_disc_at_pi"],
                 pos1_period=cfg["pos1_period"],
             )
