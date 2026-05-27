@@ -29,7 +29,7 @@
 
 use rsfai_core::dtype::{calc_upper_bound, AccT, DataT, ErrorModel, IndexT, PositionT};
 
-use crate::histogram::numpy_linspace;
+use crate::histogram::{numpy_linspace, Integrate2d};
 
 /// A built CSR sparse matrix (bin-major), matching pyFAI's `(data, indices,
 /// indptr)` LUT tuple. For output bin `b`, the entries `indptr[b]..indptr[b+1]`
@@ -210,6 +210,230 @@ fn flatten_csr(bin_idx: &[Vec<IndexT>], bin_coef: &[Vec<DataT>]) -> Csr {
         indices,
         indptr,
     }
+}
+
+// ---------------------------------------------------------------------------
+// BBox pixel splitting (2D): port of `SplitBBoxIntegrator.calc_lut_2d`
+// (`ext/splitBBox_common.pyx`) for the build, applied by [`csr_integrate2d`].
+// Each pixel's bounding box (centre ± delta in both radial and azimuthal) is
+// clipped against the `(radial, azimuthal)` grid; the overlap fractions are the
+// CSR coefficients. Output bin index is `bin0·bins1 + bin1` (radial-major).
+
+/// Axis-bounding policy for the 2D bbox boundary fold — the `calc_boundaries`
+/// knobs passed as one unit. `allow_pos0_neg = false` clamps the radial axis to
+/// `>= 0`; when `pos1_period > 0` the azimuthal axis is clipped to `[-π, π]`
+/// (`chi_disc_at_pi`) or `[0, 2π]`, using **f32 π** (`float pi = <float> M_PI`).
+/// The 1D CSR setup (`common.py`) does not forward `chiDiscAtPi` to
+/// `HistoBBox2d`, so it takes the constructor default `true`; `pos1_period` is
+/// `azimuth_unit.period` (acts only as the clip flag — the range is radian ±π).
+#[derive(Debug, Clone)]
+pub struct Bbox2dBounds {
+    /// Allow the radial axis below 0 (false clamps min/max to `>= 0`).
+    pub allow_pos0_neg: bool,
+    /// Azimuthal discontinuity at π (true) vs 0/2π (false) — sets the clip range.
+    pub chi_disc_at_pi: bool,
+    /// Azimuthal period; `> 0` turns on the `[-π, π]` clip.
+    pub pos1_period: PositionT,
+}
+
+/// 2D bbox boundaries — port of `calc_boundaries` with `delta != None`
+/// (`do_split = True`): folds each pixel's bounding box `c0±d0` (radial) and
+/// `c1±d1` (azimuthal), clamps the radial axis, and clips the azimuthal axis
+/// with f32 π (see [`Bbox2dBounds`]). Returns `(pos0_min, pos0_maxin, pos1_min,
+/// pos1_maxin)`; the caller applies [`calc_upper_bound`] to the `*_maxin`
+/// values. The `±INF` seed yields the same fold as pyFAI's "seed with the first
+/// unmasked pixel's box".
+fn calc_boundaries_2d(
+    pos0: &[PositionT],
+    delta_pos0: &[PositionT],
+    pos1: &[PositionT],
+    delta_pos1: &[PositionT],
+    mask: Option<&[i8]>,
+    bounds: &Bbox2dBounds,
+) -> (PositionT, PositionT, PositionT, PositionT) {
+    let mut pos0_min = PositionT::INFINITY;
+    let mut pos0_max = PositionT::NEG_INFINITY;
+    let mut pos1_min = PositionT::INFINITY;
+    let mut pos1_max = PositionT::NEG_INFINITY;
+    for idx in 0..pos0.len() {
+        if let Some(m) = mask {
+            if m[idx] != 0 {
+                continue;
+            }
+        }
+        let c0 = pos0[idx];
+        let d0 = delta_pos0[idx];
+        pos0_max = pos0_max.max(c0 + d0);
+        pos0_min = pos0_min.min(c0 - d0);
+        let c1 = pos1[idx];
+        let d1 = delta_pos1[idx];
+        pos1_max = pos1_max.max(c1 + d1);
+        pos1_min = pos1_min.min(c1 - d1);
+    }
+    if !bounds.allow_pos0_neg {
+        pos0_min = pos0_min.max(0.0);
+        pos0_max = pos0_max.max(0.0);
+    }
+    if bounds.pos1_period > 0.0 {
+        // pyFAI: (2 - chiDiscAtPi) * pi with `pi` an f32 and chiDiscAtPi an int;
+        // the product is evaluated in f32 then widened to f64.
+        let cd: i32 = if bounds.chi_disc_at_pi { 1 } else { 0 };
+        let pi32 = std::f32::consts::PI;
+        let max_bound = ((2 - cd) as f32 * pi32) as PositionT;
+        let min_bound = (-(cd as f32) * pi32) as PositionT;
+        pos1_max = pos1_max.min(max_bound);
+        pos1_min = pos1_min.max(min_bound);
+    }
+    (pos0_min, pos0_max, pos1_min, pos1_max)
+}
+
+/// Build the 2D bbox CSR matrix and the (unscaled) radial / radian azimuthal bin
+/// centers — port of `SplitBBoxIntegrator.calc_lut_2d`. `pos0`/`delta_pos0` are
+/// the unscaled radial center / half-width; `pos1`/`delta_pos1` the azimuthal
+/// (chi, radians) center / half-width per pixel. Masked pixels (`mask[i] != 0`)
+/// are skipped. `bins` is `(radial, azimuthal)`. The output bin index is
+/// `bin0·bins1 + bin1` (radial-major); a pixel confined to one cell gets coef
+/// 1.0, otherwise its overlap fractions (computed in f64, downcast to f32) tile
+/// the spanned cells. Returns `(csr, bin_centers0, bin_centers1)`.
+pub fn build_bbox_csr_2d(
+    pos0: &[PositionT],
+    delta_pos0: &[PositionT],
+    pos1: &[PositionT],
+    delta_pos1: &[PositionT],
+    mask: Option<&[i8]>,
+    bins: (usize, usize),
+    bounds: &Bbox2dBounds,
+) -> (Csr, Vec<PositionT>, Vec<PositionT>) {
+    let (bins0, bins1) = bins;
+    assert!(bins0 >= 1 && bins1 >= 1, "bins must be >= 1 in each dim");
+    let size = pos0.len();
+    assert_eq!(delta_pos0.len(), size, "delta_pos0 length mismatch");
+    assert_eq!(pos1.len(), size, "pos1 length mismatch");
+    assert_eq!(delta_pos1.len(), size, "delta_pos1 length mismatch");
+    if let Some(m) = mask {
+        assert_eq!(m.len(), size, "mask length mismatch");
+    }
+
+    let (pos0_min, pos0_maxin, pos1_min, pos1_maxin) =
+        calc_boundaries_2d(pos0, delta_pos0, pos1, delta_pos1, mask, bounds);
+    let pos0_max = calc_upper_bound(pos0_maxin);
+    let pos1_max = calc_upper_bound(pos1_maxin);
+    let delta0 = (pos0_max - pos0_min) / (bins0 as PositionT);
+    let delta1 = (pos1_max - pos1_min) / (bins1 as PositionT);
+
+    let n_out = bins0 * bins1;
+    let mut bin_idx: Vec<Vec<IndexT>> = vec![Vec::new(); n_out];
+    let mut bin_coef: Vec<Vec<DataT>> = vec![Vec::new(); n_out];
+    let b0i = bins0 as i64;
+    let b1i = bins1 as i64;
+
+    for idx in 0..size {
+        if let Some(m) = mask {
+            if m[idx] != 0 {
+                continue;
+            }
+        }
+        let c0 = pos0[idx];
+        let d0 = delta_pos0[idx];
+        let c1 = pos1[idx];
+        let d1 = delta_pos1[idx];
+
+        let fbin0_min = (c0 - d0 - pos0_min) / delta0; // get_bin_number
+        let fbin0_max = (c0 + d0 - pos0_min) / delta0;
+        let fbin1_min = (c1 - d1 - pos1_min) / delta1;
+        let fbin1_max = (c1 + d1 - pos1_min) / delta1;
+
+        let mut bin0_min = fbin0_min as i64; // <Py_ssize_t>: trunc toward zero
+        let mut bin0_max = fbin0_max as i64;
+        let mut bin1_min = fbin1_min as i64;
+        let mut bin1_max = fbin1_max as i64;
+
+        if bin0_max < 0 || bin0_min >= b0i || bin1_max < 0 || bin1_min >= b1i {
+            continue;
+        }
+        bin0_max = bin0_max.min(b0i - 1);
+        bin0_min = bin0_min.max(0);
+        bin1_max = bin1_max.min(b1i - 1);
+        bin1_min = bin1_min.max(0);
+
+        let i = idx as IndexT;
+        let mut insert = |bin0: i64, bin1: i64, coef: DataT| {
+            let b = (bin0 * b1i + bin1) as usize;
+            bin_idx[b].push(i);
+            bin_coef[b].push(coef);
+        };
+
+        if bin0_min == bin0_max {
+            if bin1_min == bin1_max {
+                // All of the pixel falls in a single bin.
+                insert(bin0_min, bin1_min, 1.0);
+            } else {
+                // Spread over >1 bin in dim 1 only.
+                let delta_down = (bin1_min + 1) as PositionT - fbin1_min;
+                let delta_up = fbin1_max - bin1_max as PositionT;
+                let inv_area = 1.0 / (fbin1_max - fbin1_min);
+                insert(bin0_min, bin1_min, (inv_area * delta_down) as DataT);
+                insert(bin0_min, bin1_max, (inv_area * delta_up) as DataT);
+                for j in (bin1_min + 1)..bin1_max {
+                    insert(bin0_min, j, inv_area as DataT);
+                }
+            }
+        } else if bin1_min == bin1_max {
+            // Spread over >1 bin in dim 0 only.
+            let inv_area = 1.0 / (fbin0_max - fbin0_min);
+            let delta_left = (bin0_min + 1) as PositionT - fbin0_min;
+            insert(bin0_min, bin1_min, (inv_area * delta_left) as DataT);
+            let delta_right = fbin0_max - bin0_max as PositionT;
+            insert(bin0_max, bin1_min, (inv_area * delta_right) as DataT);
+            for ii in (bin0_min + 1)..bin0_max {
+                insert(ii, bin1_min, inv_area as DataT);
+            }
+        } else {
+            // Spread over n bins in dim 0 and m bins in dim 1.
+            let delta_left = (bin0_min + 1) as PositionT - fbin0_min;
+            let delta_right = fbin0_max - bin0_max as PositionT;
+            let delta_down = (bin1_min + 1) as PositionT - fbin1_min;
+            let delta_up = fbin1_max - bin1_max as PositionT;
+            let inv_area = 1.0 / ((fbin0_max - fbin0_min) * (fbin1_max - fbin1_min));
+
+            insert(
+                bin0_min,
+                bin1_min,
+                (inv_area * delta_left * delta_down) as DataT,
+            );
+            insert(
+                bin0_min,
+                bin1_max,
+                (inv_area * delta_left * delta_up) as DataT,
+            );
+            insert(
+                bin0_max,
+                bin1_min,
+                (inv_area * delta_right * delta_down) as DataT,
+            );
+            insert(
+                bin0_max,
+                bin1_max,
+                (inv_area * delta_right * delta_up) as DataT,
+            );
+
+            for ii in (bin0_min + 1)..bin0_max {
+                insert(ii, bin1_min, (inv_area * delta_down) as DataT);
+                for j in (bin1_min + 1)..bin1_max {
+                    insert(ii, j, inv_area as DataT);
+                }
+                insert(ii, bin1_max, (inv_area * delta_up) as DataT);
+            }
+            for j in (bin1_min + 1)..bin1_max {
+                insert(bin0_min, j, (inv_area * delta_left) as DataT);
+                insert(bin0_max, j, (inv_area * delta_right) as DataT);
+            }
+        }
+    }
+
+    let bin_centers0 = numpy_linspace(pos0_min + 0.5 * delta0, pos0_max - 0.5 * delta0, bins0);
+    let bin_centers1 = numpy_linspace(pos1_min + 0.5 * delta1, pos1_max - 0.5 * delta1, bins1);
+    (flatten_csr(&bin_idx, &bin_coef), bin_centers0, bin_centers1)
 }
 
 // ---------------------------------------------------------------------------
@@ -510,24 +734,35 @@ pub fn build_full_csr_1d(
     (flatten_csr(&bin_idx, &bin_coef), bin_centers)
 }
 
-/// Apply a CSR matrix to preprocessed rows — port of `CsrIntegrator.
-/// integrate_ng`. `prep` is the flat `[signal, variance, norm, count]`-per-pixel
-/// f32 array (the `preproc(..., split_result=4)` output). `bin_centers` are the
-/// unscaled centers from [`build_bbox_csr_1d`]. `empty` fills bins with no
-/// normalization (pyFAI's `self.empty`, default `0.0`).
-///
-/// Per-bin accumulation over the CSR row is bit-reproducible regardless of
-/// threads: pyFAI's `prange` assigns each output bin wholly to one thread.
-pub fn csr_integrate1d(
-    csr: &Csr,
-    prep: &[DataT],
-    bin_centers: Vec<PositionT>,
-    error_model: ErrorModel,
-    empty: DataT,
-) -> CsrIntegrate1d {
-    let bins = bin_centers.len();
-    assert_eq!(csr.indptr.len(), bins + 1, "indptr length must be bins + 1");
+/// The per-bin reduction outputs shared by the 1D and 2D CSR apply — the body of
+/// `CsrIntegrator.integrate_ng` before the dimension-specific packaging. All
+/// vectors are flat, indexed by output bin (length `indptr.len() - 1`). `sum_*`
+/// / `count` are f64 (`acc_t`); `intensity`/`std`/`sem` are f32.
+struct CsrReduction {
+    sum_signal: Vec<AccT>,
+    sum_variance: Vec<AccT>,
+    sum_normalization: Vec<AccT>,
+    sum_norm_sq: Vec<AccT>,
+    count: Vec<AccT>,
+    intensity: Vec<DataT>,
+    std: Vec<DataT>,
+    sem: Vec<DataT>,
+}
 
+/// The per-output-bin weighted-mean reduction at the heart of
+/// `CsrIntegrator.integrate_ng`, dimension-agnostic: it iterates the
+/// `indptr.len() - 1` output bins (which is `bins` for 1D and `bins0·bins1` for
+/// 2D) and produces flat per-bin arrays. The 1D and 2D entry points differ only
+/// in how they package these (1D keeps them flat with a position axis; 2D
+/// reshapes to `(bins0, bins1)` and transposes). Every per-pixel value is
+/// promoted to f64 before the arithmetic; `sum_*` stay f64, `intensity`/`std`/
+/// `sem` are downcast to f32 (`std`/`sem` via libc double `sqrt`). The
+/// `acc_norm_sq > 0` guard mirrors pyFAI exactly.
+///
+/// Per-bin accumulation is bit-reproducible regardless of threads: pyFAI's
+/// `prange` assigns each output bin wholly to one thread.
+fn csr_reduce(csr: &Csr, prep: &[DataT], error_model: ErrorModel, empty: DataT) -> CsrReduction {
+    let bins = csr.indptr.len() - 1;
     let do_variance = error_model != ErrorModel::No;
 
     let mut sum_signal = vec![0.0f64; bins];
@@ -598,17 +833,112 @@ pub fn csr_integrate1d(
         }
     }
 
-    CsrIntegrate1d {
-        position: bin_centers,
-        intensity,
-        sigma: sem.clone(), // Integrate1dtpl position 3 (sigma) == position 9 (sem)
+    CsrReduction {
         sum_signal,
         sum_variance,
         sum_normalization,
+        sum_norm_sq,
+        count,
+        intensity,
+        std,
+        sem,
+    }
+}
+
+/// Apply a CSR matrix to preprocessed rows (1D) — port of `CsrIntegrator.
+/// integrate_ng`'s 1D return. `prep` is the flat `[signal, variance, norm,
+/// count]`-per-pixel f32 array (the `preproc(..., split_result=4)` output).
+/// `bin_centers` are the unscaled centers from [`build_bbox_csr_1d`] /
+/// [`build_full_csr_1d`]. `empty` fills bins with no normalization (pyFAI's
+/// `self.empty`, default `0.0`).
+pub fn csr_integrate1d(
+    csr: &Csr,
+    prep: &[DataT],
+    bin_centers: Vec<PositionT>,
+    error_model: ErrorModel,
+    empty: DataT,
+) -> CsrIntegrate1d {
+    let bins = bin_centers.len();
+    assert_eq!(csr.indptr.len(), bins + 1, "indptr length must be bins + 1");
+
+    let r = csr_reduce(csr, prep, error_model, empty);
+    CsrIntegrate1d {
+        position: bin_centers,
+        intensity: r.intensity,
+        sigma: r.sem.clone(), // Integrate1dtpl position 3 (sigma) == position 9 (sem)
+        sum_signal: r.sum_signal,
+        sum_variance: r.sum_variance,
+        sum_normalization: r.sum_normalization,
+        count: r.count,
+        std: r.std,
+        sem: r.sem,
+        sum_norm_sq: r.sum_norm_sq,
+    }
+}
+
+/// Apply a 2D CSR matrix to preprocessed rows — port of `CsrIntegrator.
+/// integrate_ng`'s 2D return. The reduction is identical to the 1D apply; the
+/// flat per-bin arrays (output bin `i·bins1 + j`, radial-major) are reshaped to
+/// `(bins0, bins1)` and transposed to **(azimuthal, radial)** (pyFAI's
+/// `.reshape(self.bins).T`), so cell `(azimuthal j, radial i)` lands at flat
+/// index `j·bins0 + i`. `bin_centers0`/`bin_centers1` are the unscaled radial /
+/// radian azimuthal centers from [`build_bbox_csr_2d`]; the binned sums are
+/// exposed at full f64 (`acc_t`).
+pub fn csr_integrate2d(
+    csr: &Csr,
+    prep: &[DataT],
+    bin_centers0: Vec<PositionT>,
+    bin_centers1: Vec<PositionT>,
+    error_model: ErrorModel,
+    empty: DataT,
+) -> Integrate2d {
+    let bins0 = bin_centers0.len();
+    let bins1 = bin_centers1.len();
+    assert_eq!(
+        csr.indptr.len(),
+        bins0 * bins1 + 1,
+        "indptr length must be bins0 * bins1 + 1"
+    );
+
+    let r = csr_reduce(csr, prep, error_model, empty);
+
+    let n = bins0 * bins1;
+    let mut signal = vec![0.0f64; n];
+    let mut variance = vec![0.0f64; n];
+    let mut normalization = vec![0.0f64; n];
+    let mut count = vec![0.0f64; n];
+    let mut norm_sq = vec![0.0f64; n];
+    let mut intensity = vec![0.0f32; n];
+    let mut std = vec![0.0f32; n];
+    let mut sem = vec![0.0f32; n];
+    for i in 0..bins0 {
+        for j in 0..bins1 {
+            let b = i * bins1 + j; // reduction index (radial-major)
+            let t = j * bins0 + i; // transposed (azimuthal, radial)
+            signal[t] = r.sum_signal[b];
+            variance[t] = r.sum_variance[b];
+            normalization[t] = r.sum_normalization[b];
+            count[t] = r.count[b];
+            norm_sq[t] = r.sum_norm_sq[b];
+            intensity[t] = r.intensity[b];
+            std[t] = r.std[b];
+            sem[t] = r.sem[b];
+        }
+    }
+
+    Integrate2d {
+        radial: bin_centers0,
+        azimuthal: bin_centers1,
+        bins: (bins0, bins1),
+        intensity,
+        sigma: sem.clone(), // Integrate2dtpl position 4 (sigma) == position 10 (sem)
+        signal,
+        variance,
+        normalization,
         count,
         std,
         sem,
-        sum_norm_sq,
+        norm_sq,
     }
 }
 
