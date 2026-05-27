@@ -275,15 +275,17 @@ def generate(detector_name, poni_image, configs):
                 _save(arrays, out_dir, f"out_{field}", v)
 
         # ---- Tier-A sparse matrix (CSR methods only) --------------------
-        # Match the engine to THIS config's (split, algo). ai.engines accumulates
-        # engines across every config run on this `ai`, so a bare "first CSR
-        # engine" pick would dump the bbox matrix for a full-split dataset (or
-        # vice-versa) once both have run. The method key carries split_lower /
-        # algo_lower; key off them.
+        # Match the engine to THIS config's (split, algo, dim). ai.engines
+        # accumulates engines across every config run on this `ai`, so a bare
+        # "first CSR engine" pick would dump the bbox matrix for a full-split
+        # dataset (or vice-versa) once both have run. The method key carries
+        # split_lower / algo_lower / dimension; key off all three (a 1D and a 2D
+        # bbox-CSR engine both have split_lower=="bbox").
         if method[1] == "csr":
             for m, engine_wrap in ai.engines.items():
                 if (getattr(m, "split_lower", None) != method[0]
-                        or getattr(m, "algo_lower", None) != "csr"):
+                        or getattr(m, "algo_lower", None) != "csr"
+                        or getattr(m, "dimension", None) != dim):
                     continue
                 eng = getattr(engine_wrap, "engine", engine_wrap)
                 if all(hasattr(eng, a) for a in ("data", "indices", "indptr")):
@@ -439,6 +441,23 @@ def main():
                 "npt_azim": 36,
                 "unit": "q_nm^-1",
                 "method": ("no", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # 2D bbox -> CSR, Poisson: builds the 2D LUT (calc_lut_2d) by
+                # clipping each pixel's bbox (centre ± delta in both radial and
+                # azimuthal) against the (radial, azimuthal) grid, output bin
+                # bin0*bins1 + bin1. The apply is the same CsrIntegrator.integrate_ng
+                # as 1D, reshaped to (bins0, bins1) and transposed to (azim, rad).
+                # chiDiscAtPi defaults True (not forwarded by common.py for
+                # HistoBBox2d); pos1_period = CHI_DEG.period acts as the clip flag.
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "csr", "cython"),
                 "error_model": "poisson",
                 "correct_solid_angle": True,
                 "polarization_factor": 0.99,
