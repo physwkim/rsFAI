@@ -237,17 +237,22 @@ def generate(detector_name, poni_image, configs):
                 _save(arrays, out_dir, f"out_{field}", v)
 
         # ---- Tier-A sparse matrix (CSR methods only) --------------------
-        # Only CSR configs build a CSR engine; histogram/"no" configs add none,
-        # so this loop simply finds nothing for them.
-        for m, engine_wrap in ai.engines.items():
-            if "CSR" not in str(m):
-                continue
-            eng = getattr(engine_wrap, "engine", engine_wrap)
-            if all(hasattr(eng, a) for a in ("data", "indices", "indptr")):
-                _save(arrays, out_dir, "csr_data", np.asarray(eng.data))
-                _save(arrays, out_dir, "csr_indices", np.asarray(eng.indices))
-                _save(arrays, out_dir, "csr_indptr", np.asarray(eng.indptr))
-                break
+        # Match the engine to THIS config's (split, algo). ai.engines accumulates
+        # engines across every config run on this `ai`, so a bare "first CSR
+        # engine" pick would dump the bbox matrix for a full-split dataset (or
+        # vice-versa) once both have run. The method key carries split_lower /
+        # algo_lower; key off them.
+        if method[1] == "csr":
+            for m, engine_wrap in ai.engines.items():
+                if (getattr(m, "split_lower", None) != method[0]
+                        or getattr(m, "algo_lower", None) != "csr"):
+                    continue
+                eng = getattr(engine_wrap, "engine", engine_wrap)
+                if all(hasattr(eng, a) for a in ("data", "indices", "indptr")):
+                    _save(arrays, out_dir, "csr_data", np.asarray(eng.data))
+                    _save(arrays, out_dir, "csr_indices", np.asarray(eng.indices))
+                    _save(arrays, out_dir, "csr_indptr", np.asarray(eng.indptr))
+                    break
 
         # ---- Manifest ---------------------------------------------------
         manifest = {
@@ -341,6 +346,20 @@ def main():
                 "npt": 1000,
                 "unit": "2th_deg",
                 "method": ("bbox", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # Full pixel splitting: each pixel's 4 corners are clipped against
+                # the radial bins (_recenter handles the chi discontinuity,
+                # _integrate1d the trapezoidal overlap). Builds a CSR matrix from
+                # the corner array; the apply is the same CsrIntegrator.integrate_ng
+                # as the bbox path. Exercises the corner-array build the bbox split
+                # cannot.
+                "npt": 1000,
+                "unit": "2th_deg",
+                "method": ("full", "csr", "cython"),
                 "error_model": "poisson",
                 "correct_solid_angle": True,
                 "polarization_factor": 0.99,
