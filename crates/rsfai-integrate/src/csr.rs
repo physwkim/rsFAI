@@ -1115,11 +1115,13 @@ pub fn build_full_csr_2d(
     (flatten_csr(&bin_idx, &bin_coef), bin_centers0, bin_centers1)
 }
 
-/// The per-bin reduction outputs shared by the 1D and 2D CSR apply — the body of
-/// `CsrIntegrator.integrate_ng` before the dimension-specific packaging. All
+/// The per-bin reduction outputs shared by the 1D and 2D CSR/CSC apply — the body
+/// of `CsrIntegrator.integrate_ng` before the dimension-specific packaging. All
 /// vectors are flat, indexed by output bin (length `indptr.len() - 1`). `sum_*`
-/// / `count` are f64 (`acc_t`); `intensity`/`std`/`sem` are f32.
-struct CsrReduction {
+/// / `count` are f64 (`acc_t`); `intensity`/`std`/`sem` are f32. Opaque to the
+/// CSC module, which produces it via [`finalize_reduction`] and packages it via
+/// [`reduction_to_1d`] / [`reduction_to_2d`].
+pub(crate) struct CsrReduction {
     sum_signal: Vec<AccT>,
     sum_variance: Vec<AccT>,
     sum_normalization: Vec<AccT>,
@@ -1141,6 +1143,45 @@ struct BinReduction {
     intensity: DataT,
     std: DataT,
     sem: DataT,
+}
+
+/// The per-bin weighted-mean math from the five `acc_t` accumulators — the tail
+/// of `CsrIntegrator.integrate_ng` shared by the CSR gather and the CSC scatter.
+/// `intensity = sig/norm`, `std = sqrt(var/norm²)`, `sem = sqrt(var)/norm`, all in
+/// f64 (libc double `sqrt`) then downcast to f32; the `acc_norm_sq > 0` guard and
+/// the `do_variance` gate on std/sem mirror pyFAI exactly.
+fn finalize_bin(
+    acc_sig: AccT,
+    acc_var: AccT,
+    acc_norm: AccT,
+    acc_norm_sq: AccT,
+    acc_count: AccT,
+    do_variance: bool,
+    empty: DataT,
+) -> BinReduction {
+    let (intensity, std, sem) = if acc_norm_sq > 0.0 {
+        let intensity = (acc_sig / acc_norm) as DataT;
+        if do_variance {
+            // libc double sqrt on f64 accumulators, then downcast to f32.
+            let std = (acc_var / acc_norm_sq).sqrt() as DataT;
+            let sem = (acc_var.sqrt() / acc_norm) as DataT;
+            (intensity, std, sem)
+        } else {
+            (intensity, empty, empty)
+        }
+    } else {
+        (empty, empty, empty)
+    };
+    BinReduction {
+        sum_signal: acc_sig,
+        sum_variance: acc_var,
+        sum_normalization: acc_norm,
+        sum_norm_sq: acc_norm_sq,
+        count: acc_count,
+        intensity,
+        std,
+        sem,
+    }
 }
 
 /// The per-output-bin weighted-mean reduction at the heart of
@@ -1203,30 +1244,15 @@ fn csr_reduce(csr: &Csr, prep: &[DataT], error_model: ErrorModel, empty: DataT) 
                 }
             }
 
-            let (intensity, std, sem) = if acc_norm_sq > 0.0 {
-                let intensity = (acc_sig / acc_norm) as DataT;
-                if do_variance {
-                    // libc double sqrt on f64 accumulators, then downcast to f32.
-                    let std = (acc_var / acc_norm_sq).sqrt() as DataT;
-                    let sem = (acc_var.sqrt() / acc_norm) as DataT;
-                    (intensity, std, sem)
-                } else {
-                    (intensity, empty, empty)
-                }
-            } else {
-                (empty, empty, empty)
-            };
-
-            BinReduction {
-                sum_signal: acc_sig,
-                sum_variance: acc_var,
-                sum_normalization: acc_norm,
-                sum_norm_sq: acc_norm_sq,
-                count: acc_count,
-                intensity,
-                std,
-                sem,
-            }
+            finalize_bin(
+                acc_sig,
+                acc_var,
+                acc_norm,
+                acc_norm_sq,
+                acc_count,
+                do_variance,
+                empty,
+            )
         })
         .collect();
 
@@ -1262,6 +1288,129 @@ fn csr_reduce(csr: &Csr, prep: &[DataT], error_model: ErrorModel, empty: DataT) 
     }
 }
 
+/// Run the per-bin weighted-mean tail over already-scattered accumulators — the
+/// CSC apply's reduction. The CSC integrate scatters each pixel's contributions
+/// into per-bin `acc_t` arrays (pixel-major, the order pyFAI's `CscIntegrator.
+/// integrate_ng` uses); this then applies [`finalize_bin`] per bin and packages
+/// the flat [`CsrReduction`], identical to [`csr_reduce`]'s tail. The five slices
+/// share length = number of output bins.
+pub(crate) fn finalize_reduction(
+    acc_sig: &[AccT],
+    acc_var: &[AccT],
+    acc_norm: &[AccT],
+    acc_norm_sq: &[AccT],
+    acc_count: &[AccT],
+    do_variance: bool,
+    empty: DataT,
+) -> CsrReduction {
+    let bins = acc_sig.len();
+    let mut sum_signal = Vec::with_capacity(bins);
+    let mut sum_variance = Vec::with_capacity(bins);
+    let mut sum_normalization = Vec::with_capacity(bins);
+    let mut sum_norm_sq = Vec::with_capacity(bins);
+    let mut count = Vec::with_capacity(bins);
+    let mut intensity = Vec::with_capacity(bins);
+    let mut std = Vec::with_capacity(bins);
+    let mut sem = Vec::with_capacity(bins);
+    for b in 0..bins {
+        let br = finalize_bin(
+            acc_sig[b],
+            acc_var[b],
+            acc_norm[b],
+            acc_norm_sq[b],
+            acc_count[b],
+            do_variance,
+            empty,
+        );
+        sum_signal.push(br.sum_signal);
+        sum_variance.push(br.sum_variance);
+        sum_normalization.push(br.sum_normalization);
+        sum_norm_sq.push(br.sum_norm_sq);
+        count.push(br.count);
+        intensity.push(br.intensity);
+        std.push(br.std);
+        sem.push(br.sem);
+    }
+    CsrReduction {
+        sum_signal,
+        sum_variance,
+        sum_normalization,
+        sum_norm_sq,
+        count,
+        intensity,
+        std,
+        sem,
+    }
+}
+
+/// Package a [`CsrReduction`] as the 1D `Integrate1dtpl` field set. Shared by the
+/// CSR and CSC 1D apply (they differ only in how the reduction was accumulated).
+pub(crate) fn reduction_to_1d(r: CsrReduction, bin_centers: Vec<PositionT>) -> CsrIntegrate1d {
+    CsrIntegrate1d {
+        position: bin_centers,
+        intensity: r.intensity,
+        sigma: r.sem.clone(), // Integrate1dtpl position 3 (sigma) == position 9 (sem)
+        sum_signal: r.sum_signal,
+        sum_variance: r.sum_variance,
+        sum_normalization: r.sum_normalization,
+        count: r.count,
+        std: r.std,
+        sem: r.sem,
+        sum_norm_sq: r.sum_norm_sq,
+    }
+}
+
+/// Package a [`CsrReduction`] as the 2D `Integrate2dtpl` field set: the flat
+/// per-bin arrays (output bin `i·bins1 + j`, radial-major) reshaped to
+/// `(bins0, bins1)` and transposed to **(azimuthal, radial)** (pyFAI's
+/// `.reshape(self.bins).T`), so cell `(azimuthal j, radial i)` lands at flat
+/// index `j·bins0 + i`. Shared by the CSR and CSC 2D apply.
+pub(crate) fn reduction_to_2d(
+    r: CsrReduction,
+    bins0: usize,
+    bins1: usize,
+    bin_centers0: Vec<PositionT>,
+    bin_centers1: Vec<PositionT>,
+) -> Integrate2d {
+    let n = bins0 * bins1;
+    let mut signal = vec![0.0f64; n];
+    let mut variance = vec![0.0f64; n];
+    let mut normalization = vec![0.0f64; n];
+    let mut count = vec![0.0f64; n];
+    let mut norm_sq = vec![0.0f64; n];
+    let mut intensity = vec![0.0f32; n];
+    let mut std = vec![0.0f32; n];
+    let mut sem = vec![0.0f32; n];
+    for i in 0..bins0 {
+        for j in 0..bins1 {
+            let b = i * bins1 + j; // reduction index (radial-major)
+            let t = j * bins0 + i; // transposed (azimuthal, radial)
+            signal[t] = r.sum_signal[b];
+            variance[t] = r.sum_variance[b];
+            normalization[t] = r.sum_normalization[b];
+            count[t] = r.count[b];
+            norm_sq[t] = r.sum_norm_sq[b];
+            intensity[t] = r.intensity[b];
+            std[t] = r.std[b];
+            sem[t] = r.sem[b];
+        }
+    }
+    Integrate2d {
+        radial: bin_centers0,
+        azimuthal: bin_centers1,
+        bins: (bins0, bins1),
+        intensity,
+        sigma: sem.clone(), // Integrate2dtpl position 4 (sigma) == position 10 (sem)
+        signal,
+        variance,
+        normalization,
+        count,
+        std,
+        sem,
+        norm_sq,
+    }
+}
+
 /// Apply a CSR matrix to preprocessed rows (1D) — port of `CsrIntegrator.
 /// integrate_ng`'s 1D return. `prep` is the flat `[signal, variance, norm,
 /// count]`-per-pixel f32 array (the `preproc(..., split_result=4)` output).
@@ -1279,18 +1428,7 @@ pub fn csr_integrate1d(
     assert_eq!(csr.indptr.len(), bins + 1, "indptr length must be bins + 1");
 
     let r = csr_reduce(csr, prep, error_model, empty);
-    CsrIntegrate1d {
-        position: bin_centers,
-        intensity: r.intensity,
-        sigma: r.sem.clone(), // Integrate1dtpl position 3 (sigma) == position 9 (sem)
-        sum_signal: r.sum_signal,
-        sum_variance: r.sum_variance,
-        sum_normalization: r.sum_normalization,
-        count: r.count,
-        std: r.std,
-        sem: r.sem,
-        sum_norm_sq: r.sum_norm_sq,
-    }
+    reduction_to_1d(r, bin_centers)
 }
 
 /// Apply a 2D CSR matrix to preprocessed rows — port of `CsrIntegrator.
@@ -1318,45 +1456,7 @@ pub fn csr_integrate2d(
     );
 
     let r = csr_reduce(csr, prep, error_model, empty);
-
-    let n = bins0 * bins1;
-    let mut signal = vec![0.0f64; n];
-    let mut variance = vec![0.0f64; n];
-    let mut normalization = vec![0.0f64; n];
-    let mut count = vec![0.0f64; n];
-    let mut norm_sq = vec![0.0f64; n];
-    let mut intensity = vec![0.0f32; n];
-    let mut std = vec![0.0f32; n];
-    let mut sem = vec![0.0f32; n];
-    for i in 0..bins0 {
-        for j in 0..bins1 {
-            let b = i * bins1 + j; // reduction index (radial-major)
-            let t = j * bins0 + i; // transposed (azimuthal, radial)
-            signal[t] = r.sum_signal[b];
-            variance[t] = r.sum_variance[b];
-            normalization[t] = r.sum_normalization[b];
-            count[t] = r.count[b];
-            norm_sq[t] = r.sum_norm_sq[b];
-            intensity[t] = r.intensity[b];
-            std[t] = r.std[b];
-            sem[t] = r.sem[b];
-        }
-    }
-
-    Integrate2d {
-        radial: bin_centers0,
-        azimuthal: bin_centers1,
-        bins: (bins0, bins1),
-        intensity,
-        sigma: sem.clone(), // Integrate2dtpl position 4 (sigma) == position 10 (sem)
-        signal,
-        variance,
-        normalization,
-        count,
-        std,
-        sem,
-        norm_sq,
-    }
+    reduction_to_2d(r, bins0, bins1, bin_centers0, bin_centers1)
 }
 
 #[cfg(test)]

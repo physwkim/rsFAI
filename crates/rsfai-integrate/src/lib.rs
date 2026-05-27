@@ -28,6 +28,12 @@
 //!   `fullSplit2D_engine`), the `("full", "histogram", "cython")` paths — same
 //!   trapezoidal overlap machinery as the full-CSR build, scattered straight
 //!   into bins.
+//! - The CSC paths, [`build_bbox_csc_1d`] / [`build_bbox_csc_2d`] /
+//!   [`build_full_csc_1d`] / [`build_full_csc_2d`] (build) + [`csc_integrate1d`] /
+//!   [`csc_integrate2d`] (apply), from `ext/splitBBoxCSC.pyx` /
+//!   `ext/splitPixelFullCSC.pyx` + `ext/CSC_common.pxi` — the
+//!   `("no"|"bbox"|"full", "csc", "cython")` 1D/2D paths. The build transposes the
+//!   CSR LUT (scipy `tocsc`); the apply scatters pixel-major.
 //!
 //! Per-pixel maps and CSR apply accumulate bit-exactly. The no-split histogram
 //! scatter is rayon-parallel and validated at relative error `<= 1e-6` because
@@ -37,10 +43,15 @@
 //! serial accumulation reproduces the single-threaded pyFAI golden bit-for-bit.
 //! Golden generation is single-threaded.
 
+pub mod csc;
 pub mod csr;
 pub mod histogram;
 pub mod split_histogram;
 
+pub use csc::{
+    build_bbox_csc_1d, build_bbox_csc_2d, build_full_csc_1d, build_full_csc_2d, csc_integrate1d,
+    csc_integrate2d, Csc,
+};
 pub use csr::{
     build_bbox_csr_1d, build_bbox_csr_2d, build_full_csr_1d, build_full_csr_2d, csr_integrate1d,
     csr_integrate2d, Bbox2dBounds, Csr, CsrIntegrate1d,

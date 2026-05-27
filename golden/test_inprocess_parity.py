@@ -200,26 +200,29 @@ def run_rsfai(d, cfg):
             return run_rsfai_2d_full_histogram(d, cfg, prep, mask), None
         return run_rsfai_2d_histogram(d, cfg, prep, mask), None
 
-    # CSR build + apply
+    # CSR / CSC build + apply. The CSC matrix is the CSR LUT transposed (scipy
+    # tocsc); the build/apply signatures are identical, so `algo` just selects the
+    # variant. `built` carries the algo so main() compares against csr_*/csc_*.
     npt = (cfg["npt_rad"], cfg["npt_azim"]) if dim == 2 else cfg["npt"]
     if split in ("no", "bbox"):
-        # pyFAI's ("no","csr",…) and ("bbox","csr",…) share the same HistoBBox
-        # class; no-split passes delta=None (do_split=False), collapsing each
-        # pixel to one coef-1.0 entry. Mirror that here: same builder, deltas
-        # only for the bbox split.
+        # pyFAI's ("no",…) and ("bbox",…) share the same HistoBBox class; no-split
+        # passes delta=None (do_split=False), collapsing each pixel to one coef-1.0
+        # entry. Mirror that: same builder, deltas only for the bbox split.
         do_split = split == "bbox"
         if dim == 1:
+            build = rsfai.build_bbox_csr_1d if algo == "csr" else rsfai.build_bbox_csc_1d
             pos0 = np.ascontiguousarray(load(d, "pos0_center_unscaled").reshape(-1))
             dpos0 = np.ascontiguousarray(load(d, "pos0_delta").reshape(-1)) if do_split else None
-            data, indices, indptr, bc = rsfai.build_bbox_csr_1d(
+            data, indices, indptr, bc = build(
                 pos0, delta_pos0=dpos0, mask=mask, bins=npt, allow_pos0_neg=False
             )
         else:
+            build = rsfai.build_bbox_csr_2d if algo == "csr" else rsfai.build_bbox_csc_2d
             pos0 = np.ascontiguousarray(load(d, "pos0_center_unscaled").reshape(-1))
             pos1 = np.ascontiguousarray(load(d, "chi_center").reshape(-1))
             dpos0 = np.ascontiguousarray(load(d, "pos0_delta").reshape(-1)) if do_split else None
             dpos1 = np.ascontiguousarray(load(d, "chi_delta").reshape(-1)) if do_split else None
-            data, indices, indptr, bc0, bc1 = rsfai.build_bbox_csr_2d(
+            data, indices, indptr, bc0, bc1 = build(
                 pos0, pos1, delta_pos0=dpos0, delta_pos1=dpos1, mask=mask, bins=npt,
                 allow_pos0_neg=False, chi_disc_at_pi=cfg["chi_disc_at_pi"],
                 pos1_period=cfg["pos1_period"],
@@ -227,19 +230,22 @@ def run_rsfai(d, cfg):
     else:  # full split: corners (f32) widened to f64, flattened
         corners = np.ascontiguousarray(load(d, "corners").astype(np.float64).reshape(-1))
         if dim == 1:
-            data, indices, indptr, bc = rsfai.build_full_csr_1d(
+            build = rsfai.build_full_csr_1d if algo == "csr" else rsfai.build_full_csc_1d
+            data, indices, indptr, bc = build(
                 corners, mask=mask, bins=npt, allow_pos0_neg=False,
                 chi_disc_at_pi=True, pos1_period=2.0 * math.pi,
             )
         else:
-            data, indices, indptr, bc0, bc1 = rsfai.build_full_csr_2d(
+            build = rsfai.build_full_csr_2d if algo == "csr" else rsfai.build_full_csc_2d
+            data, indices, indptr, bc0, bc1 = build(
                 corners, mask=mask, bins=npt, allow_pos0_neg=False,
                 chi_disc_at_pi=cfg["chi_disc_at_pi"], pos1_period=cfg["pos1_period"],
             )
 
-    built = (data, indices, indptr)
+    built = (algo, data, indices, indptr)
     if dim == 1:
-        out = rsfai.csr_integrate1d(data, indices, indptr, prep, bc, error_model=em, empty=0.0)
+        integ = rsfai.csr_integrate1d if algo == "csr" else rsfai.csc_integrate1d
+        out = integ(data, indices, indptr, prep, bc, error_model=em, empty=0.0)
         fields = {
             "radial": out["position"] * unit_scale,
             "intensity": out["intensity"],
@@ -253,7 +259,8 @@ def run_rsfai(d, cfg):
             "sem": out["sem"],
         }
         return fields, built
-    out = rsfai.csr_integrate2d(data, indices, indptr, prep, bc0, bc1, error_model=em, empty=0.0)
+    integ = rsfai.csr_integrate2d if algo == "csr" else rsfai.csc_integrate2d
+    out = integ(data, indices, indptr, prep, bc0, bc1, error_model=em, empty=0.0)
     return _fields_2d(out, cfg), built
 
 
@@ -362,10 +369,12 @@ def main():
         rsfai_fields, built = run_rsfai(d, cfg)
         live_fields = run_live(d, cfg)
 
-        # CSR build: the rsfai-built LUT vs the committed pyFAI LUT.
+        # CSR / CSC build: the rsfai-built LUT vs the committed pyFAI LUT
+        # (csr_* or csc_*, per the algo carried in `built`).
         if built is not None:
-            data, indices, indptr = built
-            for nm, act in (("csr_data", data), ("csr_indices", indices), ("csr_indptr", indptr)):
+            algo, data, indices, indptr = built
+            for nm, act in ((f"{algo}_data", data), (f"{algo}_indices", indices),
+                            (f"{algo}_indptr", indptr)):
                 ok, detail = compare(act, load(d, nm))
                 total_checked += 1
                 total_fail += not ok

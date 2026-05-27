@@ -462,6 +462,7 @@ dependencies = [
  "rsfai-detectors",
  "rsfai-geometry",
  "rsfai-preproc",
+ "serde_json",
 ]
 
 [[package]]

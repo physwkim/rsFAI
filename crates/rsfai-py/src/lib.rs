@@ -37,14 +37,17 @@ use rsfai_engine::{
     IntegrationOptions, RadialUnit,
 };
 use rsfai_integrate::{
+    build_bbox_csc_1d as rs_build_bbox_csc_1d, build_bbox_csc_2d as rs_build_bbox_csc_2d,
     build_bbox_csr_1d as rs_build_bbox_csr_1d, build_bbox_csr_2d as rs_build_bbox_csr_2d,
+    build_full_csc_1d as rs_build_full_csc_1d, build_full_csc_2d as rs_build_full_csc_2d,
     build_full_csr_1d as rs_build_full_csr_1d, build_full_csr_2d as rs_build_full_csr_2d,
+    csc_integrate1d as rs_csc_integrate1d, csc_integrate2d as rs_csc_integrate2d,
     csr_integrate1d as rs_csr_integrate1d, csr_integrate2d as rs_csr_integrate2d,
     histogram1d as rs_histogram1d, histogram1d_bbox as rs_histogram1d_bbox,
     histogram1d_full as rs_histogram1d_full, histogram2d as rs_histogram2d,
     histogram2d_bbox as rs_histogram2d_bbox, histogram2d_full as rs_histogram2d_full,
-    histogram_preproc as rs_histogram_preproc, Bbox2dBounds, Csr, CsrIntegrate1d, Hist2dOptions,
-    Integrate1d, Integrate2d,
+    histogram_preproc as rs_histogram_preproc, Bbox2dBounds, Csc, Csr, CsrIntegrate1d,
+    Hist2dOptions, Integrate1d, Integrate2d,
 };
 use rsfai_preproc::{preproc4 as rs_preproc4, PreprocOptions};
 
@@ -626,6 +629,196 @@ fn csr_integrate2d<'py>(
 }
 
 // --------------------------------------------------------------------------
+// CSC build + apply
+// --------------------------------------------------------------------------
+// The CSC matrix is the CSR LUT transposed (scipy `tocsc`): `data` are the same
+// f32 coefficients permuted into column (pixel) major order, `indices` are bin
+// (row) indices, `indptr` is per-PIXEL (length `n_pixels + 1`). The build tuples
+// reuse the `(data, indices, indptr, centers…)` shape; the apply scatters
+// pixel-major.
+
+/// `build_bbox_csc_1d`: returns `(data, indices, indptr, bin_centers)`.
+/// `delta_pos0 = None` is the `("no", "csc", …)` no-split case.
+#[pyfunction]
+#[pyo3(signature = (pos0, *, delta_pos0=None, mask=None, bins, allow_pos0_neg=false))]
+fn build_bbox_csc_1d<'py>(
+    py: Python<'py>,
+    pos0: PyReadonlyArray1<'py, f64>,
+    delta_pos0: Option<PyReadonlyArray1<'py, f64>>,
+    mask: Option<PyReadonlyArray1<'py, i8>>,
+    bins: usize,
+    allow_pos0_neg: bool,
+) -> PyResult<Csr1dPy<'py>> {
+    let pos0_s = as_slice_1d(&pos0)?;
+    let delta_s = match &delta_pos0 {
+        Some(d) => Some(as_slice_1d(d)?),
+        None => None,
+    };
+    let (csc, centers) =
+        rs_build_bbox_csc_1d(pos0_s, delta_s, mask_slice(&mask)?, bins, allow_pos0_neg);
+    Ok(csc_1d_tuple(py, csc, centers))
+}
+
+/// `build_bbox_csc_2d`: returns `(data, indices, indptr, bin_centers0, bin_centers1)`.
+/// `delta_pos0`/`delta_pos1` both given (bbox split) or both omitted (no-split).
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (
+    pos0, pos1, *, delta_pos0=None, delta_pos1=None, mask=None, bins,
+    allow_pos0_neg=false, chi_disc_at_pi=true, pos1_period,
+))]
+fn build_bbox_csc_2d<'py>(
+    py: Python<'py>,
+    pos0: PyReadonlyArray1<'py, f64>,
+    pos1: PyReadonlyArray1<'py, f64>,
+    delta_pos0: Option<PyReadonlyArray1<'py, f64>>,
+    delta_pos1: Option<PyReadonlyArray1<'py, f64>>,
+    mask: Option<PyReadonlyArray1<'py, i8>>,
+    bins: (usize, usize),
+    allow_pos0_neg: bool,
+    chi_disc_at_pi: bool,
+    pos1_period: f64,
+) -> PyResult<Csr2dPy<'py>> {
+    let d0 = match &delta_pos0 {
+        Some(d) => Some(as_slice_1d(d)?),
+        None => None,
+    };
+    let d1 = match &delta_pos1 {
+        Some(d) => Some(as_slice_1d(d)?),
+        None => None,
+    };
+    if d0.is_some() != d1.is_some() {
+        return Err(PyValueError::new_err(
+            "delta_pos0 and delta_pos1 must both be given (bbox split) or both omitted (no-split)",
+        ));
+    }
+    let bounds = Bbox2dBounds {
+        allow_pos0_neg,
+        chi_disc_at_pi,
+        pos1_period,
+    };
+    let (csc, bc0, bc1) = rs_build_bbox_csc_2d(
+        as_slice_1d(&pos0)?,
+        d0,
+        as_slice_1d(&pos1)?,
+        d1,
+        mask_slice(&mask)?,
+        bins,
+        &bounds,
+    );
+    Ok(csc_2d_tuple(py, csc, bc0, bc1))
+}
+
+/// `build_full_csc_1d`: `corners` pre-flattened to f64 (length `8*npix`).
+/// Returns `(data, indices, indptr, bin_centers)`.
+#[pyfunction]
+#[pyo3(signature = (corners, *, mask=None, bins, allow_pos0_neg=false, chi_disc_at_pi=true, pos1_period))]
+fn build_full_csc_1d<'py>(
+    py: Python<'py>,
+    corners: PyReadonlyArray1<'py, f64>,
+    mask: Option<PyReadonlyArray1<'py, i8>>,
+    bins: usize,
+    allow_pos0_neg: bool,
+    chi_disc_at_pi: bool,
+    pos1_period: f64,
+) -> PyResult<Csr1dPy<'py>> {
+    let (csc, centers) = rs_build_full_csc_1d(
+        as_slice_1d(&corners)?,
+        mask_slice(&mask)?,
+        bins,
+        allow_pos0_neg,
+        chi_disc_at_pi,
+        pos1_period,
+    );
+    Ok(csc_1d_tuple(py, csc, centers))
+}
+
+/// `build_full_csc_2d`: `corners` pre-flattened to f64 (length `8*npix`).
+/// Returns `(data, indices, indptr, bin_centers0, bin_centers1)`.
+#[pyfunction]
+#[pyo3(signature = (corners, *, mask=None, bins, allow_pos0_neg=false, chi_disc_at_pi=true, pos1_period))]
+fn build_full_csc_2d<'py>(
+    py: Python<'py>,
+    corners: PyReadonlyArray1<'py, f64>,
+    mask: Option<PyReadonlyArray1<'py, i8>>,
+    bins: (usize, usize),
+    allow_pos0_neg: bool,
+    chi_disc_at_pi: bool,
+    pos1_period: f64,
+) -> PyResult<Csr2dPy<'py>> {
+    let (csc, bc0, bc1) = rs_build_full_csc_2d(
+        as_slice_1d(&corners)?,
+        mask_slice(&mask)?,
+        bins,
+        allow_pos0_neg,
+        chi_disc_at_pi,
+        pos1_period,
+    );
+    Ok(csc_2d_tuple(py, csc, bc0, bc1))
+}
+
+/// Reassemble a [`Csc`] from numpy `data`/`indices`/`indptr`.
+fn csc_from_parts(
+    data: &PyReadonlyArray1<'_, f32>,
+    indices: &PyReadonlyArray1<'_, i32>,
+    indptr: &PyReadonlyArray1<'_, i32>,
+) -> PyResult<Csc> {
+    Ok(Csc {
+        data: as_slice_1d(data)?.to_vec(),
+        indices: as_slice_1d(indices)?.to_vec(),
+        indptr: as_slice_1d(indptr)?.to_vec(),
+    })
+}
+
+/// `csc_integrate1d`: apply a 1D CSC matrix to a preprocessed `(npix, 4)` array.
+/// Returns a dict of the `Integrate1dtpl` fields.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (data, indices, indptr, prep, bin_centers, *, error_model=0, empty=0.0))]
+fn csc_integrate1d<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray1<'py, f32>,
+    indices: PyReadonlyArray1<'py, i32>,
+    indptr: PyReadonlyArray1<'py, i32>,
+    prep: PyReadonlyArray2<'py, f32>,
+    bin_centers: PyReadonlyArray1<'py, f64>,
+    error_model: i32,
+    empty: f32,
+) -> PyResult<Bound<'py, PyDict>> {
+    let csc = csc_from_parts(&data, &indices, &indptr)?;
+    let prep_s = as_slice_2d(&prep)?;
+    let centers = as_slice_1d(&bin_centers)?.to_vec();
+    let em = self::error_model(error_model)?;
+    let r = rs_csc_integrate1d(&csc, prep_s, centers, em, empty);
+    csr_integrate1d_to_dict(py, &r)
+}
+
+/// `csc_integrate2d`: apply a 2D CSC matrix. Returns a dict of the
+/// `Integrate2dtpl` fields (flat (azimuthal, radial) C-order).
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (data, indices, indptr, prep, bin_centers0, bin_centers1, *, error_model=0, empty=0.0))]
+fn csc_integrate2d<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray1<'py, f32>,
+    indices: PyReadonlyArray1<'py, i32>,
+    indptr: PyReadonlyArray1<'py, i32>,
+    prep: PyReadonlyArray2<'py, f32>,
+    bin_centers0: PyReadonlyArray1<'py, f64>,
+    bin_centers1: PyReadonlyArray1<'py, f64>,
+    error_model: i32,
+    empty: f32,
+) -> PyResult<Bound<'py, PyDict>> {
+    let csc = csc_from_parts(&data, &indices, &indptr)?;
+    let prep_s = as_slice_2d(&prep)?;
+    let bc0 = as_slice_1d(&bin_centers0)?.to_vec();
+    let bc1 = as_slice_1d(&bin_centers1)?.to_vec();
+    let em = self::error_model(error_model)?;
+    let r = rs_csc_integrate2d(&csc, prep_s, bc0, bc1, em, empty);
+    integrate2d_to_dict(py, &r)
+}
+
+// --------------------------------------------------------------------------
 // High-level integrator (drop-in)
 // --------------------------------------------------------------------------
 
@@ -775,6 +968,25 @@ fn csr_2d_tuple<'py>(py: Python<'py>, csr: Csr, bc0: Vec<f64>, bc1: Vec<f64>) ->
         csr.data.into_pyarray(py),
         csr.indices.into_pyarray(py),
         csr.indptr.into_pyarray(py),
+        bc0.into_pyarray(py),
+        bc1.into_pyarray(py),
+    )
+}
+
+fn csc_1d_tuple<'py>(py: Python<'py>, csc: Csc, centers: Vec<f64>) -> Csr1dPy<'py> {
+    (
+        csc.data.into_pyarray(py),
+        csc.indices.into_pyarray(py),
+        csc.indptr.into_pyarray(py),
+        centers.into_pyarray(py),
+    )
+}
+
+fn csc_2d_tuple<'py>(py: Python<'py>, csc: Csc, bc0: Vec<f64>, bc1: Vec<f64>) -> Csr2dPy<'py> {
+    (
+        csc.data.into_pyarray(py),
+        csc.indices.into_pyarray(py),
+        csc.indptr.into_pyarray(py),
         bc0.into_pyarray(py),
         bc1.into_pyarray(py),
     )
@@ -935,6 +1147,12 @@ fn rsfai(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(build_full_csr_2d, m)?)?;
     m.add_function(wrap_pyfunction!(csr_integrate1d, m)?)?;
     m.add_function(wrap_pyfunction!(csr_integrate2d, m)?)?;
+    m.add_function(wrap_pyfunction!(build_bbox_csc_1d, m)?)?;
+    m.add_function(wrap_pyfunction!(build_bbox_csc_2d, m)?)?;
+    m.add_function(wrap_pyfunction!(build_full_csc_1d, m)?)?;
+    m.add_function(wrap_pyfunction!(build_full_csc_2d, m)?)?;
+    m.add_function(wrap_pyfunction!(csc_integrate1d, m)?)?;
+    m.add_function(wrap_pyfunction!(csc_integrate2d, m)?)?;
     m.add_class::<PyAzimuthalIntegrator>()?;
     Ok(())
 }

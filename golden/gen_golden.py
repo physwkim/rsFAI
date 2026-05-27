@@ -274,24 +274,27 @@ def generate(detector_name, poni_image, configs):
             if isinstance(v, np.ndarray):
                 _save(arrays, out_dir, f"out_{field}", v)
 
-        # ---- Tier-A sparse matrix (CSR methods only) --------------------
+        # ---- Tier-A sparse matrix (CSR / CSC methods) -------------------
         # Match the engine to THIS config's (split, algo, dim). ai.engines
         # accumulates engines across every config run on this `ai`, so a bare
-        # "first CSR engine" pick would dump the bbox matrix for a full-split
+        # "first sparse engine" pick would dump the bbox matrix for a full-split
         # dataset (or vice-versa) once both have run. The method key carries
         # split_lower / algo_lower / dimension; key off all three (a 1D and a 2D
-        # bbox-CSR engine both have split_lower=="bbox").
-        if method[1] == "csr":
+        # bbox-CSR engine both have split_lower=="bbox"). CSC stores its matrix
+        # under the same .data/.indices/.indptr properties as CSR; dump to
+        # algo-prefixed names (csr_* / csc_*).
+        if method[1] in ("csr", "csc"):
+            algo = method[1]
             for m, engine_wrap in ai.engines.items():
                 if (getattr(m, "split_lower", None) != method[0]
-                        or getattr(m, "algo_lower", None) != "csr"
+                        or getattr(m, "algo_lower", None) != algo
                         or getattr(m, "dimension", None) != dim):
                     continue
                 eng = getattr(engine_wrap, "engine", engine_wrap)
                 if all(hasattr(eng, a) for a in ("data", "indices", "indptr")):
-                    _save(arrays, out_dir, "csr_data", np.asarray(eng.data))
-                    _save(arrays, out_dir, "csr_indices", np.asarray(eng.indices))
-                    _save(arrays, out_dir, "csr_indptr", np.asarray(eng.indptr))
+                    _save(arrays, out_dir, f"{algo}_data", np.asarray(eng.data))
+                    _save(arrays, out_dir, f"{algo}_indices", np.asarray(eng.indices))
+                    _save(arrays, out_dir, f"{algo}_indptr", np.asarray(eng.indptr))
                     break
 
         # ---- Manifest ---------------------------------------------------
@@ -570,6 +573,77 @@ def main():
                 "npt_azim": 36,
                 "unit": "q_nm^-1",
                 "method": ("full", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # No-split CSC: pyFAI's ("no","csc","cython") uses the same
+                # HistoBBox1d (splitBBoxCSC) as bbox-CSC with delta=None
+                # (do_split=False). The CSC matrix is the bbox/full LUT transposed
+                # (calc_lut().to_csr() then scipy .tocsc()); the apply
+                # (CscIntegrator.integrate_ng) scatters PIXEL-major (transpose of
+                # the CSR gather), but for a fixed bin the contributions arrive in
+                # ascending pixel order, so the f64 sums match CSR — own golden
+                # validates the transpose + scatter.
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("no", "csc", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": None,
+            },
+            {
+                # bbox CSC (splitBBoxCSC.HistoBBox1d): bbox LUT transposed to CSC.
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "csc", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # full CSC (splitPixelFullCSC.FullSplitCSC_1d): full corner LUT
+                # transposed to CSC. 1D full does not forward chiDiscAtPi/pos1_period
+                # (constructor defaults: chiDiscAtPi=True, pos1_period=2π).
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("full", "csc", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # 2D no-split CSC: HistoBBox2d (splitBBoxCSC) with delta=None.
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("no", "csc", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # 2D bbox CSC (splitBBoxCSC.HistoBBox2d): bbox 2D LUT transposed.
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "csc", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # 2D full CSC (splitPixelFullCSC.FullSplitCSC_2d): full 2D corner LUT
+                # transposed. common.py forwards chiDiscAtPi and pos1_period =
+                # unit1.period (360, applied to radian azimuths — pyFAI quirk).
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("full", "csc", "cython"),
                 "error_model": "poisson",
                 "correct_solid_angle": True,
                 "polarization_factor": 0.99,

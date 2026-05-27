@@ -13,3 +13,8 @@ rsfai-detectors.workspace = true
 rsfai-preproc.workspace = true
 ndarray.workspace = true
 rayon.workspace = true
+
+[dev-dependencies]
+# Golden manifests load as serde_json::Value; the CSC golden test names the type
+# in shared validator signatures (avoids duplicating the field extraction).
+serde_json.workspace = true
