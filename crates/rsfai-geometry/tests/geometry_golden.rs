@@ -32,7 +32,10 @@ fn dataset_dirs() -> Vec<PathBuf> {
     if let Ok(rd) = std::fs::read_dir(&root) {
         for e in rd.flatten() {
             let p = e.path();
-            if p.join("manifest.json").exists() {
+            // Cython golden datasets only: skip the Phase-2 OpenCL datasets,
+            // which carry an `opencl_params.json` and a reduced manifest with no
+            // cython intermediates. `rsfai-opencl`'s own golden test owns those.
+            if p.join("manifest.json").exists() && !p.join("opencl_params.json").exists() {
                 dirs.push(p);
             }
         }

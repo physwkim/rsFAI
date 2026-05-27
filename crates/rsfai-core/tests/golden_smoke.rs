@@ -64,7 +64,9 @@ fn golden_curves_load_and_roundtrip() {
     for entry in std::fs::read_dir(&root).expect("read datasets dir") {
         let dir = entry.expect("dir entry").path();
         let manifest_path = dir.join("manifest.json");
-        if !manifest_path.exists() {
+        // Cython golden datasets only: skip Phase-2 OpenCL datasets (they carry
+        // an `opencl_params.json`); `rsfai-opencl`'s own golden test owns those.
+        if !manifest_path.exists() || dir.join("opencl_params.json").exists() {
             continue;
         }
         let manifest = load_manifest(&manifest_path).expect("parse manifest");
