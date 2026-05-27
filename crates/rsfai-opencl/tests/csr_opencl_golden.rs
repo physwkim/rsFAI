@@ -17,7 +17,10 @@ use serde::Deserialize;
 
 use rsfai_core::compare::compare_f32;
 use rsfai_core::golden::{load_npy_f32, load_npy_f64, load_npy_i32, load_npy_i8};
-use rsfai_opencl::{create_queue, default_context, program, Corrections4aArgs, CsrInputs};
+use rsfai_opencl::{
+    create_queue, default_context, integrate2d_csr, program, ClSession, Corrections4aArgs,
+    CsrInputs,
+};
 
 const REL_TOL: f64 = 1e-6;
 
@@ -64,6 +67,19 @@ struct OpenclParams {
     bins: usize,
     image_size: usize,
     empty: f32,
+    /// 1 = 1D radial curve, 2 = 2D (azimuthal, radial) map.
+    #[serde(default = "default_dim")]
+    dim: usize,
+    /// Radial bin count (2D only; absent for 1D).
+    #[serde(default)]
+    bins_rad: usize,
+    /// Azimuthal bin count (2D only; absent for 1D).
+    #[serde(default)]
+    bins_azim: usize,
+}
+
+fn default_dim() -> usize {
+    1
 }
 
 fn load_params(dir: &Path) -> OpenclParams {
@@ -80,22 +96,62 @@ fn vec_i8(p: PathBuf) -> Vec<i8> {
 fn vec_f32(p: PathBuf) -> Vec<f32> {
     load_npy_f32(p).expect("f32 npy").iter().copied().collect()
 }
-/// Load an f64 `.npy` and cast to f32 the way pyFAI's `send_buffer` does
-/// (`numpy.ascontiguousarray(data, float32)`, i.e. round-to-nearest-even).
-fn vec_f64_as_f32(p: PathBuf) -> Vec<f32> {
-    load_npy_f64(p)
-        .expect("f64 npy")
-        .iter()
-        .map(|&v| v as f32)
-        .collect()
+/// Load a correction array as the f32 the GPU actually received. pyFAI holds
+/// solid angle as f64 but polarization as f32; its `send_buffer` casts every
+/// correction to the float32 buffer dtype on upload (round-to-nearest-even). So
+/// read whichever dtype is on disk: native f32 is used as-is, f64 is cast
+/// `as f32` (Rust's round-to-nearest-even matches numpy's `astype(float32)`).
+fn corr_f32(p: &Path) -> Vec<f32> {
+    match load_npy_f32(p) {
+        Ok(a) => a.iter().copied().collect(),
+        Err(_) => load_npy_f64(p)
+            .unwrap_or_else(|e| panic!("{}: correction not f32 or f64: {e}", p.display()))
+            .iter()
+            .map(|&v| v as f32)
+            .collect(),
+    }
 }
 
-/// Optional correction array: load as f32 only if the file exists (absent ⇒ the
-/// matching `do_*` flag is 0, so the kernel ignores it). pyFAI stores solid
-/// angle / polarization as f64; cast to f32 like the GPU upload.
+/// Optional correction array: present only if its `.npy` exists (absent ⇒ the
+/// matching `do_*` flag is 0, so the kernel ignores the buffer).
 fn opt_f32(dir: &Path, name: &str) -> Option<Vec<f32>> {
     let p = dir.join(format!("{name}.npy"));
-    p.exists().then(|| vec_f64_as_f32(p))
+    p.exists().then(|| corr_f32(&p))
+}
+
+/// Compare the eight result columns against the golden `out_<name>.npy`,
+/// asserting the rel-tol gate, and report how many fields were additionally
+/// bit-exact. `cols` are in canonical order — `intensity, std, sem, signal,
+/// variance, normalization, count, norm_sq` — identical for both dims, so one
+/// comparison serves [`integrate1d_csr`]'s and [`integrate2d_csr`]'s outputs.
+/// The (name → golden file) map is pyFAI's `Integrate1d/2dtpl` order; both
+/// `sigma` and `sem` map to the kernel's `sem` column.
+fn compare_all(dataset: &str, dir: &Path, cols: &[&[f32]; 8]) {
+    let [intensity, std, sem, signal, variance, normalization, count, norm_sq] = *cols;
+    let fields: [(&str, &[f32]); 9] = [
+        ("intensity", intensity),
+        ("sigma", sem),
+        ("std", std),
+        ("sem", sem),
+        ("sum_signal", signal),
+        ("sum_variance", variance),
+        ("sum_normalization", normalization),
+        ("count", count),
+        ("sum_normalization2", norm_sq),
+    ];
+    let mut bit_exact = 0usize;
+    for (name, actual) in fields {
+        let gold = vec_f32(dir.join(format!("out_{name}.npy")));
+        if check_field(dataset, name, actual, &gold) {
+            bit_exact += 1;
+        }
+    }
+    eprintln!(
+        "{dataset}: {}/{} fields bit-exact (rest within rel<= {:e})",
+        bit_exact,
+        fields.len(),
+        REL_TOL
+    );
 }
 
 /// Assert one output field is within the relative-error gate; return whether it
@@ -174,53 +230,79 @@ fn csr_opencl_matches_pyfai_golden() {
 
         let prog = program::build_csr_program(&context, params.bins, params.image_size)
             .unwrap_or_else(|e| panic!("{dataset}: build CSR program: {e}"));
-        let res = rsfai_opencl::integrate1d_csr(
-            &context,
-            &queue,
-            &prog,
-            &inputs,
-            &corr,
-            params.empty,
-            params.wg_min,
-        )
-        .unwrap_or_else(|e| panic!("{dataset}: integrate1d_csr: {e}"));
+        let session = ClSession {
+            context: &context,
+            queue: &queue,
+            program: &prog,
+        };
 
-        // pyFAI Integrate1dtpl field mapping (azim_csr.integrate_ng):
-        //   intensity=averint, sigma=sem, std=std, sem=sem,
-        //   signal=merged0, variance=merged2, normalization=merged4,
-        //   count=merged6, norm_sq=merged7.
-        let golden = |name: &str| vec_f32(dir.join(format!("out_{name}.npy")));
-        let fields: &[(&str, &[f32], Vec<f32>)] = &[
-            ("intensity", &res.intensity, golden("intensity")),
-            ("sigma", &res.sem, golden("sigma")),
-            ("std", &res.std, golden("std")),
-            ("sem", &res.sem, golden("sem")),
-            ("sum_signal", &res.signal, golden("sum_signal")),
-            ("sum_variance", &res.variance, golden("sum_variance")),
-            (
-                "sum_normalization",
-                &res.normalization,
-                golden("sum_normalization"),
-            ),
-            ("count", &res.count, golden("count")),
-            (
-                "sum_normalization2",
-                &res.norm_sq,
-                golden("sum_normalization2"),
-            ),
-        ];
-        let mut bit_exact_fields = 0usize;
-        for (name, actual, gold) in fields {
-            if check_field(&dataset, name, actual, gold) {
-                bit_exact_fields += 1;
+        // The GPU pipeline is identical for both dims; only the output packaging
+        // differs (2D reshapes radial-major cells to (azim, rad)). Field order
+        // is pyFAI's Integrate1d/2dtpl: intensity=averint, sigma=sem, std=std,
+        // sem=sem, signal=merged0, variance=merged2, normalization=merged4,
+        // count=merged6, norm_sq=merged7.
+        match params.dim {
+            1 => {
+                let res = rsfai_opencl::integrate1d_csr(
+                    &session,
+                    &inputs,
+                    &corr,
+                    params.empty,
+                    params.wg_min,
+                )
+                .unwrap_or_else(|e| panic!("{dataset}: integrate1d_csr: {e}"));
+                compare_all(
+                    &dataset,
+                    dir,
+                    &[
+                        &res.intensity,
+                        &res.std,
+                        &res.sem,
+                        &res.signal,
+                        &res.variance,
+                        &res.normalization,
+                        &res.count,
+                        &res.norm_sq,
+                    ],
+                );
             }
+            2 => {
+                assert!(
+                    params.bins_rad > 0 && params.bins_azim > 0,
+                    "{dataset}: 2D needs bins_rad/bins_azim in opencl_params.json"
+                );
+                assert_eq!(
+                    params.bins,
+                    params.bins_rad * params.bins_azim,
+                    "{dataset}: bins != bins_rad * bins_azim"
+                );
+                let res = integrate2d_csr(
+                    &session,
+                    &inputs,
+                    &corr,
+                    params.empty,
+                    params.wg_min,
+                    params.bins_rad,
+                    params.bins_azim,
+                )
+                .unwrap_or_else(|e| panic!("{dataset}: integrate2d_csr: {e}"));
+                compare_all(
+                    &dataset,
+                    dir,
+                    &[
+                        &res.intensity,
+                        &res.std,
+                        &res.sem,
+                        &res.signal,
+                        &res.variance,
+                        &res.normalization,
+                        &res.count,
+                        &res.norm_sq,
+                    ],
+                );
+            }
+            other => panic!("{dataset}: unsupported dim {other}"),
         }
-        eprintln!(
-            "{dataset}: {}/{} fields bit-exact (rest within rel<= {:e})",
-            bit_exact_fields,
-            fields.len(),
-            REL_TOL
-        );
         checked += 1;
     }
     assert!(checked > 0, "no OpenCL datasets validated");

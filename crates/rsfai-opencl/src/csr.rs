@@ -23,6 +23,16 @@ use opencl3::program::Program;
 use opencl3::types::{cl_char, cl_float, cl_int, CL_BLOCKING};
 use std::ptr;
 
+/// The OpenCL handles the pipeline drives, always borrowed together: the
+/// `program` is compiled against `context`, and `queue` is bound to it. Grouping
+/// them keeps the integration entry points to a small, uniform argument list.
+#[derive(Clone, Copy)]
+pub struct ClSession<'a> {
+    pub context: &'a Context,
+    pub queue: &'a CommandQueue,
+    pub program: &'a Program,
+}
+
 /// The 14 scalar arguments of the `corrections4a` preprocessing kernel,
 /// captured verbatim from pyFAI's live `cl_kernel_args` (see the dataset's
 /// `opencl_params.json`). `do_*` flags and `dtype` are `char` (i8) on the GPU;
@@ -92,6 +102,52 @@ pub struct CsrResult1d {
     pub norm_sq: Vec<f32>,
 }
 
+/// The GPU integration result for the 2D case. Each field is a flat `(azim, rad)`
+/// C-order array of length `bins_rad * bins_azim` — pyFAI's
+/// `field.reshape((bins_rad, bins_azim)).T` layout (`azim_csr.integrate_ng` 2D
+/// branch). Index element `(azim, rad)` as `field[azim * bins_rad + rad]`.
+#[derive(Debug, Clone)]
+pub struct CsrResult2d {
+    pub intensity: Vec<f32>,
+    pub std: Vec<f32>,
+    pub sem: Vec<f32>,
+    pub signal: Vec<f32>,
+    pub variance: Vec<f32>,
+    pub normalization: Vec<f32>,
+    pub count: Vec<f32>,
+    pub norm_sq: Vec<f32>,
+}
+
+/// Flat GPU pipeline output, one value per CSR bin. For 1D a bin is a radial
+/// bin; for 2D a bin is a flattened cell (`rad * bins_azim + azim`,
+/// radial-major). `merged8` is the float8 accumulator, 8 lanes per bin.
+struct CsrPipelineOutput {
+    intensity: Vec<f32>,
+    std: Vec<f32>,
+    sem: Vec<f32>,
+    merged8: Vec<f32>,
+}
+
+/// Reshape a flat radial-major field (`v[rad * bins_azim + azim]`) into pyFAI's
+/// 2D `(azim, rad)` C-order layout (`reshape((bins_rad, bins_azim)).T`):
+/// `out[azim * bins_rad + rad] = v[rad * bins_azim + azim]`.
+fn transpose_to_azim_rad(v: &[f32], bins_rad: usize, bins_azim: usize) -> Vec<f32> {
+    let mut out = vec![0.0f32; bins_rad * bins_azim];
+    for rad in 0..bins_rad {
+        for azim in 0..bins_azim {
+            out[azim * bins_rad + rad] = v[rad * bins_azim + azim];
+        }
+    }
+    out
+}
+
+/// Extract `merged8` lane `c` into a per-bin vector. Lanes: 0 signal, 2 variance,
+/// 4 normalization, 6 count, 7 norm_sq (odd lanes are Kahan low parts, not
+/// exposed).
+fn merged_col(merged8: &[f32], bins: usize, c: usize) -> Vec<f32> {
+    (0..bins).map(|b| merged8[8 * b + c]).collect()
+}
+
 /// Allocate a read-only device buffer of `len` `f32`s, initialised from `src`
 /// (zeros when `src` is `None` — the kernel skips it via its `do_*` flag).
 fn upload_f32(
@@ -113,20 +169,24 @@ fn upload_f32(
     Ok(buf)
 }
 
-/// Run pyFAI's CSR-NG OpenCL integration on `program` (which must have been
-/// built by [`crate::program::build_csr_program`] for the matching bin count
-/// and image size). The bin count is taken from `inputs.csr_indptr` (length
-/// `bins + 1`), the single source of truth. `wg_min` is the `csr_integrate4`
-/// work-group size (pyFAI's `wg_min`, 32 on the M4 Pro).
-pub fn integrate1d_csr(
-    context: &Context,
-    queue: &CommandQueue,
-    program: &Program,
+/// Run pyFAI's CSR-NG OpenCL pipeline (`memset_ng` → `corrections4a` →
+/// `csr_integrate4`) on `program` (built by [`crate::program::build_csr_program`]
+/// for the matching bin count and image size) and read back the flat per-bin
+/// result. The bin count is taken from `inputs.csr_indptr` (length `bins + 1`),
+/// the single source of truth — for 2D this is the flattened cell count. `wg_min`
+/// is the `csr_integrate4` work-group size (pyFAI's `wg_min`, 32 on the M4 Pro).
+/// Shared by [`integrate1d_csr`] and [`integrate2d_csr`], which differ only in
+/// how this flat output is packaged.
+fn run_csr_pipeline(
+    session: &ClSession<'_>,
     inputs: &CsrInputs<'_>,
     corr: &Corrections4aArgs,
     empty: f32,
     wg_min: usize,
-) -> Result<CsrResult1d, String> {
+) -> Result<CsrPipelineOutput, String> {
+    let context = session.context;
+    let queue = session.queue;
+    let program = session.program;
     let size = inputs.image_i32.len();
     let nnz = inputs.csr_data.len();
     let bins = inputs.csr_indptr.len() - 1;
@@ -304,17 +364,69 @@ pub fn integrate1d_csr(
             .map_err(|e| format!("read merged8: {e}"))?;
     }
 
-    // merged8 lanes: s0 signal, s2 variance, s4 normalization, s6 count,
-    // s7 norm_sq (odd lanes are Kahan low parts, not exposed).
-    let col = |c: usize| (0..bins).map(|b| merged8[8 * b + c]).collect::<Vec<f32>>();
-    Ok(CsrResult1d {
+    Ok(CsrPipelineOutput {
         intensity,
         std,
         sem,
-        signal: col(0),
-        variance: col(2),
-        normalization: col(4),
-        count: col(6),
-        norm_sq: col(7),
+        merged8,
+    })
+}
+
+/// Integrate to a 1D radial curve. Thin packaging over [`run_csr_pipeline`]:
+/// extracts the exposed `merged8` columns into [`CsrResult1d`], exactly pyFAI's
+/// `Integrate1dtpl` field mapping (`azim_csr.integrate_ng` 1D branch).
+pub fn integrate1d_csr(
+    session: &ClSession<'_>,
+    inputs: &CsrInputs<'_>,
+    corr: &Corrections4aArgs,
+    empty: f32,
+    wg_min: usize,
+) -> Result<CsrResult1d, String> {
+    let out = run_csr_pipeline(session, inputs, corr, empty, wg_min)?;
+    let bins = out.intensity.len();
+    Ok(CsrResult1d {
+        intensity: out.intensity,
+        std: out.std,
+        sem: out.sem,
+        signal: merged_col(&out.merged8, bins, 0),
+        variance: merged_col(&out.merged8, bins, 2),
+        normalization: merged_col(&out.merged8, bins, 4),
+        count: merged_col(&out.merged8, bins, 6),
+        norm_sq: merged_col(&out.merged8, bins, 7),
+    })
+}
+
+/// Integrate to a 2D `(azim, rad)` map. The GPU pipeline is identical to the 1D
+/// case (the 2D LUT flattens cells to `rad * bins_azim + azim`, radial-major, so
+/// `bins == bins_rad * bins_azim`); only the packaging differs — every field is
+/// reshaped `(bins_rad, bins_azim).T` → `(azim, rad)` to match pyFAI's
+/// `Integrate2dtpl` (`azim_csr.integrate_ng` 2D branch). See
+/// [`transpose_to_azim_rad`].
+pub fn integrate2d_csr(
+    session: &ClSession<'_>,
+    inputs: &CsrInputs<'_>,
+    corr: &Corrections4aArgs,
+    empty: f32,
+    wg_min: usize,
+    bins_rad: usize,
+    bins_azim: usize,
+) -> Result<CsrResult2d, String> {
+    let out = run_csr_pipeline(session, inputs, corr, empty, wg_min)?;
+    let bins = out.intensity.len();
+    assert_eq!(
+        bins,
+        bins_rad * bins_azim,
+        "2D bins ({bins}) != bins_rad ({bins_rad}) * bins_azim ({bins_azim})"
+    );
+    let t = |v: &[f32]| transpose_to_azim_rad(v, bins_rad, bins_azim);
+    Ok(CsrResult2d {
+        intensity: t(&out.intensity),
+        std: t(&out.std),
+        sem: t(&out.sem),
+        signal: t(&merged_col(&out.merged8, bins, 0)),
+        variance: t(&merged_col(&out.merged8, bins, 2)),
+        normalization: t(&merged_col(&out.merged8, bins, 4)),
+        count: t(&merged_col(&out.merged8, bins, 6)),
+        norm_sq: t(&merged_col(&out.merged8, bins, 7)),
     })
 }

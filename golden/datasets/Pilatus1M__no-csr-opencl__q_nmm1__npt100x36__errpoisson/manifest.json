@@ -1,0 +1,171 @@
+{
+  "dataset": "Pilatus1M__no-csr-opencl__q_nmm1__npt100x36__errpoisson",
+  "detector_name": "Pilatus1M",
+  "backend": "opencl",
+  "pyfai_version": "2026.5.0",
+  "numpy_version": "2.4.3",
+  "omp_num_threads": "1",
+  "pyopencl_version": "2026.1.2",
+  "opencl_device": "Apple M4 Pro",
+  "platform": "macOS-26.5-arm64-arm-64bit-Mach-O",
+  "tolerance_note": "OpenCL golden: GPU doubleword (two-f32 Kahan) accumulation. The Rust backend reuses pyFAI's own .cl kernels on the same device, validated at relative error <= 1e-6 (cross-work-group reduction order). See doc/bit-exact-ladder.md.",
+  "config": {
+    "dim": 2,
+    "unit": "q_nm^-1",
+    "method": [
+      "no",
+      "csr",
+      "opencl"
+    ],
+    "error_model": "poisson",
+    "correct_solid_angle": true,
+    "polarization_factor": 0.99,
+    "normalization_factor": 1.0,
+    "radial_range": null,
+    "azimuth_range": null,
+    "npt_rad": 100,
+    "npt_azim": 36
+  },
+  "geometry": {
+    "dist": 1.58323111834,
+    "poni1": 0.0334170169115,
+    "poni2": 0.0412277798782,
+    "rot1": 0.00648735642526,
+    "rot2": 0.00755810191106,
+    "rot3": 4.12987220385e-08,
+    "wavelength": 1e-10
+  },
+  "detector": {
+    "name": "Pilatus 1M",
+    "pixel1": 0.000172,
+    "pixel2": 0.000172,
+    "shape": [
+      1043,
+      981
+    ],
+    "orientation": 3
+  },
+  "arrays": {
+    "image": {
+      "dtype": "int32",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "mask": {
+      "dtype": "int8",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "solidangle": {
+      "dtype": "float64",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "polarization": {
+      "dtype": "float32",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "out_radial": {
+      "dtype": "float64",
+      "shape": [
+        100
+      ]
+    },
+    "out_azimuthal": {
+      "dtype": "float64",
+      "shape": [
+        36
+      ]
+    },
+    "out_intensity": {
+      "dtype": "float32",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_sigma": {
+      "dtype": "float32",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_count": {
+      "dtype": "float32",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_sum_signal": {
+      "dtype": "float32",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_sum_variance": {
+      "dtype": "float32",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_sum_normalization": {
+      "dtype": "float32",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_sum_normalization2": {
+      "dtype": "float32",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_std": {
+      "dtype": "float32",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_sem": {
+      "dtype": "float32",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "csr_data": {
+      "dtype": "float32",
+      "shape": [
+        949650
+      ]
+    },
+    "csr_indices": {
+      "dtype": "int32",
+      "shape": [
+        949650
+      ]
+    },
+    "csr_indptr": {
+      "dtype": "int32",
+      "shape": [
+        3601
+      ]
+    }
+  }
+}

@@ -28,7 +28,10 @@ use opencl3::error_codes::ClError;
 pub mod csr;
 pub mod program;
 
-pub use csr::{integrate1d_csr, Corrections4aArgs, CsrInputs, CsrResult1d};
+pub use csr::{
+    integrate1d_csr, integrate2d_csr, ClSession, Corrections4aArgs, CsrInputs, CsrResult1d,
+    CsrResult2d,
+};
 
 /// A discovered OpenCL device, summarised for backend selection.
 #[derive(Debug, Clone)]

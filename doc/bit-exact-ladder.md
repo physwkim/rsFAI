@@ -161,11 +161,19 @@ arithmetic — including the `csr_integrate4` tree reduction (`wg = wg_min = 32`
 this device; `csr_integrate4_single` is only taken when `CL_KERNEL_WORK_GROUP_SIZE
 == 1`, the Apple *CPU* driver) — is deterministic and matches pyFAI's.
 
-**Measured (Pilatus1M, `("no","csr","opencl")`, 1D, Poisson):** all 9 exposed
-fields (`intensity`/`std`/`sem`/`sigma` and the `merged8` signal/variance/
+The 2D CSR path reuses the **identical** GPU pipeline: pyFAI's 2D LUT flattens
+cells to a single radial-major axis (`cell = rad·bins_azim + azim`, so the CSR
+has `bins_rad·bins_azim` rows), so `memset_ng` → `corrections4a` →
+`csr_integrate4` run unchanged. Only the host-side packaging differs — every
+output field is reshaped `(bins_rad, bins_azim).T` → `(azim, rad)` to match
+pyFAI's `Integrate2dtpl` (`azim_csr.integrate_ng` 2D branch).
+
+**Measured (Pilatus1M, Poisson):** for all six `OCL_CSR_Integrator` tuples —
+`{no, bbox, full} × {1D npt=1000, 2D npt=100×36}` — all 9 exposed fields
+(`intensity`/`std`/`sem`/`sigma` and the `merged8` signal/variance/
 normalization/count/norm_sq columns) are **bitwise-exact** vs pyFAI's OpenCL
 output. The 1e-6 gate covers the general cross-work-group case; the observed
-divergence is 0.
+divergence is 0 on this device.
 
 ## The arithmetic to reproduce (from `regrid_common.pxi`)
 

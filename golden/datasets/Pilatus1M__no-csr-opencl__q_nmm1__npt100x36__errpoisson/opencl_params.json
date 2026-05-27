@@ -6,7 +6,7 @@
     "do_dark_variance": 0,
     "do_flat": 0,
     "do_solidangle": 1,
-    "do_polarization": 0,
+    "do_polarization": 1,
     "do_absorption": 0,
     "do_mask": 0,
     "do_dummy": 1,
@@ -16,15 +16,17 @@
     "apply_normalization": 0
   },
   "csr_integrate4": {
-    "nbins": 1000,
+    "nbins": 3600,
     "empty": 0.0,
     "error_model": 2
   },
   "wg_min": 32,
   "wg_max": 256,
   "data_is_ones": true,
-  "bins": 1000,
+  "bins": 3600,
   "image_size": 1023183,
   "empty": 0.0,
-  "dim": 1
+  "dim": 2,
+  "bins_rad": 100,
+  "bins_azim": 36
 }

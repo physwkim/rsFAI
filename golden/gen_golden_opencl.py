@@ -92,17 +92,19 @@ def _find_ocl_integrator(ai):
 def generate(detector_name, poni_image, configs):
     poni_name, image_name = poni_image
     poni_path = UtilsTest.getimage(poni_name)
-    ai = pyFAI.load(poni_path)
     data = fabio.open(UtilsTest.getimage(image_name)).data
     shape = data.shape
 
-    geom = {k: float(getattr(ai, k)) for k in
-            ("dist", "poni1", "poni2", "rot1", "rot2", "rot3", "wavelength")}
-    det = {"name": ai.detector.name, "pixel1": float(ai.detector.pixel1),
-           "pixel2": float(ai.detector.pixel2), "shape": list(shape),
-           "orientation": int(ai.detector.orientation)}
-
     for cfg in configs:
+        # Fresh AzimuthalIntegrator per config: ai.engines accumulates engines
+        # across runs, so reusing one ai would let _find_ocl_integrator pick a
+        # previous config's integrator. Reloading isolates each config's engine.
+        ai = pyFAI.load(poni_path)
+        geom = {k: float(getattr(ai, k)) for k in
+                ("dist", "poni1", "poni2", "rot1", "rot2", "rot3", "wavelength")}
+        det = {"name": ai.detector.name, "pixel1": float(ai.detector.pixel1),
+               "pixel2": float(ai.detector.pixel2), "shape": list(shape),
+               "orientation": int(ai.detector.orientation)}
         dim = cfg.get("dim", 1)
         unit = cfg["unit"]
         method = tuple(cfg["method"])
@@ -185,6 +187,11 @@ def generate(detector_name, poni_image, configs):
             "bins": int(integr.bins),
             "image_size": int(integr.size),
             "empty": float(integr.empty),
+            # Dimensionality + 2D cell layout. The OCL integrate_ng packs 2D as a
+            # flat (bins_rad * bins_azim) CSR (cell = rad*bins_azim + azim,
+            # radial-major) then reshapes (bins_rad, bins_azim).T → (azim, rad).
+            "dim": dim,
+            **({"bins_rad": npt_rad, "bins_azim": npt_azim} if dim == 2 else {}),
         }
         with open(out_dir / "opencl_params.json", "w") as f:
             json.dump(opencl_params, f, indent=2)
@@ -246,6 +253,41 @@ def main():
                 "error_model": "poisson",
                 "correct_solid_angle": True,
                 "polarization_factor": None,
+            },
+            # ---- Remaining CSR tuples (all OCL_CSR_Integrator) --------------
+            # bbox/full carry fractional coefs (data_is_ones=False, real coefs
+            # buffer) and polarization (do_polarization=1). 2D adds the
+            # (bins_rad, bins_azim).T → (azim, rad) output packaging; the kernel
+            # call is identical (the 2D LUT flattens cells to bin0*bins1+bin1).
+            {
+                "npt": 1000, "unit": "q_nm^-1",
+                "method": ("bbox", "csr", "opencl"),
+                "error_model": "poisson", "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                "npt": 1000, "unit": "q_nm^-1",
+                "method": ("full", "csr", "opencl"),
+                "error_model": "poisson", "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                "dim": 2, "npt_rad": 100, "npt_azim": 36, "unit": "q_nm^-1",
+                "method": ("no", "csr", "opencl"),
+                "error_model": "poisson", "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                "dim": 2, "npt_rad": 100, "npt_azim": 36, "unit": "q_nm^-1",
+                "method": ("bbox", "csr", "opencl"),
+                "error_model": "poisson", "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                "dim": 2, "npt_rad": 100, "npt_azim": 36, "unit": "q_nm^-1",
+                "method": ("full", "csr", "opencl"),
+                "error_model": "poisson", "correct_solid_angle": True,
+                "polarization_factor": 0.99,
             },
         ],
     )
