@@ -66,7 +66,8 @@ pub struct Integrate1d {
 /// `y[j] = j*step + start` with `step = (stop-start)/(num-1)`, then `y[num-1]`
 /// overwritten with `stop` exactly. Mirrors `numpy/_core/function_base.py`,
 /// including its `step == 0` (denormal) fallback `y = (j/div)*delta + start`.
-fn numpy_linspace(start: f64, stop: f64, num: usize) -> Vec<f64> {
+/// Shared with the CSR engine, which derives bin centers the same way.
+pub(crate) fn numpy_linspace(start: f64, stop: f64, num: usize) -> Vec<f64> {
     let mut y = vec![0.0f64; num];
     if num == 0 {
         return y;
