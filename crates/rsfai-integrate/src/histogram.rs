@@ -250,6 +250,247 @@ pub fn histogram1d(
     }
 }
 
+// ---------------------------------------------------------------------------
+// 2D histogram (no split): port of `histogram2d_engine` (`ext/histogram.pyx`).
+// Each pixel centre is binned into one (radial, azimuthal) cell. The engine
+// differs from the 1D path in three ways that matter for bit-exactness:
+//   * the reduction keys on `count > 0` (not `norm² > 0`);
+//   * `intensity = signal/norm`, `sem = sqrt(var)/norm`, `std = sqrt(var/norm²)`
+//     are computed in f64 (the accumulators stay `acc_t`) then downcast to f32;
+//   * the binned sums (signal/variance/normalization/count/norm²) are exposed at
+//     full f64 (`out_data[...,k]`), NOT downcast to f32 like the 1D histogram;
+//   * norm² accumulates `value.norm·value.norm` as an **f32 multiply** promoted
+//     to f64 (`update_2d_accumulator`), unconditionally — no error-model fork.
+
+/// Boundary / binning configuration for [`histogram2d`], grouping the engine's
+/// scalar parameters (the data arrays are passed separately).
+#[derive(Debug, Clone)]
+pub struct Hist2dOptions {
+    /// Number of bins `(radial, azimuthal)`.
+    pub bins: (usize, usize),
+    /// Explicit radial `(min, max)`; `None` uses the data min/max.
+    pub radial_range: Option<(PositionT, PositionT)>,
+    /// Explicit azimuthal `(min, max)`; `None` uses the (clipped) data min/max.
+    pub azimuth_range: Option<(PositionT, PositionT)>,
+    /// Error model: `No` skips the variance branch (std/sem stay 0).
+    pub error_model: ErrorModel,
+    /// Allow the radial axis below 0 (false clamps min/max to `>= 0`).
+    pub allow_radial_neg: bool,
+    /// Azimuthal discontinuity at π (true) vs 0/2π (false) — sets the clip range.
+    pub chi_disc_at_pi: bool,
+    /// Azimuthal period; `> 0` turns on the `[-π, π]` clip (the only use here).
+    pub pos1_period: PositionT,
+    /// Fill value for cells with no counts (pyFAI's `empty`, default `0.0`).
+    pub empty: DataT,
+}
+
+/// The `Integrate2dtpl` fields (`pyFAI/containers.py`). The 2D arrays are stored
+/// flat in **(azimuthal, radial)** row-major order — the layout pyFAI exposes
+/// after its `.T` transpose — so cell `(azimuthal j, radial i)` is at index
+/// `j * bins.0 + i`. `signal`/`variance`/`normalization`/`count`/`norm_sq` are
+/// f64 (`acc_t`, not downcast); `intensity`/`sigma`/`std`/`sem` are f32.
+/// `radial`/`azimuthal` are the **unscaled** bin centers (multiply by the radial
+/// / azimuthal `unit.scale` for the reported axes).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Integrate2d {
+    /// Unscaled radial bin centers, length `bins.0`.
+    pub radial: Vec<PositionT>,
+    /// Unscaled azimuthal bin centers, length `bins.1`.
+    pub azimuthal: Vec<PositionT>,
+    /// `(radial, azimuthal)` bin counts, for indexing the flat arrays.
+    pub bins: (usize, usize),
+    /// Average intensity `signal/normalization` (f32), or `empty`.
+    pub intensity: Vec<DataT>,
+    /// Standard error on the mean (= `sem`; f32).
+    pub sigma: Vec<DataT>,
+    /// Binned `signal` (f64).
+    pub signal: Vec<AccT>,
+    /// Binned `variance` (f64).
+    pub variance: Vec<AccT>,
+    /// Binned `normalization` (f64).
+    pub normalization: Vec<AccT>,
+    /// Binned `count` (f64).
+    pub count: Vec<AccT>,
+    /// Propagated std `sqrt(variance / norm²)` (f32).
+    pub std: Vec<DataT>,
+    /// Standard error on the mean `sqrt(variance) / normalization` (f32).
+    pub sem: Vec<DataT>,
+    /// Binned `normalization²` (f64).
+    pub norm_sq: Vec<AccT>,
+}
+
+/// 2D radial/azimuthal boundaries — port of the bbox `calc_boundaries`
+/// (`ext/splitBBox_common.pyx`) with `delta = None` (centers only, no split).
+/// Folds the per-pixel centers over the unmasked pixels, clamps the radial axis
+/// to `>= 0` unless `allow_radial_neg`, clips the azimuthal axis to `[-π, π]`
+/// (or `[0, 2π]`) when `pos1_period > 0`, then applies any explicit ranges.
+/// The clip bound uses **f32 π** (`float pi = <float> M_PI` in pyFAI), widened
+/// to f64. Returns `(pos0_min, pos0_maxin, pos1_min, pos1_maxin)`; the caller
+/// applies [`calc_upper_bound`] to the `*_maxin` values.
+fn calc_boundaries_2d(
+    radial: &[PositionT],
+    azimuthal: &[PositionT],
+    mask: Option<&[i8]>,
+    opts: &Hist2dOptions,
+) -> (PositionT, PositionT, PositionT, PositionT) {
+    let mut pos0_min = PositionT::INFINITY;
+    let mut pos0_max = PositionT::NEG_INFINITY;
+    let mut pos1_min = PositionT::INFINITY;
+    let mut pos1_max = PositionT::NEG_INFINITY;
+    for idx in 0..radial.len() {
+        if let Some(m) = mask {
+            if m[idx] != 0 {
+                continue;
+            }
+        }
+        let c0 = radial[idx];
+        pos0_max = pos0_max.max(c0);
+        pos0_min = pos0_min.min(c0);
+        let c1 = azimuthal[idx];
+        pos1_max = pos1_max.max(c1);
+        pos1_min = pos1_min.min(c1);
+    }
+    if !opts.allow_radial_neg {
+        pos0_min = pos0_min.max(0.0);
+        pos0_max = pos0_max.max(0.0);
+    }
+    if opts.pos1_period > 0.0 {
+        // pyFAI: pos1_max = min(pos1_max, (2 - chiDiscAtPi) * pi), with `pi` an
+        // f32 and chiDiscAtPi an int; the product is evaluated in f32.
+        let cd: i32 = if opts.chi_disc_at_pi { 1 } else { 0 };
+        let pi32 = std::f32::consts::PI;
+        let max_bound = ((2 - cd) as f32 * pi32) as PositionT;
+        let min_bound = (-(cd as f32) * pi32) as PositionT;
+        pos1_max = pos1_max.min(max_bound);
+        pos1_min = pos1_min.max(min_bound);
+    }
+    if let Some((lo, hi)) = opts.radial_range {
+        pos0_min = lo.min(hi);
+        pos0_max = lo.max(hi);
+    }
+    if let Some((lo, hi)) = opts.azimuth_range {
+        pos1_min = lo.min(hi);
+        pos1_max = lo.max(hi);
+    }
+    (pos0_min, pos0_max, pos1_min, pos1_max)
+}
+
+/// Port of `histogram2d_engine` (`ext/histogram.pyx`): bin the preprocessed rows
+/// into a `(bins.0, bins.1)` = `(radial, azimuthal)` grid and reduce to the
+/// [`Integrate2d`] fields. `radial`/`azimuthal` are the per-pixel unscaled
+/// centers (f64, length `size`); `prep` is the flat `[signal, variance, norm,
+/// count]`-per-pixel f32 array (`preproc(..., split_result=4)`). Masked pixels
+/// (`mask[i] != 0`) are skipped. Serial accumulation in pixel order — the only
+/// bit-reproducible order.
+pub fn histogram2d(
+    radial: &[PositionT],
+    azimuthal: &[PositionT],
+    prep: &[DataT],
+    mask: Option<&[i8]>,
+    opts: &Hist2dOptions,
+) -> Integrate2d {
+    let (bins0, bins1) = opts.bins;
+    assert!(bins0 >= 1 && bins1 >= 1, "bins must be >= 1 in each dim");
+    let size = radial.len();
+    assert_eq!(azimuthal.len(), size, "azimuthal length must match radial");
+    assert_eq!(
+        prep.len(),
+        4 * size,
+        "prep length must be 4 * size (nchan = 4)"
+    );
+    if let Some(m) = mask {
+        assert_eq!(m.len(), size, "mask length mismatch");
+    }
+
+    let (pos0_min, pos0_maxin, pos1_min, pos1_maxin) =
+        calc_boundaries_2d(radial, azimuthal, mask, opts);
+    let pos0_max = calc_upper_bound(pos0_maxin);
+    let pos1_max = calc_upper_bound(pos1_maxin);
+    let delta0 = (pos0_max - pos0_min) / (bins0 as PositionT);
+    let delta1 = (pos1_max - pos1_min) / (bins1 as PositionT);
+
+    // Accumulator grid in (radial, azimuthal) order: cell (i, j) at i*bins1 + j.
+    let mut out = vec![[0.0f64; 5]; bins0 * bins1];
+    for idx in 0..size {
+        if let Some(m) = mask {
+            if m[idx] != 0 {
+                continue;
+            }
+        }
+        let fbin0 = (radial[idx] - pos0_min) / delta0; // get_bin_number
+        let fbin1 = (azimuthal[idx] - pos1_min) / delta1;
+        let bin0 = fbin0 as i64; // <Py_ssize_t>: truncate toward zero
+        let bin1 = fbin1 as i64;
+        if bin0 < 0 || bin0 >= bins0 as i64 || bin1 < 0 || bin1 >= bins1 as i64 {
+            continue;
+        }
+        let n = prep[4 * idx + 2];
+        let cell = &mut out[bin0 as usize * bins1 + bin1 as usize];
+        // update_2d_accumulator with weight 1.0 (w2 = 1.0).
+        cell[0] += prep[4 * idx] as AccT;
+        cell[1] += prep[4 * idx + 1] as AccT;
+        cell[2] += n as AccT;
+        cell[3] += prep[4 * idx + 3] as AccT;
+        cell[4] += (n * n) as AccT; // f32 multiply, then promote
+    }
+
+    let do_variance = opts.error_model != ErrorModel::No;
+    let n_cells = bins0 * bins1;
+    let mut signal = vec![0.0f64; n_cells];
+    let mut variance = vec![0.0f64; n_cells];
+    let mut normalization = vec![0.0f64; n_cells];
+    let mut count = vec![0.0f64; n_cells];
+    let mut norm_sq = vec![0.0f64; n_cells];
+    let mut intensity = vec![0.0f32; n_cells];
+    let mut std = vec![0.0f32; n_cells];
+    let mut sem = vec![0.0f32; n_cells];
+
+    for i in 0..bins0 {
+        for j in 0..bins1 {
+            let cell = out[i * bins1 + j];
+            let (sig, var, norm, cnt, norm2) = (cell[0], cell[1], cell[2], cell[3], cell[4]);
+            // Transpose to (azimuthal, radial), the layout pyFAI exposes.
+            let t = j * bins0 + i;
+            signal[t] = sig;
+            variance[t] = var;
+            normalization[t] = norm;
+            count[t] = cnt;
+            norm_sq[t] = norm2;
+            if cnt > 0.0 {
+                intensity[t] = (sig / norm) as DataT; // f64 divide, downcast
+                if do_variance {
+                    // libc double sqrt on f64 accumulators, then downcast.
+                    sem[t] = (var.sqrt() / norm) as DataT;
+                    std[t] = (var / norm2).sqrt() as DataT;
+                }
+            } else {
+                intensity[t] = opts.empty;
+                if do_variance {
+                    sem[t] = opts.empty;
+                    std[t] = opts.empty;
+                }
+            }
+        }
+    }
+
+    let radial_centers = numpy_linspace(pos0_min + 0.5 * delta0, pos0_max - 0.5 * delta0, bins0);
+    let azim_centers = numpy_linspace(pos1_min + 0.5 * delta1, pos1_max - 0.5 * delta1, bins1);
+    Integrate2d {
+        radial: radial_centers,
+        azimuthal: azim_centers,
+        bins: (bins0, bins1),
+        intensity,
+        sigma: sem.clone(), // Integrate2dtpl position 4 (sigma) == position 10 (sem)
+        signal,
+        variance,
+        normalization,
+        count,
+        std,
+        sem,
+        norm_sq,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

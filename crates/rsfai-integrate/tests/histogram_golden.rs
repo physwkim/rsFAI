@@ -14,8 +14,8 @@ use std::path::PathBuf;
 
 use rsfai_core::compare::{compare_f32, compare_f64};
 use rsfai_core::dtype::ErrorModel;
-use rsfai_core::golden::{load_manifest, load_npy_f32, load_npy_f64};
-use rsfai_integrate::histogram1d;
+use rsfai_core::golden::{load_manifest, load_npy_f32, load_npy_f64, load_npy_i8};
+use rsfai_integrate::{histogram1d, histogram2d, Hist2dOptions};
 
 fn datasets_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../golden/datasets")
@@ -59,6 +59,12 @@ fn histogram1d_bit_exact() {
             })
             .unwrap_or(false);
         if !is_histogram {
+            continue;
+        }
+        // The 2D histogram datasets share the ("no", "histogram") method tuple;
+        // skip them here (they carry npt_rad/npt_azim, not npt) — covered by
+        // `histogram2d_bit_exact`.
+        if cfg["dim"].as_u64().unwrap_or(1) != 1 {
             continue;
         }
         // This test compares `position` to `out_radial` directly, which only
@@ -163,5 +169,193 @@ fn histogram1d_bit_exact() {
     assert!(
         checked > 0,
         "no histogram golden datasets found; run golden/gen_golden.py"
+    );
+}
+
+/// Tier-A validation of the 2D histogram engine [`histogram2d`] vs pyFAI's
+/// golden `Integrate2dtpl` fields, fed the identical per-pixel arrays pyFAI
+/// binned: the unscaled radial (`pos0_center_unscaled.npy`), the azimuthal
+/// centers in radians (`chi_center.npy`, bit-identical to `array_from_unit(
+/// "center", chi_deg, scale=False)`), and the preproc rows (`preproc.npy`).
+///
+/// The engine bins unscaled radial / radian azimuthal; the reported axes are
+/// `radial * unit.scale` and `azimuthal * azimuth_unit.scale` (CHI_DEG scale =
+/// 180/π). The binned sums are exposed at full f64 (unlike the 1D histogram);
+/// the variance-family fields (variance, norm², std, sem, sigma) appear only
+/// when `do_variance`, so they are validated when the dataset dumped them.
+#[test]
+fn histogram2d_bit_exact() {
+    let mut checked = 0usize;
+    for dir in dataset_dirs() {
+        let manifest = load_manifest(dir.join("manifest.json")).expect("manifest");
+        let cfg = &manifest.config;
+
+        // 2D pure-Cython histogram engine: dim == 2, method == ("no","histogram",_).
+        if cfg["dim"].as_u64().unwrap_or(1) != 2 {
+            continue;
+        }
+        let is_histogram = cfg["method"]
+            .as_array()
+            .map(|m| {
+                m.len() >= 3 && m[0].as_str() == Some("no") && m[1].as_str() == Some("histogram")
+            })
+            .unwrap_or(false);
+        if !is_histogram {
+            continue;
+        }
+
+        let npt_rad = cfg["npt_rad"].as_u64().expect("npt_rad") as usize;
+        let npt_azim = cfg["npt_azim"].as_u64().expect("npt_azim") as usize;
+        let unit_scale = cfg["unit_scale"].as_f64().expect("unit_scale");
+        let azim_scale = cfg["azim_scale"].as_f64().expect("azim_scale");
+        let pos1_period = cfg["pos1_period"].as_f64().expect("pos1_period");
+        let chi_disc_at_pi = cfg["chi_disc_at_pi"].as_bool().unwrap_or(true);
+        let error_model = error_model_from_code(cfg["error_model_code"].as_i64().unwrap_or(0));
+        let radial_range = cfg["radial_range"].as_array().map(|r| {
+            (
+                r[0].as_f64().expect("radial_range[0]"),
+                r[1].as_f64().expect("radial_range[1]"),
+            )
+        });
+        let azimuth_range = cfg["azimuth_range"].as_array().map(|r| {
+            (
+                r[0].as_f64().expect("azimuth_range[0]"),
+                r[1].as_f64().expect("azimuth_range[1]"),
+            )
+        });
+
+        // Standard radial unit (q) cannot be negative -> allow_radial_neg=false.
+        let opts = Hist2dOptions {
+            bins: (npt_rad, npt_azim),
+            radial_range,
+            azimuth_range,
+            error_model,
+            allow_radial_neg: false,
+            chi_disc_at_pi,
+            pos1_period,
+            empty: 0.0,
+        };
+
+        // Engine inputs: the per-pixel arrays pyFAI binned.
+        let radial = load_npy_f64(dir.join("pos0_center_unscaled.npy"))
+            .expect("pos0_center_unscaled")
+            .as_slice()
+            .expect("contiguous")
+            .to_vec();
+        let azimuthal = load_npy_f64(dir.join("chi_center.npy"))
+            .expect("chi_center")
+            .as_slice()
+            .expect("contiguous")
+            .to_vec();
+        let prep = load_npy_f32(dir.join("preproc.npy"))
+            .expect("preproc")
+            .as_slice()
+            .expect("contiguous")
+            .to_vec();
+        let mask = load_npy_i8(dir.join("mask.npy"))
+            .expect("mask")
+            .as_slice()
+            .expect("contiguous")
+            .to_vec();
+
+        let out = histogram2d(&radial, &azimuthal, &prep, Some(&mask), &opts);
+
+        // Radial / azimuthal bin centers, scaled to the reported axes.
+        let scaled_rad: Vec<f64> = out.radial.iter().map(|&p| p * unit_scale).collect();
+        let g_radial = load_npy_f64(dir.join("out_radial.npy"))
+            .expect("out_radial")
+            .as_slice()
+            .unwrap()
+            .to_vec();
+        let r_radial = compare_f64(&scaled_rad, &g_radial);
+        assert!(
+            r_radial.is_bit_exact(),
+            "{}: out_radial not bit-exact: {r_radial:?}",
+            manifest.dataset
+        );
+
+        let scaled_azim: Vec<f64> = out.azimuthal.iter().map(|&p| p * azim_scale).collect();
+        let g_azim = load_npy_f64(dir.join("out_azimuthal.npy"))
+            .expect("out_azimuthal")
+            .as_slice()
+            .unwrap()
+            .to_vec();
+        let r_azim = compare_f64(&scaled_azim, &g_azim);
+        assert!(
+            r_azim.is_bit_exact(),
+            "{}: out_azimuthal not bit-exact: {r_azim:?}",
+            manifest.dataset
+        );
+
+        // f64 accumulator fields: the 2D engine exposes the binned sums at full
+        // f64 (`out_data[...,k].T`), NOT downcast to f32 like the 1D histogram.
+        let check_f64 = |file: &str, actual: &[f64], required: bool| -> bool {
+            let p = dir.join(file);
+            if !p.exists() {
+                assert!(!required, "{}: missing required {file}", manifest.dataset);
+                return false;
+            }
+            let g = load_npy_f64(&p)
+                .unwrap()
+                .as_slice()
+                .expect("contiguous")
+                .to_vec();
+            let r = compare_f64(actual, &g);
+            assert!(
+                r.is_bit_exact(),
+                "{}: {file} not bit-exact: {r:?}",
+                manifest.dataset
+            );
+            true
+        };
+        let check_f32 = |file: &str, actual: &[f32], required: bool| -> bool {
+            let p = dir.join(file);
+            if !p.exists() {
+                assert!(!required, "{}: missing required {file}", manifest.dataset);
+                return false;
+            }
+            let g = load_npy_f32(&p)
+                .unwrap()
+                .as_slice()
+                .expect("contiguous")
+                .to_vec();
+            let r = compare_f32(actual, &g);
+            assert!(
+                r.is_bit_exact(),
+                "{}: {file} not bit-exact: {r:?}",
+                manifest.dataset
+            );
+            true
+        };
+
+        check_f64("out_sum_signal.npy", &out.signal, true);
+        check_f64("out_sum_normalization.npy", &out.normalization, true);
+        check_f64("out_count.npy", &out.count, true);
+        check_f32("out_intensity.npy", &out.intensity, true);
+
+        // Variance-family fields: exposed only when do_variance (error_model != No).
+        let mut em_fields = 0;
+        em_fields += i32::from(check_f64("out_sum_variance.npy", &out.variance, false));
+        em_fields += i32::from(check_f64("out_sum_normalization2.npy", &out.norm_sq, false));
+        em_fields += i32::from(check_f32("out_std.npy", &out.std, false));
+        em_fields += i32::from(check_f32("out_sem.npy", &out.sem, false));
+        em_fields += i32::from(check_f32("out_sigma.npy", &out.sigma, false));
+        if error_model != ErrorModel::No {
+            assert!(
+                em_fields > 0,
+                "{}: error-model dataset exposed no variance/std/sem fields to validate",
+                manifest.dataset
+            );
+        }
+
+        eprintln!(
+            "{}: 2D all fields bit-exact (radial ulp={}, azim ulp={}, {em_fields} error-model fields)",
+            manifest.dataset, r_radial.max_ulp, r_azim.max_ulp,
+        );
+        checked += 1;
+    }
+    assert!(
+        checked > 0,
+        "no 2D histogram golden datasets found; run golden/gen_golden.py"
     );
 }
