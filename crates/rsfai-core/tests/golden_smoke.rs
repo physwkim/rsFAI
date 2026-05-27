@@ -2,17 +2,53 @@
 //!
 //! Reads every `golden/datasets/<config>/` that has a `manifest.json`, loads the
 //! committed `out_*.npy` golden curves, checks their length against the
-//! manifest's `npt`, and bit-compares each against itself (round-trip through
-//! the loader is lossless). The actual rsFAI-vs-pyFAI comparisons arrive in
-//! M1+; this test only validates the harness on real data.
+//! manifest's expected bin counts (`npt` for 1D, `npt_rad`/`npt_azim` for 2D),
+//! and bit-compares each against itself (round-trip through the loader is
+//! lossless). The actual rsFAI-vs-pyFAI comparisons arrive in M1+; this test
+//! only validates the harness on real data.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rsfai_core::compare::{compare_f32, compare_f64};
 use rsfai_core::golden::{load_manifest, load_npy_f32, load_npy_f64};
 
 fn golden_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../golden/datasets")
+}
+
+/// Load an f64 golden axis (`out_radial`/`out_azimuthal`), assert its length,
+/// and prove the loader round-trips it bit-for-bit (compare vs itself).
+fn check_axis_f64(dir: &Path, file: &str, expected_len: usize, dataset: &str) {
+    let a = load_npy_f64(dir.join(file)).unwrap_or_else(|_| panic!("{dataset}: load {file}"));
+    assert_eq!(
+        a.len(),
+        expected_len,
+        "{dataset}: {file} length {} != expected {expected_len}",
+        a.len()
+    );
+    let s = a.as_slice().expect("C-contiguous golden");
+    assert!(
+        compare_f64(s, s).is_bit_exact(),
+        "{dataset}: {file} not bit-exact vs self"
+    );
+}
+
+/// Load an f32 golden curve (`out_intensity`), assert its length, and prove the
+/// loader round-trips it bit-for-bit. For 2D the length is the flattened cell
+/// count (`npt_rad * npt_azim`).
+fn check_curve_f32(dir: &Path, file: &str, expected_len: usize, dataset: &str) {
+    let a = load_npy_f32(dir.join(file)).unwrap_or_else(|_| panic!("{dataset}: load {file}"));
+    assert_eq!(
+        a.len(),
+        expected_len,
+        "{dataset}: {file} length {} != expected {expected_len}",
+        a.len()
+    );
+    let s = a.as_slice().expect("C-contiguous golden");
+    assert!(
+        compare_f32(s, s).is_bit_exact(),
+        "{dataset}: {file} not bit-exact vs self"
+    );
 }
 
 #[test]
@@ -32,43 +68,39 @@ fn golden_curves_load_and_roundtrip() {
             continue;
         }
         let manifest = load_manifest(&manifest_path).expect("parse manifest");
-        let npt = manifest.config["npt"]
-            .as_u64()
-            .expect("npt in manifest config") as usize;
+        let cfg = &manifest.config;
+        let dim = cfg["dim"].as_u64().unwrap_or(1);
 
-        // Golden radial axis (f64): present in every config, must round-trip.
-        let radial = load_npy_f64(dir.join("out_radial.npy")).expect("load out_radial");
-        assert_eq!(
-            radial.len(),
-            npt,
-            "{}: radial length != npt",
-            manifest.dataset
-        );
-        let r = compare_f64(radial.as_slice().unwrap(), radial.as_slice().unwrap());
-        assert!(
-            r.is_bit_exact(),
-            "{}: radial not bit-exact vs self",
-            manifest.dataset
-        );
+        // Expected golden-curve lengths differ by dimension. A 1D config carries
+        // `npt` (radial and intensity both length npt); a 2D config carries
+        // `npt_rad`/`npt_azim` (radial = npt_rad, intensity = npt_rad * npt_azim
+        // flattened, plus a separate azimuthal axis of npt_azim). The smoke test
+        // covers BOTH — its purpose is to prove every committed curve loads and
+        // round-trips, so 2D datasets are validated, not skipped.
+        let (n_radial, n_intensity, npt_azim) = if dim == 2 {
+            let npt_rad = cfg["npt_rad"]
+                .as_u64()
+                .expect("npt_rad in 2D manifest config") as usize;
+            let npt_azim = cfg["npt_azim"]
+                .as_u64()
+                .expect("npt_azim in 2D manifest config") as usize;
+            (npt_rad, npt_rad * npt_azim, Some(npt_azim))
+        } else {
+            let npt = cfg["npt"].as_u64().expect("npt in 1D manifest config") as usize;
+            (npt, npt, None)
+        };
 
-        // Golden intensity (f32): present in every config.
-        let intensity = load_npy_f32(dir.join("out_intensity.npy")).expect("load out_intensity");
-        assert_eq!(
-            intensity.len(),
-            npt,
-            "{}: intensity length != npt",
-            manifest.dataset
-        );
-        let ri = compare_f32(intensity.as_slice().unwrap(), intensity.as_slice().unwrap());
-        assert!(
-            ri.is_bit_exact(),
-            "{}: intensity not bit-exact vs self",
-            manifest.dataset
-        );
+        // Radial axis (f64) and intensity curve (f32): present in every config.
+        check_axis_f64(&dir, "out_radial.npy", n_radial, &manifest.dataset);
+        check_curve_f32(&dir, "out_intensity.npy", n_intensity, &manifest.dataset);
+        // Azimuthal axis (f64): 2D only.
+        if let Some(npt_azim) = npt_azim {
+            check_axis_f64(&dir, "out_azimuthal.npy", npt_azim, &manifest.dataset);
+        }
 
         eprintln!(
-            "ok: {} (npt={}, pyFAI {}, method={:?})",
-            manifest.dataset, npt, manifest.pyfai_version, manifest.config["method"]
+            "ok: {} (dim={dim}, radial={n_radial}, intensity={n_intensity}, pyFAI {}, method={:?})",
+            manifest.dataset, manifest.pyfai_version, cfg["method"]
         );
         checked += 1;
     }
