@@ -25,6 +25,8 @@ use opencl3::context::Context;
 use opencl3::device::{get_all_devices, Device, CL_DEVICE_TYPE_ALL};
 use opencl3::error_codes::ClError;
 
+pub mod program;
+
 /// A discovered OpenCL device, summarised for backend selection.
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
