@@ -43,6 +43,12 @@ pub struct Detector {
     pub module_size: Option<(usize, usize)>,
     /// `(slow, fast)` inter-module gap in pixels, or `None`.
     pub module_gap: Option<(usize, usize)>,
+    /// Dead/gap-pixel sentinel value (`Detector.DUMMY`), or `None` if the
+    /// detector defines none. Pilatus marks dead/gap pixels `-2`.
+    pub dummy: Option<f64>,
+    /// Tolerance around [`dummy`](Self::dummy) (`Detector.DELTA_DUMMY`), or
+    /// `None` for an exact match. Pilatus uses `±1.5`.
+    pub delta_dummy: Option<f64>,
 }
 
 impl Detector {
@@ -57,6 +63,8 @@ impl Detector {
             orientation: 3,
             module_size: Some((195, 487)),
             module_gap: Some((17, 7)),
+            dummy: Some(-2.0),
+            delta_dummy: Some(1.5),
         }
     }
 
@@ -71,6 +79,10 @@ impl Detector {
             orientation: 3,
             module_size: Some((514, 1030)),
             module_gap: Some((37, 10)),
+            // The Eiger classes in `_dectris.py` do not override DUMMY, so they
+            // inherit the base `Detector.DUMMY = None` (no sentinel).
+            dummy: None,
+            delta_dummy: None,
         }
     }
 
@@ -85,6 +97,8 @@ impl Detector {
             orientation: 0,
             module_size: None,
             module_gap: None,
+            dummy: None,
+            delta_dummy: None,
         }
     }
 
@@ -212,6 +226,27 @@ impl Detector {
         }
         Some(mask)
     }
+
+    /// The dummy value and tolerance the integrator feeds to preproc, as
+    /// `data_t` (f32) — port of `_common.Detector.get_dummies`. pyFAI computes
+    /// `actual_dummy = float32(image_dtype(int64(self.dummy)))`: the `int64`
+    /// step truncates toward zero, the image-dtype step is lossless for an
+    /// in-range integer dummy (the case for every detector in scope), so this
+    /// reduces to `int64(dummy) as f32`. `delta_dummy` defaults to the float32
+    /// machine epsilon when the detector leaves it unset (pyFAI's
+    /// `numpy.finfo("float32").eps`). Returns `(None, None)` when the detector
+    /// defines no dummy.
+    pub fn get_dummies(&self) -> (Option<f32>, Option<f32>) {
+        let Some(dummy) = self.dummy else {
+            return (None, None);
+        };
+        let actual_dummy = (dummy as i64) as f32;
+        let actual_delta = match self.delta_dummy {
+            Some(dd) => dd as f32,
+            None => f32::EPSILON,
+        };
+        (Some(actual_dummy), Some(actual_delta))
+    }
 }
 
 #[cfg(test)]
@@ -254,6 +289,20 @@ mod tests {
         let (p1, _) = d.centers_f64();
         let mean1 = (cp1[cidx(0, 0)] + cp1[cidx(1, 0)] + cp1[cidx(1, 1)] + cp1[cidx(0, 1)]) / 4.0;
         assert_eq!(mean1, p1[0]);
+    }
+
+    #[test]
+    fn pilatus_dummies_are_minus2_pm_1_5() {
+        // Pilatus marks dead/gap pixels at -2 with a ±1.5 tolerance; get_dummies
+        // returns them as f32 (the data_t the preproc engine consumes).
+        let (dummy, delta) = Detector::pilatus1m().get_dummies();
+        assert_eq!(dummy, Some(-2.0f32));
+        assert_eq!(delta, Some(1.5f32));
+        // A gapless generic detector defines no sentinel.
+        assert_eq!(
+            Detector::generic(1e-4, 1e-4, (2, 2)).get_dummies(),
+            (None, None)
+        );
     }
 
     #[test]
