@@ -5,7 +5,13 @@
   "numpy_version": "2.4.3",
   "platform": "macOS-26.5-arm64-arm-64bit-Mach-O",
   "omp_num_threads": "1",
-  "provenance_note": "pyFAI installed from ESRF prebuilt cp314 macOS-arm64 wheel (not a local source build); see doc/bit-exact-ladder.md",
+  "build": {
+    "from_source": true,
+    "source_tree": "~/codes/pyFAI",
+    "cflags": "-ffp-contract=off",
+    "cxxflags": "-ffp-contract=off"
+  },
+  "provenance_note": "pyFAI rebuilt from local source with -ffp-contract=off (no FMA); see doc/bit-exact-ladder.md",
   "config": {
     "npt": 1000,
     "unit": "2th_deg",
@@ -38,7 +44,8 @@
     "shape": [
       1043,
       981
-    ]
+    ],
+    "orientation": 3
   },
   "ulp_budget": {
     "pos0_center": 0,
@@ -108,6 +115,28 @@
         981,
         4,
         2
+      ]
+    },
+    "pos_zyx": {
+      "dtype": "float64",
+      "shape": [
+        1043,
+        981,
+        3
+      ]
+    },
+    "pixel_p1": {
+      "dtype": "float64",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "pixel_p2": {
+      "dtype": "float64",
+      "shape": [
+        1043,
+        981
       ]
     },
     "preproc": {

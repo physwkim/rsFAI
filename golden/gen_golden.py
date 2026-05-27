@@ -101,6 +101,7 @@ def generate(detector_name, poni_image, configs):
         "pixel1": float(ai.detector.pixel1),
         "pixel2": float(ai.detector.pixel2),
         "shape": list(shape),
+        "orientation": int(ai.detector.orientation),
     }
 
     for cfg in configs:
@@ -153,6 +154,22 @@ def generate(detector_name, poni_image, configs):
         _save(arrays, out_dir, "chi_center", ai.center_array(shape, unit="chi_rad"))
         _save(arrays, out_dir, "chi_delta", ai.delta_array(shape, unit="chi_rad"))
         _save(arrays, out_dir, "corners", ai.corner_array(shape, unit=unit, scale=False))
+
+        # calc_pos_zyx checkpoint: lab coords (z,y,x) and the detector pixel
+        # centers (p1,p2[,p3]) that feed the rotation transform. Lets the Rust
+        # port validate calc_pos_zyx in isolation (Tier A, given pixel centers),
+        # before the detector model (M2) reproduces the centers.
+        _save(arrays, out_dir, "pos_zyx", ai.position_array(shape, corners=False))
+        # Dump the *exact* float64 pixel centers position_array feeds the
+        # transform: it builds float64 index grids via numpy.fromfunction, so we
+        # must too (the no-arg call returns float32 centers with different bits).
+        d1 = np.fromfunction(lambda i, j: i, tuple(shape), dtype=np.float64)
+        d2 = np.fromfunction(lambda i, j: j, tuple(shape), dtype=np.float64)
+        p1c, p2c, p3c = ai.detector.calc_cartesian_positions(d1, d2)
+        _save(arrays, out_dir, "pixel_p1", p1c)
+        _save(arrays, out_dir, "pixel_p2", p2c)
+        if p3c is not None:
+            _save(arrays, out_dir, "pixel_p3", p3c)
 
         # ---- Tier-A per-pixel preproc -----------------------------------
         # Reproduce the per-pixel (signal, variance, norm, count) the engine
@@ -222,9 +239,21 @@ def generate(detector_name, poni_image, configs):
             "numpy_version": np.__version__,
             "platform": platform.platform(),
             "omp_num_threads": os.environ.get("OMP_NUM_THREADS", "unset"),
+            "build": {
+                # pyFAI rebuilt from the local ~/codes/pyFAI source into daq with
+                # FMA contraction disabled, so the Cython geometry evaluates the
+                # bare IEEE-754 expression (a*b + c*d - e*f) with no fused
+                # multiply-add. That makes the algebraic transform (calc_pos_zyx)
+                # bitwise-reproducible by Rust's plain f64 ops. See
+                # doc/bit-exact-ladder.md.
+                "from_source": True,
+                "source_tree": "~/codes/pyFAI",
+                "cflags": "-ffp-contract=off",
+                "cxxflags": "-ffp-contract=off",
+            },
             "provenance_note": (
-                "pyFAI installed from ESRF prebuilt cp314 macOS-arm64 wheel "
-                "(not a local source build); see doc/bit-exact-ladder.md"
+                "pyFAI rebuilt from local source with -ffp-contract=off (no FMA); "
+                "see doc/bit-exact-ladder.md"
             ),
             "config": {
                 "npt": npt,

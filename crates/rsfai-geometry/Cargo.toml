@@ -7,6 +7,9 @@ rust-version.workspace = true
 description = "PONI geometry, coordinate transforms (tth/chi/q/r) and units for rsFAI (M1)"
 
 [dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+# Golden tests load .npy + compare (rsfai-core) and reshape with ndarray.
 rsfai-core.workspace = true
 ndarray.workspace = true
-thiserror.workspace = true

@@ -16,8 +16,20 @@ amount of careful coding removes:
    not, and differ between numpy's SIMD libm, the C libm pyFAI's Cython links,
    and Rust's libm.
 
-So "bit-exact" is delivered as a **staged ladder**, with those two boundaries
-pinned rather than hand-waved.
+A third boundary is **eliminated by construction** rather than tolerated:
+
+3. **FMA contraction.** A C compiler with `-ffp-contract=on`/`fast` (clang's
+   default on arm64) fuses `a*b + c` into a single `fma(a, b, c)` with one
+   rounding instead of two — so even pure `+ - *` algebra (e.g. `calc_pos_zyx`'s
+   rotation polynomial) diverges from Rust's non-fused `+ - *` at the last bit
+   (~1e-16 absolute; up to ~128 ULP near zero-crossings where the magnitude is
+   tiny). This is **not** an unavoidable physical limit: it is removed by
+   compiling pyFAI with `-ffp-contract=off`, after which both sides evaluate the
+   bare IEEE-754 expression and the algebra is bitwise-identical. See the
+   provenance note below; measured result in Tier B.
+
+So "bit-exact" is delivered as a **staged ladder**, with boundaries 1–2 pinned
+and boundary 3 removed at the source.
 
 ## Pinning (applies to all tiers)
 
@@ -28,14 +40,26 @@ pinned rather than hand-waved.
   each array.
 - The Rust default test path is **serial**; `rayon` is opt-in behind a feature
   flag and is never the bit-exact gate — only ever checked at tolerance.
-- **Provenance caveat (current):** pyFAI 2026.5.0 is installed from ESRF's
-  prebuilt `cp314` macOS-arm64 wheel, *not* a local source build. Its Cython
-  therefore links the libm/compiler ESRF's wheel builder used. macOS-arm64
-  wheels link the system libm (libSystem) — the same Apple libm Rust's `std`
-  f64 transcendentals call — so transcendentals *may* still agree, but this is a
-  weaker guarantee than a local source build. Tier A is unaffected (it is
-  libm-independent). Revisit by building pyFAI from source here if Tier C ULP
-  divergence proves problematic.
+- **No-FMA source build.** Golden is generated from pyFAI 2026.5.0 **rebuilt
+  from the local `~/codes/pyFAI` source** into the `daq` env with FMA
+  contraction disabled:
+
+  ```sh
+  # build deps into daq (numpy already present, so --no-build-isolation)
+  daq/bin/python -m pip install "meson-python>=0.11" "meson>=1.1" ninja wheel \
+      "Cython>=0.29.31" "pyproject-metadata>=0.5.0"
+  # build a no-FMA wheel from the local source tree (clang on arm64)
+  cd ~/codes/pyFAI
+  PATH="$(dirname daq/bin/python):$PATH" \
+    CFLAGS="-ffp-contract=off" CXXFLAGS="-ffp-contract=off" \
+    daq/bin/python -m pip wheel . --no-build-isolation --no-deps -w /tmp/pyfai-nofma
+  daq/bin/python -m pip install --force-reinstall --no-deps /tmp/pyfai-nofma/pyfai-*.whl
+  ```
+
+  This links Apple's system libm (the same libm Rust's `std` f64 transcendentals
+  call) **and** removes FMA fusion, so the algebraic transform is bitwise-exact
+  by construction (boundary 3 above). The `manifest.json` `build` block records
+  `cflags`/`source_tree`. Tier A is libm- and FMA-independent regardless.
 
 ## dtype contract
 
@@ -74,6 +98,19 @@ libm agrees; otherwise the divergence is measured in ULPs, the budget is
 recorded in the manifest (`ulp_budget`), and any pixel whose bin assignment flips
 at a bin boundary because of it is enumerated. Tolerance is never silently
 widened — the ULP delta is reported as an explicit, tracked number.
+
+**Measured (M1, Pilatus1M, 1,023,183 pixels, no-FMA build):**
+
+| array | math | max_ulp | result |
+|---|---|---|---|
+| `calc_pos_zyx` z/y/x | `+ - *` only | 0 | bitwise-exact |
+| `pos0_center` (`q_nm⁻¹`, `2th_deg`) | `sqrt` + `atan2`/`sin` | 0 | bitwise-exact |
+| `chi_center` | `atan2` | 0 | bitwise-exact |
+
+The transcendental arrays measured **0 ULP** — on this machine numexpr's libm
+and Rust's `std` libm agree bit-for-bit — so the geometry test asserts them
+bit-exact (`is_bit_exact`), not at a budget. The test still prints `max_ulp`, so
+a future libm divergence fails loudly and is then recorded as a manifest budget.
 
 ### Tier C — full pipeline (raw image → curve)
 

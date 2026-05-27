@@ -1,6 +1,17 @@
-//! `rsfai-geometry` — PONI geometry and coordinate transforms.
+//! `rsfai-geometry` — PONI geometry, the pixel→sample coordinate transform, and
+//! radial/azimuthal unit equations, ported from `pyFAI/geometry/core.py`,
+//! `pyFAI/ext/_geometry.pyx`, `pyFAI/io/ponifile.py`, and `pyFAI/units.py`.
 //!
-//! Stub for M1. Will port `pyFAI/geometry/core.py` (`calc_pos_zyx`, `tth`,
-//! `chi`, `qFunction`, corner variants), `ext/_geometry.pyx` (the libc-math
-//! formulas to match), `io/ponifile.py` (PONI v1–v3), and the radial/azimuthal
-//! units from `units.py`.
+//! Pipeline (matching pyFAI's `center_array`):
+//!   detector pixel centres `(p1,p2)` → [`transform::calc_pos_zyx`] → lab
+//!   `(z,y,x)` → [`units::center_array`] → radial/azimuthal value.
+
+pub mod error;
+pub mod poni;
+pub mod transform;
+pub mod units;
+
+pub use error::{GeometryError, Result};
+pub use poni::PoniFile;
+pub use transform::{calc_pos_zyx, PosZyx};
+pub use units::{center_array, center_value, equation, Space, Unit};
