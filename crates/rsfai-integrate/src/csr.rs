@@ -82,7 +82,7 @@ pub struct CsrIntegrate1d {
 /// pyFAI seeds the fold with the first unmasked *center*; since a center always
 /// lies within `[c0-d0, c0+d0]`, the `±INF` seed used here yields the identical
 /// fold result (verified against the golden boundaries).
-fn calc_boundaries_1d(
+pub(crate) fn calc_boundaries_1d(
     pos0: &[PositionT],
     delta_pos0: Option<&[PositionT]>,
     mask: Option<&[i8]>,
@@ -245,7 +245,7 @@ pub struct Bbox2dBounds {
 /// pos0_maxin, pos1_min, pos1_maxin)`; the caller applies [`calc_upper_bound`]
 /// to the `*_maxin` values. The `±INF` seed yields the same fold as pyFAI's
 /// "seed with the first unmasked pixel's box".
-fn calc_boundaries_2d(
+pub(crate) fn calc_boundaries_2d(
     pos0: &[PositionT],
     delta_pos0: Option<&[PositionT]>,
     pos1: &[PositionT],

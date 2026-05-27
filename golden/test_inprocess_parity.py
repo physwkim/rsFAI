@@ -136,6 +136,26 @@ def run_rsfai(d, cfg):
     if algo == "histogram":
         if dim == 1:
             radial = np.ascontiguousarray(load(d, "pos0_center_unscaled").reshape(-1))
+            if split == "bbox":
+                # Direct-split bbox histogram: f64 binned sums (CsrIntegrate1d keys).
+                dpos0 = np.ascontiguousarray(load(d, "pos0_delta").reshape(-1))
+                out = rsfai.histogram1d_bbox(
+                    radial, dpos0, prep, mask=mask, npt=cfg["npt"],
+                    error_model=em, empty=0.0, allow_pos0_neg=False,
+                )
+                fields = {
+                    "radial": out["position"] * unit_scale,
+                    "intensity": out["intensity"],
+                    "sigma": out["sigma"],
+                    "count": out["count"],
+                    "sum_signal": out["sum_signal"],
+                    "sum_variance": out["sum_variance"],
+                    "sum_normalization": out["sum_normalization"],
+                    "sum_normalization2": out["sum_norm_sq"],
+                    "std": out["std"],
+                    "sem": out["sem"],
+                }
+                return fields, None
             out = rsfai.histogram1d(radial, prep, cfg["npt"], error_model=em, empty=0.0)
             fields = {
                 "radial": out["position"] * unit_scale,
@@ -151,6 +171,8 @@ def run_rsfai(d, cfg):
             }
             return fields, None
         # 2D histogram
+        if split == "bbox":
+            return run_rsfai_2d_bbox_histogram(d, cfg, prep, mask), None
         return run_rsfai_2d_histogram(d, cfg, prep, mask), None
 
     # CSR build + apply
@@ -217,6 +239,20 @@ def run_rsfai_2d_histogram(d, cfg, prep, mask):
         radial, azimuthal, prep, bins=(cfg["npt_rad"], cfg["npt_azim"]), mask=mask,
         error_model=cfg["error_model_code"], allow_radial_neg=False,
         chi_disc_at_pi=cfg["chi_disc_at_pi"], pos1_period=cfg["pos1_period"], empty=0.0,
+    )
+    return _fields_2d(out, cfg)
+
+
+def run_rsfai_2d_bbox_histogram(d, cfg, prep, mask):
+    radial = np.ascontiguousarray(load(d, "pos0_center_unscaled").reshape(-1))
+    dpos0 = np.ascontiguousarray(load(d, "pos0_delta").reshape(-1))
+    azimuthal = np.ascontiguousarray(load(d, "chi_center").reshape(-1))
+    dpos1 = np.ascontiguousarray(load(d, "chi_delta").reshape(-1))
+    out = rsfai.histogram2d_bbox(
+        radial, dpos0, azimuthal, dpos1, prep,
+        bins=(cfg["npt_rad"], cfg["npt_azim"]), mask=mask, allow_pos0_neg=False,
+        chi_disc_at_pi=cfg["chi_disc_at_pi"], pos1_period=cfg["pos1_period"],
+        error_model=cfg["error_model_code"], empty=0.0,
     )
     return _fields_2d(out, cfg)
 

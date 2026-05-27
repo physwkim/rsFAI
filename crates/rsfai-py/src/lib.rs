@@ -40,7 +40,8 @@ use rsfai_integrate::{
     build_bbox_csr_1d as rs_build_bbox_csr_1d, build_bbox_csr_2d as rs_build_bbox_csr_2d,
     build_full_csr_1d as rs_build_full_csr_1d, build_full_csr_2d as rs_build_full_csr_2d,
     csr_integrate1d as rs_csr_integrate1d, csr_integrate2d as rs_csr_integrate2d,
-    histogram1d as rs_histogram1d, histogram2d as rs_histogram2d,
+    histogram1d as rs_histogram1d, histogram1d_bbox as rs_histogram1d_bbox,
+    histogram2d as rs_histogram2d, histogram2d_bbox as rs_histogram2d_bbox,
     histogram_preproc as rs_histogram_preproc, Bbox2dBounds, Csr, CsrIntegrate1d, Hist2dOptions,
     Integrate1d, Integrate2d,
 };
@@ -271,6 +272,93 @@ fn histogram2d<'py>(
         empty,
     };
     let r = rs_histogram2d(radial_s, azim_s, prep_s, mask_slice(&mask)?, &opts);
+    integrate2d_to_dict(py, &r)
+}
+
+/// `histogram1d_bbox`: 1D direct-split bbox histogram (`histoBBox1d_engine`).
+/// `pos0`/`delta_pos0` are the unscaled radial center / half-width per pixel.
+/// Returns a dict of the `Integrate1dtpl` fields (f64 binned sums, like the CSR
+/// path).
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (pos0, delta_pos0, prep, *, mask=None, npt, error_model=0, empty=0.0, allow_pos0_neg=false))]
+fn histogram1d_bbox<'py>(
+    py: Python<'py>,
+    pos0: PyReadonlyArray1<'py, f64>,
+    delta_pos0: PyReadonlyArray1<'py, f64>,
+    prep: PyReadonlyArray2<'py, f32>,
+    mask: Option<PyReadonlyArray1<'py, i8>>,
+    npt: usize,
+    error_model: i32,
+    empty: f32,
+    allow_pos0_neg: bool,
+) -> PyResult<Bound<'py, PyDict>> {
+    let pos0_s = as_slice_1d(&pos0)?;
+    let delta_s = as_slice_1d(&delta_pos0)?;
+    let prep_s = as_slice_2d(&prep)?;
+    let em = self::error_model(error_model)?;
+    let r = rs_histogram1d_bbox(
+        pos0_s,
+        delta_s,
+        prep_s,
+        mask_slice(&mask)?,
+        npt,
+        em,
+        empty,
+        allow_pos0_neg,
+    );
+    csr_integrate1d_to_dict(py, &r)
+}
+
+/// `histogram2d_bbox`: 2D direct-split bbox histogram (`histoBBox2d_engine`).
+/// `pos0`/`delta_pos0` are the unscaled radial center / half-width; `pos1`/
+/// `delta_pos1` the radian azimuthal (chi) center / half-width. Returns a dict
+/// of the `Integrate2dtpl` fields; the 2D arrays are flat in (azimuthal, radial)
+/// C-order — reshape to `(bins_azim, bins_rad)`.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (
+    pos0, delta_pos0, pos1, delta_pos1, prep, *, bins, mask=None,
+    allow_pos0_neg=false, chi_disc_at_pi=true, pos1_period, error_model=0, empty=0.0,
+))]
+fn histogram2d_bbox<'py>(
+    py: Python<'py>,
+    pos0: PyReadonlyArray1<'py, f64>,
+    delta_pos0: PyReadonlyArray1<'py, f64>,
+    pos1: PyReadonlyArray1<'py, f64>,
+    delta_pos1: PyReadonlyArray1<'py, f64>,
+    prep: PyReadonlyArray2<'py, f32>,
+    bins: (usize, usize),
+    mask: Option<PyReadonlyArray1<'py, i8>>,
+    allow_pos0_neg: bool,
+    chi_disc_at_pi: bool,
+    pos1_period: f64,
+    error_model: i32,
+    empty: f32,
+) -> PyResult<Bound<'py, PyDict>> {
+    let pos0_s = as_slice_1d(&pos0)?;
+    let delta0_s = as_slice_1d(&delta_pos0)?;
+    let pos1_s = as_slice_1d(&pos1)?;
+    let delta1_s = as_slice_1d(&delta_pos1)?;
+    let prep_s = as_slice_2d(&prep)?;
+    let em = self::error_model(error_model)?;
+    let bounds = Bbox2dBounds {
+        allow_pos0_neg,
+        chi_disc_at_pi,
+        pos1_period,
+    };
+    let r = rs_histogram2d_bbox(
+        pos0_s,
+        delta0_s,
+        pos1_s,
+        delta1_s,
+        prep_s,
+        mask_slice(&mask)?,
+        bins,
+        &bounds,
+        em,
+        empty,
+    );
     integrate2d_to_dict(py, &r)
 }
 
@@ -763,6 +851,8 @@ fn rsfai(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(histogram_preproc, m)?)?;
     m.add_function(wrap_pyfunction!(histogram1d, m)?)?;
     m.add_function(wrap_pyfunction!(histogram2d, m)?)?;
+    m.add_function(wrap_pyfunction!(histogram1d_bbox, m)?)?;
+    m.add_function(wrap_pyfunction!(histogram2d_bbox, m)?)?;
     m.add_function(wrap_pyfunction!(build_bbox_csr_1d, m)?)?;
     m.add_function(wrap_pyfunction!(build_bbox_csr_2d, m)?)?;
     m.add_function(wrap_pyfunction!(build_full_csr_1d, m)?)?;

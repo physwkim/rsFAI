@@ -510,6 +510,38 @@ def main():
                 "correct_solid_angle": True,
                 "polarization_factor": 0.99,
             },
+            {
+                # Direct-split bbox histogram (splitBBox.histoBBox1d_engine): same
+                # bbox boundaries + per-pixel overlap fractions as bbox-CSR, but
+                # accumulated directly into bins (no sparse matrix). Differs from
+                # bbox-CSR: the split coef delta_left/right cast (bin+1) to f32
+                # (<float>) and the coef stays f64 into update_1d_accumulator
+                # (no error-model fork: sum_nrm2 += (weight*norm)² in f64). Reduces
+                # like the 2D/CSR path (guard on count, f64 intensity/sem/std,
+                # f64 sums) — NOT like the no-split f32 histogram. Own golden.
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # 2D direct-split bbox histogram (splitBBox.histoBBox2d_engine):
+                # 4-branch bbox overlap (radial × azimuthal) accumulated via
+                # update_2d_accumulator (norm² = (norm·norm f32)·weight²). Unlike
+                # the 1D engine, the delta casts use f64 (<position_t>). Reduction
+                # = histogram2d (count guard, transpose to (azim, rad)). chiDiscAtPi
+                # default True; pos1_period = CHI_DEG.period (clip flag).
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
         ],
     )
     print("done.")

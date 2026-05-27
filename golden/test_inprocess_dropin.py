@@ -239,8 +239,8 @@ def main():
 
     for d in dataset_dirs():
         cfg = json.load(open(DATASETS / d / "manifest.json"))["config"]
-        if method_of(cfg)[1] != "histogram":
-            continue  # drop-in covers the no-split histogram path only
+        if method_of(cfg) != ("no", "histogram"):
+            continue  # drop-in implements the no-split histogram path only
 
         print(f"=== {d} ===")
         rsfai_fields = run_rsfai_dropin(d, cfg)

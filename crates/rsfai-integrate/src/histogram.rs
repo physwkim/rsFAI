@@ -483,7 +483,36 @@ pub fn histogram2d(
         )
         .reduce(|| vec![[0.0f64; 5]; n_grid], merge_bins);
 
-    let do_variance = opts.error_model != ErrorModel::No;
+    let radial_centers = numpy_linspace(pos0_min + 0.5 * delta0, pos0_max - 0.5 * delta0, bins0);
+    let azim_centers = numpy_linspace(pos1_min + 0.5 * delta1, pos1_max - 0.5 * delta1, bins1);
+    reduce_2d(
+        &out,
+        (bins0, bins1),
+        radial_centers,
+        azim_centers,
+        opts.error_model,
+        opts.empty,
+    )
+}
+
+/// Final per-cell reduction shared by every 2D engine (`histogram2d_engine` and
+/// the direct-split `histoBBox2d_engine` / `fullSplit2D_engine`): the bins are
+/// already a `(bins.0, bins.1)` = (radial, azimuthal) row-major accumulator grid
+/// (`cell (i, j)` at `i*bins.1 + j`). It transposes to **(azimuthal, radial)**
+/// — the layout pyFAI exposes via `.T` — guards on **count** (`cnt > 0`, which
+/// equals pyFAI's `if cnt:` for the non-negative counts here), and computes
+/// `intensity = sig/norm`, `sem = sqrt(var)/norm`, `std = sqrt(var/norm²)` in f64
+/// (libc double sqrt) then downcasts to f32. The binned sums stay f64.
+pub(crate) fn reduce_2d(
+    out: &[[AccT; 5]],
+    bins: (usize, usize),
+    radial_centers: Vec<PositionT>,
+    azim_centers: Vec<PositionT>,
+    error_model: ErrorModel,
+    empty: DataT,
+) -> Integrate2d {
+    let (bins0, bins1) = bins;
+    let do_variance = error_model != ErrorModel::No;
     let n_cells = bins0 * bins1;
     let mut signal = vec![0.0f64; n_cells];
     let mut variance = vec![0.0f64; n_cells];
@@ -513,17 +542,15 @@ pub fn histogram2d(
                     std[t] = (var / norm2).sqrt() as DataT;
                 }
             } else {
-                intensity[t] = opts.empty;
+                intensity[t] = empty;
                 if do_variance {
-                    sem[t] = opts.empty;
-                    std[t] = opts.empty;
+                    sem[t] = empty;
+                    std[t] = empty;
                 }
             }
         }
     }
 
-    let radial_centers = numpy_linspace(pos0_min + 0.5 * delta0, pos0_max - 0.5 * delta0, bins0);
-    let azim_centers = numpy_linspace(pos1_min + 0.5 * delta1, pos1_max - 0.5 * delta1, bins1);
     Integrate2d {
         radial: radial_centers,
         azimuthal: azim_centers,

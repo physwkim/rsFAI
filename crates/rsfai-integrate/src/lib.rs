@@ -19,12 +19,19 @@
 //!   [`csr_integrate2d`] (the same apply), from `ext/splitpixel_common.pyx`
 //!   `calc_lut_2d` + `ext/regrid_common.pxi` `_integrate2d` + `ext/CSR_common.pxi`
 //!   — the `("full", "csr", "cython")` `integrate2d` path.
+//! - The direct-split bbox histogram engines, [`histogram1d_bbox`] /
+//!   [`histogram2d_bbox`] (`ext/splitBBox.pyx` `histoBBox1d_engine` /
+//!   `histoBBox2d_engine`), the `("bbox", "histogram", "cython")` paths — same
+//!   bbox overlap fractions as the CSR build, but scattered straight into bins.
 //!
-//! Default accumulation is serial for bit-exactness; rayon is opt-in behind a
-//! feature flag and is never the bit-exact gate.
+//! Per-pixel maps and CSR apply accumulate bit-exactly; the histogram-style
+//! scatter (no-split and bbox) is rayon-parallel and validated at relative error
+//! `<= 1e-6` because the f64 add order across pixels is non-deterministic. Golden
+//! generation is single-threaded.
 
 pub mod csr;
 pub mod histogram;
+pub mod split_histogram;
 
 pub use csr::{
     build_bbox_csr_1d, build_bbox_csr_2d, build_full_csr_1d, build_full_csr_2d, csr_integrate1d,
@@ -33,3 +40,4 @@ pub use csr::{
 pub use histogram::{
     histogram1d, histogram2d, histogram_preproc, Hist2dOptions, Integrate1d, Integrate2d,
 };
+pub use split_histogram::{histogram1d_bbox, histogram2d_bbox};

@@ -135,8 +135,11 @@ fn histogram_dropin_within_tolerance() {
             .iter()
             .map(|v| v.as_str().unwrap().to_string())
             .collect();
-        // Stage A covers the no-split histogram path only.
-        if method.get(1).map(String::as_str) != Some("histogram") {
+        // The drop-in implements the no-split histogram path only; the bbox/full
+        // split-histogram goldens are validated kernel-side (split_histogram_golden).
+        if method.first().map(String::as_str) != Some("no")
+            || method.get(1).map(String::as_str) != Some("histogram")
+        {
             continue;
         }
 
