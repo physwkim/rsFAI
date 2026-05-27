@@ -16,6 +16,14 @@
 //! C-order flattening is exactly the `[signal, variance, norm, count]`-per-pixel
 //! layout the engines consume. Corner arrays are passed pre-flattened to f64
 //! (`(npix*4*2,)`), matching the engines' `(npix, 4, 2)` C-order contract.
+//!
+//! Alongside the per-kernel functions, the module exposes the high-level
+//! [`AzimuthalIntegrator`](PyAzimuthalIntegrator): `load(poni)` then
+//! `integrate1d`/`integrate2d` of a detector frame — PONI + image in, nothing
+//! else — wrapping `rsfai_engine::AzimuthalIntegrator` so an in-process test can
+//! drive it the same way it drives `pyFAI.load(poni).integrate1d_ng(...)`. It
+//! adds no arithmetic either; it only marshals numpy in / dict out and maps the
+//! radial-unit string to the engine enum.
 
 use numpy::ndarray::Array2;
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
@@ -24,6 +32,10 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use rsfai_core::dtype::ErrorModel;
+use rsfai_engine::{
+    AzimuthalIntegrator as RsAzimuthalIntegrator, Integrate1dResult, Integrate2dResult,
+    IntegrationOptions, RadialUnit,
+};
 use rsfai_integrate::{
     build_bbox_csr_1d as rs_build_bbox_csr_1d, build_bbox_csr_2d as rs_build_bbox_csr_2d,
     build_full_csr_1d as rs_build_full_csr_1d, build_full_csr_2d as rs_build_full_csr_2d,
@@ -63,6 +75,23 @@ fn error_model(code: i32) -> PyResult<ErrorModel> {
         3 => Ok(ErrorModel::Azimuthal),
         other => Err(PyValueError::new_err(format!(
             "unknown error_model code {other} (expected 0=no, 1=variance, 2=poisson, 3=azimuthal)"
+        ))),
+    }
+}
+
+/// Map a pyFAI radial-unit string (the names used in the golden manifests and
+/// passed to `ai.integrate*`) to the engine [`RadialUnit`].
+fn radial_unit(name: &str) -> PyResult<RadialUnit> {
+    match name {
+        "q_nm^-1" => Ok(RadialUnit::Q_NM_INV),
+        "q_A^-1" => Ok(RadialUnit::Q_A_INV),
+        "2th_deg" => Ok(RadialUnit::TTH_DEG),
+        "2th_rad" => Ok(RadialUnit::TTH_RAD),
+        "r_mm" => Ok(RadialUnit::R_MM),
+        "r_m" => Ok(RadialUnit::R_M),
+        other => Err(PyValueError::new_err(format!(
+            "unsupported radial unit {other:?} \
+             (expected one of q_nm^-1, q_A^-1, 2th_deg, 2th_rad, r_mm, r_m)"
         ))),
     }
 }
@@ -420,6 +449,138 @@ fn csr_integrate2d<'py>(
 }
 
 // --------------------------------------------------------------------------
+// High-level integrator (drop-in)
+// --------------------------------------------------------------------------
+
+/// A pure-Rust drop-in for `pyFAI.integrator.AzimuthalIntegrator`, exposing the
+/// no-split histogram `integrate1d`/`integrate2d` path. Construct via
+/// `AzimuthalIntegrator.load(poni)`; the detector model is resolved from the
+/// PONI file's `Detector:` name (currently Pilatus1M).
+///
+/// Unlike the per-kernel functions, this regenerates pixel positions,
+/// corrections, gap mask, dummy, and preproc rows itself from the geometry and
+/// the image — the same chain `rsfai_engine::AzimuthalIntegrator` runs — so a
+/// parity test feeds it only the PONI and the frame.
+#[pyclass(name = "AzimuthalIntegrator")]
+struct PyAzimuthalIntegrator {
+    inner: RsAzimuthalIntegrator,
+}
+
+#[pymethods]
+impl PyAzimuthalIntegrator {
+    /// Load from a `.poni` file, resolving the detector from its `Detector:`
+    /// name. Raises `ValueError` if the file cannot be parsed or the detector is
+    /// not one with a golden-validated path.
+    #[staticmethod]
+    fn load(path: &str) -> PyResult<Self> {
+        let inner = RsAzimuthalIntegrator::load(path)
+            .map_err(|e| PyValueError::new_err(format!("failed to load {path:?}: {e}")))?;
+        Ok(Self { inner })
+    }
+
+    /// 1D integration of a detector `image` (an `(slow, fast)` f32 frame) into
+    /// `npt` radial bins in `unit`, no split. Returns a dict keyed like
+    /// `pyFAI.containers.Integrate1dResult` (`radial`, `intensity`, `sigma`,
+    /// `count`, `sum_signal`, `sum_variance`, `sum_normalization`,
+    /// `sum_normalization2`, `std`, `sem`).
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        image, npt, unit, *, correct_solid_angle=true,
+        polarization_factor=None, normalization_factor=1.0, error_model=0,
+    ))]
+    fn integrate1d<'py>(
+        &self,
+        py: Python<'py>,
+        image: PyReadonlyArray2<'py, f32>,
+        npt: usize,
+        unit: &str,
+        correct_solid_angle: bool,
+        polarization_factor: Option<f64>,
+        normalization_factor: f32,
+        error_model: i32,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let data = self.image_slice(&image)?;
+        let opts = self.options(
+            correct_solid_angle,
+            polarization_factor,
+            normalization_factor,
+            error_model,
+        )?;
+        let r = self.inner.integrate1d(data, npt, radial_unit(unit)?, &opts);
+        integrate1d_result_to_dict(py, &r)
+    }
+
+    /// 2D integration of a detector `image` into a `(npt_azim, npt_rad)` cake,
+    /// radial in `unit`, azimuth in degrees, no split. Returns a dict keyed like
+    /// `pyFAI.containers.Integrate2dResult`; the per-cell arrays are 2D, shaped
+    /// `(npt_azim, npt_rad)` to match pyFAI.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        image, npt_rad, npt_azim, unit, *, correct_solid_angle=true,
+        polarization_factor=None, normalization_factor=1.0, error_model=0,
+    ))]
+    fn integrate2d<'py>(
+        &self,
+        py: Python<'py>,
+        image: PyReadonlyArray2<'py, f32>,
+        npt_rad: usize,
+        npt_azim: usize,
+        unit: &str,
+        correct_solid_angle: bool,
+        polarization_factor: Option<f64>,
+        normalization_factor: f32,
+        error_model: i32,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let data = self.image_slice(&image)?;
+        let opts = self.options(
+            correct_solid_angle,
+            polarization_factor,
+            normalization_factor,
+            error_model,
+        )?;
+        let r = self
+            .inner
+            .integrate2d(data, npt_rad, npt_azim, radial_unit(unit)?, &opts);
+        integrate2d_result_to_dict(py, &r)
+    }
+}
+
+impl PyAzimuthalIntegrator {
+    /// Borrow the image as its flat C-order slice, rejecting a non-contiguous or
+    /// wrong-sized frame at the FFI boundary (so a shape error surfaces as a
+    /// `ValueError`, not an engine panic).
+    fn image_slice<'a>(&self, image: &'a PyReadonlyArray2<'_, f32>) -> PyResult<&'a [f32]> {
+        let data = image
+            .as_slice()
+            .map_err(|e| PyValueError::new_err(format!("image must be C-contiguous: {e}")))?;
+        let expected = self.inner.detector.size();
+        if data.len() != expected {
+            return Err(PyValueError::new_err(format!(
+                "image has {} pixels but detector expects {expected}",
+                data.len()
+            )));
+        }
+        Ok(data)
+    }
+
+    /// Assemble [`IntegrationOptions`] from the keyword arguments.
+    fn options(
+        &self,
+        correct_solid_angle: bool,
+        polarization_factor: Option<f64>,
+        normalization_factor: f32,
+        error_model_code: i32,
+    ) -> PyResult<IntegrationOptions> {
+        Ok(IntegrationOptions {
+            correct_solid_angle,
+            polarization_factor,
+            normalization_factor,
+            error_model: error_model(error_model_code)?,
+        })
+    }
+}
+
+// --------------------------------------------------------------------------
 // Output conversion helpers
 // --------------------------------------------------------------------------
 
@@ -495,6 +656,84 @@ fn integrate2d_to_dict<'py>(py: Python<'py>, r: &Integrate2d) -> PyResult<Bound<
     Ok(d)
 }
 
+/// Build the pyFAI-keyed dict from a high-level 1D result. Keys mirror
+/// `pyFAI.containers.Integrate1dResult` attributes so a parity test compares
+/// field-by-field; every array is 1D of length `npt`.
+fn integrate1d_result_to_dict<'py>(
+    py: Python<'py>,
+    r: &Integrate1dResult,
+) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("radial", r.radial.clone().into_pyarray(py))?;
+    d.set_item("intensity", r.intensity.clone().into_pyarray(py))?;
+    d.set_item("sigma", r.sigma.clone().into_pyarray(py))?;
+    d.set_item("count", r.count.clone().into_pyarray(py))?;
+    d.set_item("sum_signal", r.sum_signal.clone().into_pyarray(py))?;
+    d.set_item("sum_variance", r.sum_variance.clone().into_pyarray(py))?;
+    d.set_item(
+        "sum_normalization",
+        r.sum_normalization.clone().into_pyarray(py),
+    )?;
+    d.set_item(
+        "sum_normalization2",
+        r.sum_normalization2.clone().into_pyarray(py),
+    )?;
+    d.set_item("std", r.std.clone().into_pyarray(py))?;
+    d.set_item("sem", r.sem.clone().into_pyarray(py))?;
+    Ok(d)
+}
+
+/// Reshape a flat `(azimuthal, radial)` C-order vector (the engine's 2D layout)
+/// into an `(npt_azim, npt_rad)` numpy array — pyFAI's `Integrate2dResult` cell
+/// shape. `bins` is `(radial, azimuthal)`, so the array is `bins.1 × bins.0`.
+fn reshape_azim_rad<'py, T: numpy::Element>(
+    py: Python<'py>,
+    v: Vec<T>,
+    bins: (usize, usize),
+) -> PyResult<Bound<'py, PyArray2<T>>> {
+    let arr = Array2::from_shape_vec((bins.1, bins.0), v)
+        .map_err(|e| PyValueError::new_err(format!("2D result reshape failed: {e}")))?;
+    Ok(arr.into_pyarray(py))
+}
+
+/// Build the pyFAI-keyed dict from a high-level 2D result. The bin-center axes
+/// (`radial`, `azimuthal`) are 1D; the per-cell fields are 2D `(npt_azim,
+/// npt_rad)`, matching `pyFAI.containers.Integrate2dResult`.
+fn integrate2d_result_to_dict<'py>(
+    py: Python<'py>,
+    r: &Integrate2dResult,
+) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("radial", r.radial.clone().into_pyarray(py))?;
+    d.set_item("azimuthal", r.azimuthal.clone().into_pyarray(py))?;
+    d.set_item("bins", r.bins)?;
+    d.set_item(
+        "intensity",
+        reshape_azim_rad(py, r.intensity.clone(), r.bins)?,
+    )?;
+    d.set_item("sigma", reshape_azim_rad(py, r.sigma.clone(), r.bins)?)?;
+    d.set_item("count", reshape_azim_rad(py, r.count.clone(), r.bins)?)?;
+    d.set_item(
+        "sum_signal",
+        reshape_azim_rad(py, r.sum_signal.clone(), r.bins)?,
+    )?;
+    d.set_item(
+        "sum_variance",
+        reshape_azim_rad(py, r.sum_variance.clone(), r.bins)?,
+    )?;
+    d.set_item(
+        "sum_normalization",
+        reshape_azim_rad(py, r.sum_normalization.clone(), r.bins)?,
+    )?;
+    d.set_item(
+        "sum_normalization2",
+        reshape_azim_rad(py, r.sum_normalization2.clone(), r.bins)?,
+    )?;
+    d.set_item("std", reshape_azim_rad(py, r.std.clone(), r.bins)?)?;
+    d.set_item("sem", reshape_azim_rad(py, r.sem.clone(), r.bins)?)?;
+    Ok(d)
+}
+
 // --------------------------------------------------------------------------
 // Module
 // --------------------------------------------------------------------------
@@ -515,5 +754,6 @@ fn rsfai(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(build_full_csr_2d, m)?)?;
     m.add_function(wrap_pyfunction!(csr_integrate1d, m)?)?;
     m.add_function(wrap_pyfunction!(csr_integrate2d, m)?)?;
+    m.add_class::<PyAzimuthalIntegrator>()?;
     Ok(())
 }

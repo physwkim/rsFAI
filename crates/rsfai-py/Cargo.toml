@@ -23,6 +23,10 @@ numpy = "0.28"
 rsfai-core = { path = "../rsfai-core" }
 rsfai-integrate = { path = "../rsfai-integrate" }
 rsfai-preproc = { path = "../rsfai-preproc" }
+# The high-level orchestrator (`AzimuthalIntegrator`). Renamed because its own
+# crate name (`rsfai`) collides with this extension module's lib name (also
+# `rsfai`, for the Python import); `rsfai_engine` disambiguates the path here.
+rsfai_engine = { package = "rsfai", path = "../rsfai" }
 
 # Float semantics must match the engines: strict IEEE-754, no FMA contraction.
 # Rust never auto-forms `a*b+c` into an FMA, so this profile only documents the
