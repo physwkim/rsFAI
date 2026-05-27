@@ -13,6 +13,7 @@
   },
   "provenance_note": "pyFAI rebuilt from local source with -ffp-contract=off (no FMA); see doc/bit-exact-ladder.md",
   "config": {
+    "dim": 1,
     "npt": 1000,
     "unit": "2th_deg",
     "unit_scale": 57.29577951308232,

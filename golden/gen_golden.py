@@ -106,7 +106,7 @@ def generate(detector_name, poni_image, configs):
     }
 
     for cfg in configs:
-        npt = cfg["npt"]
+        dim = cfg.get("dim", 1)
         unit = cfg["unit"]
         method = tuple(cfg["method"])
         error_model = cfg.get("error_model")
@@ -115,13 +115,20 @@ def generate(detector_name, poni_image, configs):
         normalization_factor = cfg.get("normalization_factor", 1.0)
         radial_range = cfg.get("radial_range")
         azimuth_range = cfg.get("azimuth_range")
+        if dim == 2:
+            npt_rad = cfg["npt_rad"]
+            npt_azim = cfg["npt_azim"]
+            npt_slug = f"npt{npt_rad}x{npt_azim}"
+        else:
+            npt = cfg["npt"]
+            npt_slug = f"npt{npt}"
 
         key = "__".join(
             [
                 _slug(detector_name),
                 "-".join(method),
                 _slug(unit),
-                f"npt{npt}",
+                npt_slug,
                 f"err{error_model or 'none'}",
             ]
         )
@@ -206,32 +213,63 @@ def generate(detector_name, poni_image, configs):
         _save(arrays, out_dir, "preproc", preq)
 
         # ---- Run the integration ----------------------------------------
-        res = ai.integrate1d_ng(
-            data,
-            npt,
-            unit=unit,
-            method=method,
-            correctSolidAngle=correct_solid_angle,
-            error_model=error_model,
-            polarization_factor=polarization_factor,
-            normalization_factor=normalization_factor,
-            radial_range=radial_range,
-            azimuth_range=azimuth_range,
-        )
+        if dim == 2:
+            res = ai.integrate2d_ng(
+                data,
+                npt_rad,
+                npt_azim,
+                unit=unit,
+                method=method,
+                correctSolidAngle=correct_solid_angle,
+                error_model=error_model,
+                polarization_factor=polarization_factor,
+                normalization_factor=normalization_factor,
+                radial_range=radial_range,
+                azimuth_range=azimuth_range,
+            )
+            # 2D fields are (npt_azim, npt_rad). out_radial/out_azimuthal are the
+            # 1D scaled bin centres (radial * pos0_scale, azimuthal * pos1_scale).
+            out_fields = (
+                "radial",
+                "azimuthal",
+                "intensity",
+                "sigma",
+                "count",
+                "sum_signal",
+                "sum_variance",
+                "sum_normalization",
+                "sum_normalization2",
+                "std",
+                "sem",
+            )
+        else:
+            res = ai.integrate1d_ng(
+                data,
+                npt,
+                unit=unit,
+                method=method,
+                correctSolidAngle=correct_solid_angle,
+                error_model=error_model,
+                polarization_factor=polarization_factor,
+                normalization_factor=normalization_factor,
+                radial_range=radial_range,
+                azimuth_range=azimuth_range,
+            )
+            out_fields = (
+                "radial",
+                "intensity",
+                "sigma",
+                "count",
+                "sum_signal",
+                "sum_variance",
+                "sum_normalization",
+                "sum_normalization2",
+                "std",
+                "sem",
+            )
 
         # ---- Golden output (every exposed field) ------------------------
-        for field in (
-            "radial",
-            "intensity",
-            "sigma",
-            "count",
-            "sum_signal",
-            "sum_variance",
-            "sum_normalization",
-            "sum_normalization2",
-            "std",
-            "sem",
-        ):
+        for field in out_fields:
             v = getattr(res, field, None)
             if isinstance(v, np.ndarray):
                 _save(arrays, out_dir, f"out_{field}", v)
@@ -255,6 +293,20 @@ def generate(detector_name, poni_image, configs):
                     break
 
         # ---- Manifest ---------------------------------------------------
+        if dim == 2:
+            npt_cfg = {
+                "npt_rad": npt_rad,
+                "npt_azim": npt_azim,
+                # The azimuthal engine input is chi in radians (chi_center.npy);
+                # the reported azimuthal is bin_centers1 * azim_scale (CHI_DEG).
+                "azim_scale": float(units.CHI_DEG.scale),
+                # pos1_period > 0 turns on the [-π, π] azimuthal clip (chiDiscAtPi
+                # default True); histogram2d does not otherwise use the period.
+                "pos1_period": float(units.CHI_DEG.period),
+                "chi_disc_at_pi": True,
+            }
+        else:
+            npt_cfg = {"npt": npt}
         manifest = {
             "dataset": key,
             "detector_name": detector_name,
@@ -279,7 +331,8 @@ def generate(detector_name, poni_image, configs):
                 "see doc/bit-exact-ladder.md"
             ),
             "config": {
-                "npt": npt,
+                "dim": dim,
+                **npt_cfg,
                 "unit": unit,
                 # The engine bins/builds on the unscaled radial; the reported
                 # position is engine_position * unit_scale (see
@@ -360,6 +413,32 @@ def main():
                 "npt": 1000,
                 "unit": "2th_deg",
                 "method": ("full", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # 2D histogram (no split): bins each pixel centre into a
+                # (radial, azimuthal) cell via histogram2d_engine. errnone exercises
+                # the cnt>0 reduction without the variance branch.
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("no", "histogram", "cython"),
+                "error_model": None,
+                "correct_solid_angle": True,
+                "polarization_factor": None,
+            },
+            {
+                # 2D histogram, Poisson: adds the variance branch (sum_variance,
+                # norm_sq via the f32 norm*norm of update_2d_accumulator, std/sem
+                # via libc double sqrt).
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("no", "histogram", "cython"),
                 "error_model": "poisson",
                 "correct_solid_angle": True,
                 "polarization_factor": 0.99,

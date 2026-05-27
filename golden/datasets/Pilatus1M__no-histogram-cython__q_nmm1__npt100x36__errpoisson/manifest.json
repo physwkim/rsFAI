@@ -1,5 +1,5 @@
 {
-  "dataset": "Pilatus1M__full-csr-cython__2th_deg__npt1000__errpoisson",
+  "dataset": "Pilatus1M__no-histogram-cython__q_nmm1__npt100x36__errpoisson",
   "detector_name": "Pilatus1M",
   "pyfai_version": "2026.5.0",
   "numpy_version": "2.4.3",
@@ -13,13 +13,17 @@
   },
   "provenance_note": "pyFAI rebuilt from local source with -ffp-contract=off (no FMA); see doc/bit-exact-ladder.md",
   "config": {
-    "dim": 1,
-    "npt": 1000,
-    "unit": "2th_deg",
-    "unit_scale": 57.29577951308232,
+    "dim": 2,
+    "npt_rad": 100,
+    "npt_azim": 36,
+    "azim_scale": 57.29577951308232,
+    "pos1_period": 360.0,
+    "chi_disc_at_pi": true,
+    "unit": "q_nm^-1",
+    "unit_scale": 1.0,
     "method": [
-      "full",
-      "csr",
+      "no",
+      "histogram",
       "cython"
     ],
     "error_model": "poisson",
@@ -161,79 +165,76 @@
     "out_radial": {
       "dtype": "float64",
       "shape": [
-        1000
+        100
+      ]
+    },
+    "out_azimuthal": {
+      "dtype": "float64",
+      "shape": [
+        36
       ]
     },
     "out_intensity": {
       "dtype": "float32",
       "shape": [
-        1000
+        36,
+        100
       ]
     },
     "out_sigma": {
       "dtype": "float32",
       "shape": [
-        1000
+        36,
+        100
       ]
     },
     "out_count": {
       "dtype": "float64",
       "shape": [
-        1000
+        36,
+        100
       ]
     },
     "out_sum_signal": {
       "dtype": "float64",
       "shape": [
-        1000
+        36,
+        100
       ]
     },
     "out_sum_variance": {
       "dtype": "float64",
       "shape": [
-        1000
+        36,
+        100
       ]
     },
     "out_sum_normalization": {
       "dtype": "float64",
       "shape": [
-        1000
+        36,
+        100
       ]
     },
     "out_sum_normalization2": {
       "dtype": "float64",
       "shape": [
-        1000
+        36,
+        100
       ]
     },
     "out_std": {
       "dtype": "float32",
       "shape": [
-        1000
+        36,
+        100
       ]
     },
     "out_sem": {
       "dtype": "float32",
       "shape": [
-        1000
-      ]
-    },
-    "csr_data": {
-      "dtype": "float32",
-      "shape": [
-        2029312
-      ]
-    },
-    "csr_indices": {
-      "dtype": "int32",
-      "shape": [
-        2029312
-      ]
-    },
-    "csr_indptr": {
-      "dtype": "int32",
-      "shape": [
-        1001
+        36,
+        100
       ]
     }
   }
