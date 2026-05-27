@@ -175,6 +175,30 @@ normalization/count/norm_sq columns) are **bitwise-exact** vs pyFAI's OpenCL
 output. The 1e-6 gate covers the general cross-work-group case; the observed
 divergence is 0 on this device.
 
+The `OCL_LUT_Integrator` path (`azim_lut.py`, kernels `doubleword.cl` +
+`preprocess.cl` + `memset.cl` + `ocl_azim_LUT.cl`) reuses the same `merged8` lane
+layout and the same 2D packaging (`(bins_rad, bins_azim).T`), and produces output
+bit-identical to CSR — but the GPU mechanics differ in three ways the host
+orchestration must match:
+
+- **Image pre-cast to float.** pyFAI's LUT engine runs `s32_to_float` first, so
+  `corrections4` takes no `dtype` argument (23 args, vs CSR's `corrections4a`
+  with 24 incl. `dtype`). The Rust host casts the raw `i32` image to `f32`
+  (`i32 as f32`, IEEE round-to-nearest-even — identical to OpenCL `(float)int`
+  and numpy `astype`) before upload.
+- **Densified, transposed LUT.** The sparse matrix is stored as a dense
+  `(bins, lut_size)` array of `struct lut_point_t { int idx; float coef; }`
+  (8 bytes, `idx`@0 `coef`@4), uploaded transposed so the kernel reads
+  `lut[j*NBINS + bin]`. Compile flags add `-D NLUT={lut_size} -D ON_CPU=0`.
+- **One thread per bin.** `lut_integrate4` is a flat gather — no tree reduction,
+  no local buffer — `global = ceil(bins / BLOCK_SIZE)·BLOCK_SIZE`,
+  `local = BLOCK_SIZE = 32`. The output `memset` uses `memset_out` (averint, sem,
+  merged8), not CSR's `memset_ng`.
+
+**Measured (Pilatus1M, Poisson):** all six `OCL_LUT_Integrator` tuples —
+`{no, bbox, full} × {1D npt=1000, 2D npt=100×36}` — are **bitwise-exact** (9/9
+fields) vs pyFAI's OpenCL output on this device.
+
 ## The arithmetic to reproduce (from `regrid_common.pxi`)
 
 - **preproc** (`preproc_value_inplace`, lines 149-237): `signal = data - dark`;

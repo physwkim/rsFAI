@@ -1,0 +1,26 @@
+{
+  "algo": "lut",
+  "bins": 3600,
+  "image_size": 1023183,
+  "empty": 0.0,
+  "dim": 2,
+  "bins_rad": 100,
+  "bins_azim": 36,
+  "corrections4": {
+    "error_model": 2,
+    "do_dark": 0,
+    "do_dark_variance": 0,
+    "do_flat": 0,
+    "do_solidangle": 1,
+    "do_polarization": 1,
+    "do_absorption": 0,
+    "do_mask": 0,
+    "do_dummy": 1,
+    "dummy": -2.0,
+    "delta_dummy": 1.5,
+    "normalization_factor": 1.0,
+    "apply_normalization": 0
+  },
+  "block_size": 32,
+  "lut_size": 1984
+}

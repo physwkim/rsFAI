@@ -55,6 +55,10 @@ CORR_SCALARS = (
     "do_dummy", "dummy", "delta_dummy", "normalization_factor",
     "apply_normalization",
 )
+# corrections4 (LUT path) scalars: same as corrections4a minus the image dtype.
+# The LUT path pre-casts the image to float (s32_to_float), so corrections4
+# reads a float buffer and takes no dtype argument.
+CORR4_SCALARS = tuple(k for k in CORR_SCALARS if k != "dtype")
 # Scalar csr_integrate4 arguments.
 INT_SCALARS = ("nbins", "empty", "error_model")
 
@@ -80,13 +84,13 @@ def _scalar(v):
     return int(arr)
 
 
-def _find_ocl_integrator(ai):
-    """Return the OCL_CSR_Integrator engine instance from a populated ai."""
+def _find_ocl_integrator(ai, class_name):
+    """Return the named OCL integrator engine instance from a populated ai."""
     for _method, engine_wrap in ai.engines.items():
         eng = getattr(engine_wrap, "engine", engine_wrap)
-        if eng.__class__.__name__ == "OCL_CSR_Integrator":
+        if eng.__class__.__name__ == class_name:
             return eng
-    raise RuntimeError("no OCL_CSR_Integrator engine found after integration")
+    raise RuntimeError(f"no {class_name} engine found after integration")
 
 
 def generate(detector_name, poni_image, configs):
@@ -166,32 +170,58 @@ def generate(detector_name, poni_image, configs):
                 _save(arrays, out_dir, f"out_{field}", v)
 
         # ---- The OCL integrator's exact state ---------------------------
-        integr = _find_ocl_integrator(ai)
-        _save(arrays, out_dir, "csr_data", np.asarray(integr._data))
-        _save(arrays, out_dir, "csr_indices", np.asarray(integr._indices))
-        _save(arrays, out_dir, "csr_indptr", np.asarray(integr._indptr))
+        # algo is method[1] ("csr" or "lut"); the two integrators differ in the
+        # sparse representation, the preproc kernel (corrections4a has a dtype
+        # arg, corrections4 does not), and the launch geometry.
+        algo = method[1]
+        if algo == "csr":
+            integr = _find_ocl_integrator(ai, "OCL_CSR_Integrator")
+            _save(arrays, out_dir, "csr_data", np.asarray(integr._data))
+            _save(arrays, out_dir, "csr_indices", np.asarray(integr._indices))
+            _save(arrays, out_dir, "csr_indptr", np.asarray(integr._indptr))
+            corr_args = integr.cl_kernel_args["corrections4a"]
+            int_args = integr.cl_kernel_args["csr_integrate4"]
+            wg_min, wg_max = integr.workgroup_size["csr_integrate4"]
+            algo_params = {
+                "corrections4a": {k: _scalar(corr_args[k]) for k in CORR_SCALARS},
+                "csr_integrate4": {k: _scalar(int_args[k]) for k in INT_SCALARS},
+                # csr_integrate4 launch (azim_csr.integrate_ng): wg = wg_min,
+                # global = bins * wg_min, local = wg_min, shared = 32 * wg_min.
+                "wg_min": int(wg_min),
+                "wg_max": int(wg_max),
+                # The all-ones LUT short-circuit (azim_csr __init__): when every
+                # coef is 1.0, pyFAI passes a NULL coefs buffer (kernel uses 1.0).
+                "data_is_ones": integr.cl_mem.get("data") is None,
+            }
+        elif algo == "lut":
+            integr = _find_ocl_integrator(ai, "OCL_LUT_Integrator")
+            # Densified LUT (bins, lut_size) of struct {idx:int32, coef:float32}.
+            # Dump the two fields separately; the Rust side transposes them for
+            # the GPU (lut.T) and re-interleaves the struct.
+            _save(arrays, out_dir, "lut_idx", np.ascontiguousarray(integr._lut["idx"]))
+            _save(arrays, out_dir, "lut_coef", np.ascontiguousarray(integr._lut["coef"]))
+            corr_args = integr.cl_kernel_args["corrections4"]
+            algo_params = {
+                "corrections4": {k: _scalar(corr_args[k]) for k in CORR4_SCALARS},
+                # lut_integrate4 launch (azim_lut.integrate_ng): one thread per
+                # bin, global = ceil(bins/block_size)*block_size, local=block_size.
+                "block_size": int(integr.BLOCK_SIZE),
+                "lut_size": int(integr.lut_size),
+            }
+        else:
+            raise RuntimeError(f"unsupported algo {algo!r}")
 
-        corr_args = integr.cl_kernel_args["corrections4a"]
-        int_args = integr.cl_kernel_args["csr_integrate4"]
-        wg_min, wg_max = integr.workgroup_size["csr_integrate4"]
         opencl_params = {
-            "corrections4a": {k: _scalar(corr_args[k]) for k in CORR_SCALARS},
-            "csr_integrate4": {k: _scalar(int_args[k]) for k in INT_SCALARS},
-            # csr_integrate4 launch geometry (azim_csr.integrate_ng): wg = wg_min,
-            # global = bins * wg_min, local = wg_min, shared = 32 bytes * wg_min.
-            "wg_min": int(wg_min),
-            "wg_max": int(wg_max),
-            # The all-ones LUT short-circuit (azim_csr __init__): when every coef
-            # is 1.0, pyFAI passes a NULL coefs buffer and the kernel uses 1.0.
-            "data_is_ones": integr.cl_mem.get("data") is None,
+            "algo": algo,
             "bins": int(integr.bins),
             "image_size": int(integr.size),
             "empty": float(integr.empty),
-            # Dimensionality + 2D cell layout. The OCL integrate_ng packs 2D as a
-            # flat (bins_rad * bins_azim) CSR (cell = rad*bins_azim + azim,
+            # Dimensionality + 2D cell layout. integrate_ng packs 2D as a flat
+            # (bins_rad * bins_azim) sparse matrix (cell = rad*bins_azim + azim,
             # radial-major) then reshapes (bins_rad, bins_azim).T → (azim, rad).
             "dim": dim,
             **({"bins_rad": npt_rad, "bins_azim": npt_azim} if dim == 2 else {}),
+            **algo_params,
         }
         with open(out_dir / "opencl_params.json", "w") as f:
             json.dump(opencl_params, f, indent=2)
@@ -229,9 +259,8 @@ def generate(detector_name, poni_image, configs):
         }
         with open(out_dir / "manifest.json", "w") as f:
             json.dump(manifest, f, indent=2)
-        print(f"  wrote {key}  ({len(arrays)} arrays, "
-              f"wg={opencl_params['wg_min']}, data_is_ones="
-              f"{opencl_params['data_is_ones']})")
+        print(f"  wrote {key}  ({len(arrays)} arrays, algo={algo}, "
+              f"bins={opencl_params['bins']}, dim={dim})")
 
 
 def main():
@@ -286,6 +315,46 @@ def main():
             {
                 "dim": 2, "npt_rad": 100, "npt_azim": 36, "unit": "q_nm^-1",
                 "method": ("full", "csr", "opencl"),
+                "error_model": "poisson", "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            # ---- LUT tuples (all OCL_LUT_Integrator) -----------------------
+            # Same NG pipeline shape as CSR but a densified+transposed LUT and a
+            # one-thread-per-bin integrate kernel; corrections4 has no dtype arg
+            # (the image is pre-cast to float). 2D packaging is identical to CSR.
+            {
+                "npt": 1000, "unit": "q_nm^-1",
+                "method": ("no", "lut", "opencl"),
+                "error_model": "poisson", "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                "npt": 1000, "unit": "q_nm^-1",
+                "method": ("bbox", "lut", "opencl"),
+                "error_model": "poisson", "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                "npt": 1000, "unit": "q_nm^-1",
+                "method": ("full", "lut", "opencl"),
+                "error_model": "poisson", "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                "dim": 2, "npt_rad": 100, "npt_azim": 36, "unit": "q_nm^-1",
+                "method": ("no", "lut", "opencl"),
+                "error_model": "poisson", "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                "dim": 2, "npt_rad": 100, "npt_azim": 36, "unit": "q_nm^-1",
+                "method": ("bbox", "lut", "opencl"),
+                "error_model": "poisson", "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                "dim": 2, "npt_rad": 100, "npt_azim": 36, "unit": "q_nm^-1",
+                "method": ("full", "lut", "opencl"),
                 "error_model": "poisson", "correct_solid_angle": True,
                 "polarization_factor": 0.99,
             },

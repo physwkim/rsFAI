@@ -1,20 +1,26 @@
-//! Host-side orchestration of pyFAI's CSR-NG OpenCL pipeline.
+//! Host-side orchestration of pyFAI's LUT-NG OpenCL pipeline.
 //!
-//! Reproduces `OCL_CSR_Integrator.integrate_ng` (`pyFAI/opencl/azim_csr.py`):
-//! `memset_ng` → `corrections4a` → `csr_integrate4`, driving pyFAI's own
-//! embedded kernels (see [`crate::program`]). The Rust side only uploads
-//! buffers, sets kernel arguments in pyFAI's exact order, enqueues, and reads
-//! back — the arithmetic lives entirely in the GPU kernels, so on the same
-//! device the result matches pyFAI's OpenCL output (validated at relative
-//! error, see crate docs).
+//! Reproduces `OCL_LUT_Integrator.integrate_ng` (`pyFAI/opencl/azim_lut.py`):
+//! `memset_out` → `corrections4` → `lut_integrate4`, driving pyFAI's own
+//! embedded kernels (see [`crate::program::build_lut_program`]). Like the CSR
+//! backend the arithmetic lives entirely in the GPU kernels; the Rust side only
+//! uploads buffers, sets arguments in pyFAI's exact order, and reads back.
 //!
-//! On the Apple M4 Pro GPU `csr_integrate4`'s `CL_KERNEL_WORK_GROUP_SIZE` is
-//! 256 (not 1), so pyFAI takes the work-group **tree-reduction** path
-//! `csr_integrate4` (not `csr_integrate4_single`), launched with
-//! `wg = wg_min = CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE` (32),
-//! `global = bins·wg`, `local = wg`, and `local float8 shared[wg]`. We
-//! replicate that launch geometry. The 1D/2D split is purely host-side
-//! packaging (see [`crate::common`]).
+//! Two things differ from the CSR path:
+//!
+//! * **Image is pre-cast to `float`.** pyFAI's `send_buffer` runs a
+//!   `s32_to_float` kernel into the `float` `image` buffer, so `corrections4`
+//!   reads `global float*` and takes **no** `dtype` argument. We host-cast
+//!   `i32 as f32` (IEEE round-to-nearest-even, identical to OpenCL's `(float)int`
+//!   and numpy's `astype`) and upload to a float buffer.
+//! * **LUT is a densified, transposed sparse matrix.** The look-up table is a
+//!   `(bins, lut_size)` array of `struct lut_point_t { int idx; float coef; }`;
+//!   on the GPU (`ON_CPU == 0`) pyFAI uploads `lut.T` so the kernel reads
+//!   `lut[j * NBINS + bin]` for coalesced access. `lut_integrate4` is one thread
+//!   per bin (no work-group tree reduction), looping over `NLUT` entries with
+//!   Kahan summation.
+//!
+//! The 1D/2D split is purely host-side packaging (see [`crate::common`]).
 
 use opencl3::kernel::{ExecuteKernel, Kernel};
 use opencl3::memory::{Buffer, CL_MEM_READ_ONLY, CL_MEM_READ_WRITE, CL_MEM_WRITE_ONLY};
@@ -23,14 +29,12 @@ use std::ptr;
 
 use crate::common::{pack_1d, pack_2d, upload_f32, ClSession, PipelineOutput, Result1d, Result2d};
 
-/// The 14 scalar arguments of the `corrections4a` preprocessing kernel,
-/// captured verbatim from pyFAI's live `cl_kernel_args` (see the dataset's
-/// `opencl_params.json`). `do_*` flags and `dtype` are `char` (i8) on the GPU;
-/// `dummy`/`delta_dummy`/`normalization_factor` are `float` (f32).
+/// The 13 scalar arguments of the `corrections4` preprocessing kernel, captured
+/// verbatim from pyFAI's live `cl_kernel_args`. Identical to the CSR
+/// `Corrections4aArgs` except there is **no `dtype`**: the LUT path pre-casts the
+/// image to `float`, so `corrections4` reads `global float*`.
 #[derive(Debug, Clone, Copy)]
-pub struct Corrections4aArgs {
-    /// Image element type code (`_any2float`): -4 = int32, 32 = float32, …
-    pub dtype: i8,
+pub struct Corrections4Args {
     /// `ErrorModel` enum value: 0 none, 1 variance, 2 poisson, 3 azimuthal.
     pub error_model: i8,
     pub do_dark: i8,
@@ -47,13 +51,22 @@ pub struct Corrections4aArgs {
     pub apply_normalization: i8,
 }
 
-/// Per-pixel inputs to the pipeline. The image is the raw integer buffer the GPU
-/// reinterprets via `dtype`; correction arrays are `f32` (the caller casts
-/// f64→f32 exactly as pyFAI's `send_buffer` does). Absent corrections are bound
-/// as zeroed buffers (their `do_*` flag is 0). The CSR matrix is the exact
-/// `(data, indices, indptr)` triple the integrator was built from.
-pub struct CsrInputs<'a> {
-    /// Raw image as i32 (the `dtype=-4` case). Length = image size.
+/// A single densified-LUT entry, matching `struct lut_point_t { int idx; float
+/// coef; }` in `ocl_azim_LUT.cl` (8 bytes, `idx` at offset 0, `coef` at 4).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct LutPoint {
+    idx: cl_int,
+    coef: cl_float,
+}
+
+/// Per-pixel inputs to the LUT pipeline. The image is raw `i32` (host-cast to
+/// `f32` on upload); correction arrays are `f32` (caller casts f64→f32 like
+/// pyFAI's `send_buffer`). The LUT is the densified `(bins, lut_size)` matrix in
+/// **row-major** order (`idx[bin * lut_size + j]`); this code transposes it for
+/// the GPU.
+pub struct LutInputs<'a> {
+    /// Raw image as i32. Length = image size.
     pub image_i32: &'a [i32],
     pub variance: Option<&'a [f32]>,
     pub dark: Option<&'a [f32]>,
@@ -63,48 +76,70 @@ pub struct CsrInputs<'a> {
     pub polarization: Option<&'a [f32]>,
     pub absorption: Option<&'a [f32]>,
     pub mask: Option<&'a [i8]>,
-    /// CSR coefficients (f32, length nnz). For the no-split case these are all
-    /// 1.0; pyFAI then binds a NULL `coefs` buffer and the kernel substitutes
-    /// 1.0f. Uploading the all-ones buffer yields the identical 1.0f per entry,
-    /// so the result is bit-identical and the NULL special case is unneeded.
-    pub csr_data: &'a [f32],
-    /// CSR column indices (i32, length nnz).
-    pub csr_indices: &'a [i32],
-    /// CSR row pointers (i32, length bins+1).
-    pub csr_indptr: &'a [i32],
+    /// Densified LUT indices, row-major `(bins, lut_size)`: `idx[bin*lut_size+j]`.
+    pub lut_idx: &'a [i32],
+    /// Densified LUT coefficients, row-major `(bins, lut_size)`.
+    pub lut_coef: &'a [f32],
+    /// Number of output bins (LUT rows). For 2D this is the flattened cell count.
+    pub bins: usize,
+    /// Densified LUT width (max non-zero entries per bin; pyFAI's `lut_size`).
+    pub lut_size: usize,
 }
 
-/// Run pyFAI's CSR-NG OpenCL pipeline (`memset_ng` → `corrections4a` →
-/// `csr_integrate4`) on `program` (built by [`crate::program::build_csr_program`]
-/// for the matching bin count and image size) and read back the flat per-bin
-/// result. The bin count is taken from `inputs.csr_indptr` (length `bins + 1`),
-/// the single source of truth — for 2D this is the flattened cell count. `wg_min`
-/// is the `csr_integrate4` work-group size (pyFAI's `wg_min`, 32 on the M4 Pro).
-fn run_csr_pipeline(
+/// Build the transposed device LUT pyFAI uploads on the GPU (`lut.T.copy()`):
+/// `gpu[j * bins + bin] = lut[bin * lut_size + j]`, so the kernel's
+/// `lut[j * NBINS + bin]` reads entry `j` of `bin`.
+fn build_gpu_lut(inputs: &LutInputs<'_>) -> Vec<LutPoint> {
+    let (bins, lut_size) = (inputs.bins, inputs.lut_size);
+    let mut lut = Vec::with_capacity(bins * lut_size);
+    for j in 0..lut_size {
+        for bin in 0..bins {
+            let src = bin * lut_size + j;
+            lut.push(LutPoint {
+                idx: inputs.lut_idx[src],
+                coef: inputs.lut_coef[src],
+            });
+        }
+    }
+    lut
+}
+
+/// Run pyFAI's LUT-NG OpenCL pipeline on `program` (built by
+/// [`crate::program::build_lut_program`] for the matching bins / image size /
+/// `lut_size`) and read back the flat per-bin result. `block_size` is pyFAI's
+/// `BLOCK_SIZE` (the work-group size, 32 on the M4 Pro).
+fn run_lut_pipeline(
     session: &ClSession<'_>,
-    inputs: &CsrInputs<'_>,
-    corr: &Corrections4aArgs,
+    inputs: &LutInputs<'_>,
+    corr: &Corrections4Args,
     empty: f32,
-    wg_min: usize,
+    block_size: usize,
 ) -> Result<PipelineOutput, String> {
     let context = session.context;
     let queue = session.queue;
     let program = session.program;
     let size = inputs.image_i32.len();
-    let nnz = inputs.csr_data.len();
-    let bins = inputs.csr_indptr.len() - 1;
+    let bins = inputs.bins;
+    let lut_size = inputs.lut_size;
     assert_eq!(
-        inputs.csr_indices.len(),
-        nnz,
-        "indices/data length mismatch"
+        inputs.lut_idx.len(),
+        bins * lut_size,
+        "lut_idx length != bins * lut_size"
+    );
+    assert_eq!(
+        inputs.lut_coef.len(),
+        bins * lut_size,
+        "lut_coef length != bins * lut_size"
     );
 
     // ---- Upload inputs ------------------------------------------------
+    // Image is pre-cast to float (pyFAI's s32_to_float); `i32 as f32` matches.
+    let image_host: Vec<cl_float> = inputs.image_i32.iter().map(|&v| v as f32).collect();
     let mut image_buf = unsafe {
-        Buffer::<cl_int>::create(context, CL_MEM_READ_ONLY, size, ptr::null_mut())
+        Buffer::<cl_float>::create(context, CL_MEM_READ_ONLY, size, ptr::null_mut())
             .map_err(|e| format!("alloc image: {e}"))?
     };
-    unsafe { queue.enqueue_write_buffer(&mut image_buf, CL_BLOCKING, 0, inputs.image_i32, &[]) }
+    unsafe { queue.enqueue_write_buffer(&mut image_buf, CL_BLOCKING, 0, &image_host, &[]) }
         .map_err(|e| format!("write image: {e}"))?;
 
     let variance_buf = upload_f32(context, queue, inputs.variance, size)?;
@@ -126,28 +161,15 @@ fn run_csr_pipeline(
     unsafe { queue.enqueue_write_buffer(&mut mask_buf, CL_BLOCKING, 0, &mask_host, &[]) }
         .map_err(|e| format!("write mask: {e}"))?;
 
-    let mut data_buf = unsafe {
-        Buffer::<cl_float>::create(context, CL_MEM_READ_ONLY, nnz, ptr::null_mut())
-            .map_err(|e| format!("alloc csr data: {e}"))?
+    let lut_host = build_gpu_lut(inputs);
+    let mut lut_buf = unsafe {
+        Buffer::<LutPoint>::create(context, CL_MEM_READ_ONLY, lut_host.len(), ptr::null_mut())
+            .map_err(|e| format!("alloc lut: {e}"))?
     };
-    unsafe { queue.enqueue_write_buffer(&mut data_buf, CL_BLOCKING, 0, inputs.csr_data, &[]) }
-        .map_err(|e| format!("write csr data: {e}"))?;
-    let mut indices_buf = unsafe {
-        Buffer::<cl_int>::create(context, CL_MEM_READ_ONLY, nnz, ptr::null_mut())
-            .map_err(|e| format!("alloc csr indices: {e}"))?
-    };
-    unsafe {
-        queue.enqueue_write_buffer(&mut indices_buf, CL_BLOCKING, 0, inputs.csr_indices, &[])
-    }
-    .map_err(|e| format!("write csr indices: {e}"))?;
-    let mut indptr_buf = unsafe {
-        Buffer::<cl_int>::create(context, CL_MEM_READ_ONLY, bins + 1, ptr::null_mut())
-            .map_err(|e| format!("alloc csr indptr: {e}"))?
-    };
-    unsafe { queue.enqueue_write_buffer(&mut indptr_buf, CL_BLOCKING, 0, inputs.csr_indptr, &[]) }
-        .map_err(|e| format!("write csr indptr: {e}"))?;
+    unsafe { queue.enqueue_write_buffer(&mut lut_buf, CL_BLOCKING, 0, &lut_host, &[]) }
+        .map_err(|e| format!("write lut: {e}"))?;
 
-    // ---- Allocate outputs (float4 weights, float8 accumulator, results) ---
+    // ---- Allocate outputs ---------------------------------------------
     let output4_buf = unsafe {
         Buffer::<cl_float>::create(context, CL_MEM_READ_WRITE, 4 * size, ptr::null_mut())
             .map_err(|e| format!("alloc output4: {e}"))?
@@ -169,31 +191,30 @@ fn run_csr_pipeline(
             .map_err(|e| format!("alloc sem: {e}"))?
     };
 
-    // ---- memset_ng: zero averint, std, merged8 -----------------------
-    // (csr_integrate4 writes every bin, so this only clears padding; we run it
-    // for fidelity with integrate_ng.) Pure map: wg-independent.
-    let memset = Kernel::create(program, "memset_ng").map_err(|e| format!("memset_ng: {e}"))?;
-    let wg_map = 256usize;
-    let g_bins = bins.div_ceil(wg_map) * wg_map;
+    let g_bins = bins.div_ceil(block_size) * block_size;
+    let g_data = size.div_ceil(block_size) * block_size;
+
+    // ---- memset_out: zero averint, sem, merged8 ----------------------
+    // (lut_integrate4 writes every bin, so this only clears padding; run it for
+    // fidelity with integrate_ng. pyFAI uses the memset_out kernel here.)
+    let memset = Kernel::create(program, "memset_out").map_err(|e| format!("memset_out: {e}"))?;
     unsafe {
         ExecuteKernel::new(&memset)
             .set_arg(&averint_buf)
-            .set_arg(&std_buf)
+            .set_arg(&sem_buf)
             .set_arg(&merged8_buf)
             .set_global_work_size(g_bins)
-            .set_local_work_size(wg_map)
+            .set_local_work_size(block_size)
             .enqueue_nd_range(queue)
-            .map_err(|e| format!("enqueue memset_ng: {e}"))?;
+            .map_err(|e| format!("enqueue memset_out: {e}"))?;
     }
 
-    // ---- corrections4a: per-pixel preprocessing into output4 ---------
+    // ---- corrections4: per-pixel preprocessing into output4 (no dtype) ----
     let corrections =
-        Kernel::create(program, "corrections4a").map_err(|e| format!("corrections4a: {e}"))?;
-    let g_data = size.div_ceil(wg_map) * wg_map;
+        Kernel::create(program, "corrections4").map_err(|e| format!("corrections4: {e}"))?;
     unsafe {
         ExecuteKernel::new(&corrections)
             .set_arg(&image_buf)
-            .set_arg(&(corr.dtype as cl_char))
             .set_arg(&(corr.error_model as cl_char))
             .set_arg(&variance_buf)
             .set_arg(&(corr.do_dark as cl_char))
@@ -217,34 +238,27 @@ fn run_csr_pipeline(
             .set_arg(&(corr.apply_normalization as cl_char))
             .set_arg(&output4_buf)
             .set_global_work_size(g_data)
-            .set_local_work_size(wg_map)
+            .set_local_work_size(block_size)
             .enqueue_nd_range(queue)
-            .map_err(|e| format!("enqueue corrections4a: {e}"))?;
+            .map_err(|e| format!("enqueue corrections4: {e}"))?;
     }
 
-    // ---- csr_integrate4: tree-reduction over CSR rows ----------------
-    // wg = wg_min, one work-group per bin; shared = wg_min · sizeof(float8).
+    // ---- lut_integrate4: one thread per bin, loop over NLUT entries -------
     let integrate =
-        Kernel::create(program, "csr_integrate4").map_err(|e| format!("csr_integrate4: {e}"))?;
-    let shared_bytes = wg_min * std::mem::size_of::<[cl_float; 8]>();
+        Kernel::create(program, "lut_integrate4").map_err(|e| format!("lut_integrate4: {e}"))?;
     unsafe {
         ExecuteKernel::new(&integrate)
             .set_arg(&output4_buf)
-            .set_arg(&data_buf)
-            .set_arg(&indices_buf)
-            .set_arg(&indptr_buf)
-            .set_arg(&(bins as cl_int))
+            .set_arg(&lut_buf)
             .set_arg(&(empty as cl_float))
-            .set_arg(&(corr.error_model as cl_char))
             .set_arg(&merged8_buf)
             .set_arg(&averint_buf)
             .set_arg(&std_buf)
             .set_arg(&sem_buf)
-            .set_arg_local_buffer(shared_bytes)
-            .set_global_work_size(bins * wg_min)
-            .set_local_work_size(wg_min)
+            .set_global_work_size(g_bins)
+            .set_local_work_size(block_size)
             .enqueue_nd_range(queue)
-            .map_err(|e| format!("enqueue csr_integrate4: {e}"))?;
+            .map_err(|e| format!("enqueue lut_integrate4: {e}"))?;
     }
 
     // ---- Read back ----------------------------------------------------
@@ -275,32 +289,32 @@ fn run_csr_pipeline(
     })
 }
 
-/// Integrate to a 1D radial curve via the CSR-NG pipeline.
-pub fn integrate1d_csr(
+/// Integrate to a 1D radial curve via the LUT-NG pipeline.
+pub fn integrate1d_lut(
     session: &ClSession<'_>,
-    inputs: &CsrInputs<'_>,
-    corr: &Corrections4aArgs,
+    inputs: &LutInputs<'_>,
+    corr: &Corrections4Args,
     empty: f32,
-    wg_min: usize,
+    block_size: usize,
 ) -> Result<Result1d, String> {
-    Ok(pack_1d(run_csr_pipeline(
-        session, inputs, corr, empty, wg_min,
+    Ok(pack_1d(run_lut_pipeline(
+        session, inputs, corr, empty, block_size,
     )?))
 }
 
-/// Integrate to a 2D `(azim, rad)` map via the CSR-NG pipeline. The GPU run is
+/// Integrate to a 2D `(azim, rad)` map via the LUT-NG pipeline. The GPU run is
 /// identical to the 1D case (the 2D LUT flattens cells to `rad * bins_azim +
 /// azim`, radial-major, so `bins == bins_rad * bins_azim`); only the host-side
 /// packaging differs (see [`crate::common::pack_2d`]).
-pub fn integrate2d_csr(
+pub fn integrate2d_lut(
     session: &ClSession<'_>,
-    inputs: &CsrInputs<'_>,
-    corr: &Corrections4aArgs,
+    inputs: &LutInputs<'_>,
+    corr: &Corrections4Args,
     empty: f32,
-    wg_min: usize,
+    block_size: usize,
     bins_rad: usize,
     bins_azim: usize,
 ) -> Result<Result2d, String> {
-    let out = run_csr_pipeline(session, inputs, corr, empty, wg_min)?;
+    let out = run_lut_pipeline(session, inputs, corr, empty, block_size)?;
     Ok(pack_2d(out, bins_rad, bins_azim))
 }

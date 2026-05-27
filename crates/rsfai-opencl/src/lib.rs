@@ -25,13 +25,14 @@ use opencl3::context::Context;
 use opencl3::device::{get_all_devices, Device, CL_DEVICE_TYPE_ALL};
 use opencl3::error_codes::ClError;
 
+pub mod common;
 pub mod csr;
+pub mod lut;
 pub mod program;
 
-pub use csr::{
-    integrate1d_csr, integrate2d_csr, ClSession, Corrections4aArgs, CsrInputs, CsrResult1d,
-    CsrResult2d,
-};
+pub use common::{ClSession, Result1d, Result2d};
+pub use csr::{integrate1d_csr, integrate2d_csr, Corrections4aArgs, CsrInputs};
+pub use lut::{integrate1d_lut, integrate2d_lut, Corrections4Args, LutInputs};
 
 /// A discovered OpenCL device, summarised for backend selection.
 #[derive(Debug, Clone)]
