@@ -6,8 +6,9 @@ members = [
     "crates/rsfai-detectors",
     "crates/rsfai-preproc",
     "crates/rsfai-integrate",
-    # rsfai-py is built via maturin (M7); excluded from the default cargo build
-    # because it needs the PyO3 extension-module linkage. Re-enable when M7 lands.
+    # rsfai-py (the PyO3 drop-in) is intentionally excluded from the default
+    # cargo build/test: it is a cdylib needing extension-module linkage, built
+    # standalone with maturin. See crates/rsfai-py/README.md.
 ]
 exclude = ["crates/rsfai-py"]
 

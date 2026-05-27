@@ -1,0 +1,30 @@
+[package]
+name = "rsfai-py"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.94"
+description = "PyO3 drop-in bindings exposing the bit-exact rsFAI integration kernels to Python"
+publish = false
+
+# Excluded from the root Cargo workspace (see ../../Cargo.toml): the
+# extension-module linkage must not be pulled into the plain `cargo build`/
+# `cargo test` of the engines. Built standalone via maturin, so the path deps
+# below carry explicit (non-workspace) coordinates.
+
+[lib]
+# The importable Python module is `rsfai`; cdylib is what CPython dlopens.
+name = "rsfai"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.28", features = ["extension-module"] }
+numpy = "0.28"
+rsfai-core = { path = "../rsfai-core" }
+rsfai-integrate = { path = "../rsfai-integrate" }
+rsfai-preproc = { path = "../rsfai-preproc" }
+
+# Float semantics must match the engines: strict IEEE-754, no FMA contraction.
+# Rust never auto-forms `a*b+c` into an FMA, so this profile only documents the
+# intent (it carries no fast-math flag to undo) — kept for parity with the root.
+[profile.release]

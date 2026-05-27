@@ -1,0 +1,19 @@
+[build-system]
+requires = ["maturin>=1,<2"]
+build-backend = "maturin"
+
+[project]
+name = "rsfai"
+version = "0.0.0"
+description = "Bit-exact rsFAI integration kernels, exposed to Python for side-by-side validation against pyFAI"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[tool.maturin]
+# Build the cdylib as a single top-level `rsfai` extension module (no Python
+# package wrapper). The compiled artifact carries the whole API surface.
+module-name = "rsfai"
+# IEEE-754 parity with the engines comes from the build itself, not fast-math.

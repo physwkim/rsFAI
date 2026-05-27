@@ -1,4 +1,7 @@
 /target
+# rsfai-py is a standalone (workspace-excluded) crate built by maturin, so it
+# has its own nested build directory the root /target rule does not cover.
+/crates/rsfai-py/target
 **/*.rs.bk
 Cargo.lock.orig
 
