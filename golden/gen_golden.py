@@ -311,6 +311,19 @@ def main():
                 "polarization_factor": None,
             },
             {
+                # Poisson histogram: exercises the engine's error-model path —
+                # norm² via f64 multiply, variance = max(data, 1), and
+                # std/sem via libc double sqrt — which the errnone config
+                # cannot (pyFAI exposes no variance/std/sem when do_variance is
+                # false). Dumps the full Integrate1dtpl field set.
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("no", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": None,
+            },
+            {
                 "npt": 1000,
                 "unit": "2th_deg",
                 "method": ("bbox", "csr", "cython"),
