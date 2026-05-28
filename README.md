@@ -17,6 +17,45 @@ parity target is **bit-exact** where physically constructible; the staged
 ladder and its boundaries (parallel reductions, libm transcendentals) are
 documented in [`doc/bit-exact-ladder.md`](doc/bit-exact-ladder.md).
 
+## Performance
+
+Steady-state per-frame: the geometry and sparse matrix are built **once**
+(untimed); only the per-frame `preproc + apply` is timed — the streaming-detector
+case. Measured on an Apple M4 Pro (12-core CPU, 16-CU GPU, unified memory), `daq`
+env, pyFAI 2026.5.0, **Pilatus1M (1.02M px)**, 1D, Poisson errors, solid-angle on.
+`rsFAI-CPU` is the cached `Engine` (multi-threaded, rayon). Median ms/frame;
+representative warm run (±~10% run-to-run). The `pyFAI-GPU` column is pyFAI's
+`opencl` backend — rsFAI reuses the **same `.cl` kernels** but does not expose
+OpenCL to Python, so it doubles as the rsFAI GPU reference.
+
+**npt = 5000 bins:**
+
+| tuple | pyFAI-CPU | pyFAI-GPU | rsFAI-CPU | rsFAI vs pyFAI-CPU | GPU vs pyFAI-CPU |
+|---|--:|--:|--:|--:|--:|
+| no-csr   | 2.87 | 4.41 | **1.01** | 2.83× | 0.65× |
+| bbox-csr | 3.81 | 4.63 | **2.00** | 1.91× | 0.82× |
+| full-csr | 3.96 | 4.66 | **2.02** | 1.96× | 0.85× |
+| no-lut   | 3.23 | 4.07 | **1.11** | 2.92× | 0.79× |
+| bbox-lut | 4.53 | 5.11 | **2.47** | 1.83× | 0.89× |
+| full-lut | 4.71 | 5.06 | **2.52** | 1.87× | 0.93× |
+
+At this detector size the ranking is **rsFAI-CPU > pyFAI-CPU > GPU** for every
+tuple, and `rsFAI-CPU` is bit-identical (0-ULP) to pyFAI. Going from 1000 → 5000
+bins widens rsFAI's CPU lead on split tuples (~1.5× → ~1.9×; its per-bin rayon
+reduction absorbs the extra bins) and narrows the GPU gap (~0.55× → ~0.85×) — but
+without a crossover: the GPU stays ~flat (memory-bound — one image pass dominates,
+5× output bins is negligible) while the CPU slows under 5× bins. The GPU only wins
+at larger detectors (crossover ~2M px by pixel count; Eiger4M 4.5M px ≈ 2.3×), not
+from finer binning.
+
+Reproduce (in the `daq` env):
+
+```sh
+python golden/bench_npt.py 1000 5000   # the four-way table above, per npt
+python golden/bench_compare.py         # full CPU tuple matrix (+ histogram/csc), MT & ST
+python golden/bench_gpu.py             # CPU vs GPU + detector-size scaling
+```
+
 ## Layout
 
 | Crate | Role | Milestone |
