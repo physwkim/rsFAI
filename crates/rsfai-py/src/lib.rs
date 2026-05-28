@@ -367,6 +367,7 @@ fn histogram1d_bbox<'py>(
         empty,
         allow_pos0_neg,
         None,
+        None,
     );
     csr_integrate1d_to_dict(py, &r)
 }
@@ -462,6 +463,7 @@ fn histogram1d_full<'py>(
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
+        None,
         None,
     );
     csr_integrate1d_to_dict(py, &r)
@@ -580,6 +582,7 @@ fn build_bbox_csr_1d<'py>(
         bins,
         allow_pos0_neg,
         None,
+        None,
     );
     Ok(csr_1d_tuple(py, csr, centers))
 }
@@ -659,6 +662,7 @@ fn build_full_csr_1d<'py>(
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
+        None,
         None,
     );
     Ok(csr_1d_tuple(py, csr, centers))
@@ -789,6 +793,7 @@ fn build_bbox_csc_1d<'py>(
         bins,
         allow_pos0_neg,
         None,
+        None,
     );
     Ok(csc_1d_tuple(py, csc, centers))
 }
@@ -867,6 +872,7 @@ fn build_full_csc_1d<'py>(
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
+        None,
         None,
     );
     Ok(csc_1d_tuple(py, csc, centers))
@@ -993,6 +999,7 @@ fn build_bbox_lut_1d<'py>(
         bins,
         allow_pos0_neg,
         None,
+        None,
     );
     Ok(lut_1d_tuple(py, lut, centers))
 }
@@ -1071,6 +1078,7 @@ fn build_full_lut_1d<'py>(
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
+        None,
         None,
     );
     Ok(lut_1d_tuple(py, lut, centers))
@@ -1205,7 +1213,7 @@ impl PyAzimuthalIntegrator {
     #[pyo3(signature = (
         image, npt, unit, *, method=None, correct_solid_angle=true,
         polarization_factor=None, normalization_factor=1.0, error_model=0,
-        radial_range=None,
+        radial_range=None, azimuth_range=None,
     ))]
     fn integrate1d<'py>(
         &self,
@@ -1219,11 +1227,10 @@ impl PyAzimuthalIntegrator {
         normalization_factor: f32,
         error_model: i32,
         radial_range: Option<(f64, f64)>,
+        azimuth_range: Option<(f64, f64)>,
     ) -> PyResult<Bound<'py, PyDict>> {
         let data = self.image_slice(&image)?;
         let m = parse_method(method.as_deref())?;
-        // `azimuth_range` is 2D-only (no 1D azimuthal sector yet), so the 1D
-        // entry point does not expose it.
         let opts = self.options(
             correct_solid_angle,
             polarization_factor,
@@ -1231,7 +1238,7 @@ impl PyAzimuthalIntegrator {
             error_model,
             m,
             radial_range,
-            None,
+            azimuth_range,
         )?;
         let r = self.inner.integrate1d(data, npt, radial_unit(unit)?, &opts);
         // No-split histogram is the only 1D engine whose pyFAI accumulators are

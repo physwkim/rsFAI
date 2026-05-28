@@ -129,6 +129,25 @@ pub(crate) fn apply_range(
     }
 }
 
+/// Per-pixel azimuthal (chi) data + range for the 1D bbox engines, threaded only
+/// when an `azimuth_range` is set — pyFAI passes `pos1`/`delta_pos1` (chi center /
+/// half-width, radians) to `HistoBBox1d` / `histoBBox1d_engine` only then, so the
+/// three travel together (bundling keeps the all-or-nothing invariant
+/// unrepresentable when absent). `range` is the radian `(min, max)` the
+/// orchestrator already normalized (`normalize_azimuth_range`); the per-pixel skip
+/// drops a pixel whose chi bbox `[c1-d1, c1+d1]` lies entirely outside it. `d1` is
+/// gated on the radial `do_split` exactly like `d0` (center-only when no split).
+#[derive(Clone, Copy)]
+pub struct BboxAzim1d<'a> {
+    /// Per-pixel chi center (radians), unscaled — pyFAI's `cpos1`.
+    pub pos1: &'a [PositionT],
+    /// Per-pixel chi half-width (radians) — pyFAI's `dpos1`; read only when the
+    /// radial axis splits (`delta_pos0` is `Some`).
+    pub dpos1: &'a [PositionT],
+    /// Radian azimuthal `(min, max)` (already deg→rad + 2π-wrapped + ordered).
+    pub range: (PositionT, PositionT),
+}
+
 /// Build the bbox CSR matrix and the (unscaled) bin centers — port of
 /// `SplitBBoxIntegrator.__init__` + `calc_lut_1d`. `pos0`/`delta_pos0` are the
 /// unscaled radial center / half-width per pixel; masked pixels (`mask[i] != 0`)
@@ -140,6 +159,7 @@ pub fn build_bbox_csr_1d(
     bins: usize,
     allow_pos0_neg: bool,
     pos0_range: Option<(PositionT, PositionT)>,
+    azim: Option<BboxAzim1d>,
 ) -> (Csr, Vec<PositionT>) {
     assert!(bins >= 1, "bins must be >= 1");
     let size = pos0.len();
@@ -149,11 +169,21 @@ pub fn build_bbox_csr_1d(
     if let Some(m) = mask {
         assert_eq!(m.len(), size, "mask length mismatch");
     }
+    if let Some(a) = azim {
+        assert_eq!(a.pos1.len(), size, "azim.pos1 length mismatch");
+        assert_eq!(a.dpos1.len(), size, "azim.dpos1 length mismatch");
+    }
 
     let (pos0_min, pos0_maxin) =
         calc_boundaries_1d(pos0, delta_pos0, mask, allow_pos0_neg, pos0_range);
     let pos0_max = calc_upper_bound(pos0_maxin);
     let delta = (pos0_max - pos0_min) / (bins as PositionT);
+    // Azimuthal skip bounds — the override (`min`/`max` of the range) becomes
+    // `pos1_min`/`pos1_maxin` (pyFAI `calc_boundaries` discards the fold). The
+    // CSR/LUT/CSC build uses the UN-widened `pos1_maxin`; the direct
+    // `histoBBox1d_engine` widens it (see `histogram1d_bbox`).
+    let azim_skip = azim.map(|a| (a.range.0.min(a.range.1), a.range.0.max(a.range.1)));
+    let do_split = delta_pos0.is_some();
 
     // Per-bin entry lists; pixels inserted in ascending index order, so each
     // bin's list stays ascending (matches the SparseBuilder CSR ordering).
@@ -171,6 +201,17 @@ pub fn build_bbox_csr_1d(
         let d0 = delta_pos0.map_or(0.0, |d| d[idx]);
         let min0 = c0 - d0;
         let max0 = c0 + d0;
+
+        // Azimuthal range skip (pyFAI calc_lut_1d): drop a pixel whose chi bbox
+        // lies entirely outside the range. `d1` follows the radial `do_split` gate.
+        if let Some((pos1_min, pos1_maxin)) = azim_skip {
+            let a = azim.unwrap();
+            let c1 = a.pos1[idx];
+            let d1 = if do_split { a.dpos1[idx] } else { 0.0 };
+            if c1 + d1 < pos1_min || c1 - d1 > pos1_maxin {
+                continue;
+            }
+        }
 
         let fbin0_min = (min0 - pos0_min) / delta; // get_bin_number
         let fbin0_max = (max0 - pos0_min) / delta;
@@ -707,6 +748,7 @@ pub fn build_full_csr_1d(
     chi_disc_at_pi: bool,
     pos1_period: PositionT,
     pos0_range: Option<(PositionT, PositionT)>,
+    pos1_range: Option<(PositionT, PositionT)>,
 ) -> (Csr, Vec<PositionT>) {
     assert!(bins >= 1, "bins must be >= 1");
     assert_eq!(
@@ -722,6 +764,10 @@ pub fn build_full_csr_1d(
     let (pos0_min, pos0_maxin) = calc_boundaries_full_1d(corners, mask, allow_pos0_neg, pos0_range);
     let pos0_max = calc_upper_bound(pos0_maxin);
     let delta = (pos0_max - pos0_min) / (bins as PositionT);
+    // Azimuthal range skip bounds — the override (min/max of the range) becomes
+    // pos1_min/pos1_maxin; the full-split skip uses the UN-widened pos1_maxin (=
+    // pyFAI `FullSplitIntegrator.calc_lut_1d`, splitpixel_common.pyx).
+    let azim_skip = pos1_range.map(|(lo, hi)| (lo.min(hi), lo.max(hi)));
 
     let mut bin_idx: Vec<Vec<IndexT>> = vec![Vec::new(); bins];
     let mut bin_coef: Vec<Vec<DataT>> = vec![Vec::new(); bins];
@@ -758,7 +804,15 @@ pub fn build_full_csr_1d(
         if max0 < 0.0 || min0 >= bins as f64 {
             continue;
         }
-        // pos1_range is None for this path -> no azimuthal range rejection.
+        // Azimuthal range skip (pyFAI calc_lut_1d): drop a pixel whose recentered
+        // chi corners lie entirely outside the range (un-widened pos1_maxin).
+        if let Some((pos1_min, pos1_maxin)) = azim_skip {
+            let min1 = min4(a1, b1, c1, d1);
+            let max1 = max4(a1, b1, c1, d1);
+            if max1 < pos1_min || min1 > pos1_maxin {
+                continue;
+            }
+        }
 
         let mut bin0_min = min0.floor() as i64;
         let mut bin0_max = max0.floor() as i64;
@@ -1523,7 +1577,7 @@ mod tests {
         // Two pixels with no delta -> no splitting -> each lands in one bin with
         // coef 1.0.
         let pos0 = [1.0f64, 2.0];
-        let (csr, centers) = build_bbox_csr_1d(&pos0, None, None, 4, false, None);
+        let (csr, centers) = build_bbox_csr_1d(&pos0, None, None, 4, false, None, None);
         assert_eq!(centers.len(), 4);
         assert_eq!(csr.indptr[0], 0);
         assert_eq!(*csr.indptr.last().unwrap(), 2); // two entries total
@@ -1535,7 +1589,7 @@ mod tests {
         // One pixel spanning multiple bins: its split coefficients sum to 1.
         let pos0 = [5.0f64];
         let delta = [3.0f64]; // wide -> spans several bins
-        let (csr, _) = build_bbox_csr_1d(&pos0, Some(&delta), None, 10, false, None);
+        let (csr, _) = build_bbox_csr_1d(&pos0, Some(&delta), None, 10, false, None, None);
         let s: f32 = csr.data.iter().sum();
         assert!((s - 1.0).abs() < 1e-6, "split coefs sum to ~1, got {s}");
     }
@@ -1554,8 +1608,16 @@ mod tests {
     #[test]
     fn full_split_single_bin_pixel_keeps_unit_coef() {
         let corners = two_pixel_corners();
-        let (csr, _) =
-            build_full_csr_1d(&corners, None, 8, false, true, std::f64::consts::TAU, None);
+        let (csr, _) = build_full_csr_1d(
+            &corners,
+            None,
+            8,
+            false,
+            true,
+            std::f64::consts::TAU,
+            None,
+            None,
+        );
         // Pixel 0 stays within one bin -> exactly one entry, coef 1.0.
         let p0: Vec<f32> = csr
             .indices
@@ -1570,8 +1632,16 @@ mod tests {
     #[test]
     fn full_split_coefs_sum_to_one() {
         let corners = two_pixel_corners();
-        let (csr, _) =
-            build_full_csr_1d(&corners, None, 8, false, true, std::f64::consts::TAU, None);
+        let (csr, _) = build_full_csr_1d(
+            &corners,
+            None,
+            8,
+            false,
+            true,
+            std::f64::consts::TAU,
+            None,
+            None,
+        );
         // The split pixel's overlap coefficients are normalized to sum to 1.
         let s: f32 = csr
             .indices
@@ -1588,7 +1658,7 @@ mod tests {
         // Two pixels in bin 0 (no split): signal [10, 20], norm [2, 2].
         // sum_signal = 30, sum_norm = 4, intensity = 7.5.
         let pos0 = [1.0f64, 1.0];
-        let (csr, centers) = build_bbox_csr_1d(&pos0, None, None, 3, false, None);
+        let (csr, centers) = build_bbox_csr_1d(&pos0, None, None, 3, false, None, None);
         let prep = [10.0f32, 0.0, 2.0, 1.0, 20.0, 0.0, 2.0, 1.0];
         let r = csr_integrate1d(&csr, &prep, centers, ErrorModel::No, 0.0);
         assert_eq!(r.sum_signal[0], 30.0);

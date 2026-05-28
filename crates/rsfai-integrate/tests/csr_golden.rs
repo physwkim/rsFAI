@@ -120,8 +120,15 @@ fn bbox_csr_build_and_apply_bit_exact() {
             .expect("contiguous")
             .to_vec();
 
-        let (built, bin_centers) =
-            build_bbox_csr_1d(&pos0, Some(&dpos0), Some(&mask), npt, allow_pos0_neg, None);
+        let (built, bin_centers) = build_bbox_csr_1d(
+            &pos0,
+            Some(&dpos0),
+            Some(&mask),
+            npt,
+            allow_pos0_neg,
+            None,
+            None,
+        );
 
         let g_data = vec_f32(&dir, "csr_data.npy");
         let g_indices = vec_i32(&dir, "csr_indices.npy");
@@ -251,7 +258,7 @@ fn nosplit_csr_build_and_apply_bit_exact() {
             .to_vec();
 
         let (built, bin_centers) =
-            build_bbox_csr_1d(&pos0, None, Some(&mask), npt, allow_pos0_neg, None);
+            build_bbox_csr_1d(&pos0, None, Some(&mask), npt, allow_pos0_neg, None, None);
 
         let g_data = vec_f32(&dir, "csr_data.npy");
         let g_indices = vec_i32(&dir, "csr_indices.npy");
@@ -396,6 +403,7 @@ fn full_split_csr_build_and_apply_bit_exact() {
             allow_pos0_neg,
             true,
             2.0 * PI,
+            None,
             None,
         );
 

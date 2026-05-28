@@ -43,7 +43,7 @@ use rsfai_core::dtype::{calc_upper_bound, AccT, DataT, ErrorModel, PositionT};
 
 use crate::csr::{
     calc_boundaries_1d, calc_boundaries_2d, calc_boundaries_full_1d, calc_boundaries_full_2d, clip,
-    integrate1d, integrate2d, max4, min4, recenter, Bbox2dBounds, CsrIntegrate1d,
+    integrate1d, integrate2d, max4, min4, recenter, Bbox2dBounds, BboxAzim1d, CsrIntegrate1d,
 };
 use crate::histogram::{numpy_linspace, reduce_2d, Integrate2d};
 
@@ -141,6 +141,7 @@ pub fn histogram1d_bbox(
     empty: DataT,
     allow_pos0_neg: bool,
     pos0_range: Option<(PositionT, PositionT)>,
+    azim: Option<BboxAzim1d>,
 ) -> CsrIntegrate1d {
     assert!(npt > 1, "bins must be > 1");
     let size = pos0.len();
@@ -149,11 +150,24 @@ pub fn histogram1d_bbox(
     if let Some(m) = mask {
         assert_eq!(m.len(), size, "mask length mismatch");
     }
+    if let Some(a) = azim {
+        assert_eq!(a.pos1.len(), size, "azim.pos1 length mismatch");
+        assert_eq!(a.dpos1.len(), size, "azim.dpos1 length mismatch");
+    }
 
     let (pos0_min, pos0_maxin) =
         calc_boundaries_1d(pos0, Some(delta_pos0), mask, allow_pos0_neg, pos0_range);
     let pos0_max = calc_upper_bound(pos0_maxin);
     let delta = (pos0_max - pos0_min) / (npt as PositionT);
+    // Azimuthal skip bounds — the override (min/max of the range) becomes
+    // pos1_min/pos1_maxin; this direct engine (`histoBBox1d_engine`) skips against
+    // the calc_upper_bound-WIDENED `pos1_max` (unlike the CSR build, which uses the
+    // un-widened `pos1_maxin` — see `build_bbox_csr_1d`).
+    let azim_skip = azim.map(|a| {
+        let pos1_min = a.range.0.min(a.range.1);
+        let pos1_max = calc_upper_bound(a.range.0.max(a.range.1));
+        (pos1_min, pos1_max)
+    });
 
     let accumulate = |acc: &mut [[AccT; 5]], idx: usize| {
         if let Some(m) = mask {
@@ -175,6 +189,17 @@ pub fn histogram1d_bbox(
         // the CSR build / 2D engine use.
         if max0 < pos0_min || min0 > pos0_maxin {
             return;
+        }
+        // Azimuthal range skip (histoBBox1d_engine): drop a pixel whose chi bbox
+        // lies entirely outside the (widened) range. This engine always splits
+        // radially, so `d1` is unconditional.
+        if let Some((pos1_min, pos1_max)) = azim_skip {
+            let a = azim.unwrap();
+            let c1 = a.pos1[idx];
+            let d1 = a.dpos1[idx];
+            if c1 + d1 < pos1_min || c1 - d1 > pos1_max {
+                return;
+            }
         }
         let fbin0_min = (min0 - pos0_min) / delta; // get_bin_number
         let fbin0_max = (max0 - pos0_min) / delta;
@@ -511,6 +536,7 @@ pub fn histogram1d_full(
     chi_disc_at_pi: bool,
     pos1_period: PositionT,
     pos0_range: Option<(PositionT, PositionT)>,
+    pos1_range: Option<(PositionT, PositionT)>,
 ) -> CsrIntegrate1d {
     assert!(npt > 1, "bins must be > 1");
     assert_eq!(
@@ -528,6 +554,8 @@ pub fn histogram1d_full(
     let pos0_max = calc_upper_bound(pos0_maxin);
     let delta = (pos0_max - pos0_min) / (npt as PositionT);
     let bins_i = npt as i64;
+    // Azimuthal range skip bounds — un-widened pos1_maxin (pyFAI fullSplit1D_engine).
+    let azim_skip = pos1_range.map(|(lo, hi)| (lo.min(hi), lo.max(hi)));
 
     // Serial scatter (bit-exact; see the module scatter note). The trapezoid
     // buffer is reused across pixels and reset over the touched bin span.
@@ -570,7 +598,15 @@ pub fn histogram1d_full(
         if max0 < 0.0 || min0 >= npt as f64 {
             continue;
         }
-        // pos1_range is None for this path -> no azimuthal range rejection.
+        // Azimuthal range skip (fullSplit1D_engine): drop a pixel whose recentered
+        // chi corners lie entirely outside the range (un-widened pos1_maxin).
+        if let Some((pos1_min, pos1_maxin)) = azim_skip {
+            let min1 = min4(a1, b1, c1, d1);
+            let max1 = max4(a1, b1, c1, d1);
+            if max1 < pos1_min || min1 > pos1_maxin {
+                continue;
+            }
+        }
 
         let bin0_min = min0.floor() as i64;
         let bin0_max = max0.floor() as i64;

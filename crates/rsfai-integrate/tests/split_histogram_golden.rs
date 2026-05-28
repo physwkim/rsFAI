@@ -156,6 +156,7 @@ fn histogram1d_bbox_bit_exact() {
             0.0,
             false,
             None,
+            None,
         );
 
         // Radial bin centers (f64) -> bit-exact after scaling.
@@ -428,6 +429,7 @@ fn histogram1d_full_bit_exact() {
             false,
             true,
             2.0 * PI,
+            None,
             None,
         );
 

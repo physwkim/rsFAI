@@ -188,11 +188,13 @@ def run_rsfai_dropin(d, cfg):
     if cfg.get("radial_range") is not None:
         common["radial_range"] = tuple(cfg["radial_range"])
 
+    # azimuth_range (degrees) restricts the azimuthal sector; both 1D and 2D
+    # drop-in entry points accept it (deg->rad normalize_azimuth_range), so
+    # forward it on either path exactly as run_live passes it to pyFAI.
+    if cfg.get("azimuth_range") is not None:
+        common["azimuth_range"] = tuple(cfg["azimuth_range"])
+
     if cfg.get("dim", 1) == 2:
-        # azimuth_range (degrees) is 2D-only in the drop-in; the 1D entry point
-        # rejects it (no 1D azimuthal sector yet), so forward it only here.
-        if cfg.get("azimuth_range") is not None:
-            common["azimuth_range"] = tuple(cfg["azimuth_range"])
         out = ai.integrate2d(img, cfg["npt_rad"], cfg["npt_azim"], unit, **common)
     else:
         out = ai.integrate1d(img, cfg["npt"], unit, **common)

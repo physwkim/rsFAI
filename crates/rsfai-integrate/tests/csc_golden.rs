@@ -284,6 +284,7 @@ fn nosplit_csc_build_and_apply_bit_exact() {
             npt,
             false,
             None,
+            None,
         );
         validate_csc_1d(&dir, &manifest.dataset, cfg, built, bin_centers);
         checked += 1;
@@ -306,8 +307,15 @@ fn bbox_csc_build_and_apply_bit_exact() {
         let npt = cfg["npt"].as_u64().expect("npt") as usize;
         let pos0 = vec_f64(&dir, "pos0_center_unscaled.npy");
         let dpos0 = vec_f64(&dir, "pos0_delta.npy");
-        let (built, bin_centers) =
-            build_bbox_csc_1d(&pos0, Some(&dpos0), Some(&mask(&dir)), npt, false, None);
+        let (built, bin_centers) = build_bbox_csc_1d(
+            &pos0,
+            Some(&dpos0),
+            Some(&mask(&dir)),
+            npt,
+            false,
+            None,
+            None,
+        );
         validate_csc_1d(&dir, &manifest.dataset, cfg, built, bin_centers);
         checked += 1;
     }
@@ -335,6 +343,7 @@ fn full_csc_build_and_apply_bit_exact() {
             false,
             true,
             2.0 * std::f64::consts::PI,
+            None,
             None,
         );
         validate_csc_1d(&dir, &manifest.dataset, cfg, built, bin_centers);

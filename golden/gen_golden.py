@@ -658,6 +658,104 @@ def main():
                 "polarization_factor": 0.99,
                 "azimuth_range": (-90.0, 90.0),
             },
+            # ---- azimuth_range override (1D) --------------------------------
+            # The 1D azimuthal restriction has FIVE distinct code paths, so each
+            # is covered: (1) no-split histogram folds the sector into the mask
+            # (histogram1d_engine takes no chi: azim_mask = chi>chi_max | chi<chi_min,
+            # CHI_RAD centre, scale=False); (2) bbox csr/lut/csc BUILD (calc_lut_1d)
+            # skips on the UN-widened pos1_maxin; (3) bbox DIRECT histogram
+            # (histoBBox1d_engine) skips on the WIDENED pos1_max = calc_upper_bound
+            # — this is the one place build vs engine differ, so both are tested;
+            # (4) full csr/lut/csc BUILD and (5) full DIRECT histogram both skip on
+            # the corner min1/max1 vs UN-widened pos1_maxin. lut/csc forward to the
+            # csr build skip in rsFAI, but each tuple is generated so the in-process
+            # drop-in replays them. (-90, 90) does NOT cross the pi discontinuity
+            # (lo<hi after deg2rad, no 2pi wrap). q_nm^-1: azimuth conversion is
+            # independent of the radial unit.
+            {
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("no", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "azimuth_range": (-90.0, 90.0),
+            },
+            {
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "azimuth_range": (-90.0, 90.0),
+            },
+            {
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "lut", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "azimuth_range": (-90.0, 90.0),
+            },
+            {
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "csc", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "azimuth_range": (-90.0, 90.0),
+            },
+            {
+                # bbox DIRECT histogram: skip on the WIDENED pos1_max.
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "azimuth_range": (-90.0, 90.0),
+            },
+            {
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("full", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "azimuth_range": (-90.0, 90.0),
+            },
+            {
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("full", "lut", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "azimuth_range": (-90.0, 90.0),
+            },
+            {
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("full", "csc", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "azimuth_range": (-90.0, 90.0),
+            },
+            {
+                # full DIRECT histogram (fullSplit1D_engine): corner min1/max1 vs
+                # UN-widened pos1_maxin.
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("full", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "azimuth_range": (-90.0, 90.0),
+            },
             {
                 # 2D histogram (no split): bins each pixel centre into a
                 # (radial, azimuthal) cell via histogram2d_engine. errnone exercises

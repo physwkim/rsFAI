@@ -45,7 +45,7 @@ use rsfai_integrate::{
     build_bbox_lut_2d, build_full_csc_1d, build_full_csc_2d, build_full_csr_1d, build_full_csr_2d,
     build_full_lut_1d, build_full_lut_2d, csc_integrate1d, csc_integrate2d, csr_integrate1d,
     csr_integrate2d, histogram1d, histogram1d_bbox, histogram1d_full, histogram2d,
-    histogram2d_bbox, histogram2d_full, lut_integrate1d, lut_integrate2d, Bbox2dBounds,
+    histogram2d_bbox, histogram2d_full, lut_integrate1d, lut_integrate2d, Bbox2dBounds, BboxAzim1d,
     CsrIntegrate1d, Hist2dOptions, Integrate1d, Integrate2d,
 };
 use rsfai_preproc::{preproc4, PreprocOptions};
@@ -355,6 +355,20 @@ impl AzimuthalIntegrator {
         })
     }
 
+    /// The base gap/dummy mask OR'd with the azimuthal-sector mask, for the
+    /// no-split 1D histogram — a port of `azimuthal.py`'s
+    /// `azim_mask = (chi > chi_max) | (chi < chi_min)` folded into the mask before
+    /// `histogram1d_engine` (which takes no per-pixel chi). `lo`/`hi` are the
+    /// **radian** chi bounds (`normalize_azimuth_range` output); `chi` is the
+    /// radian chi center (`CHI_RAD`, scale 1). A pixel is masked (`1`) if the base
+    /// mask flags it OR its center lies outside `[lo, hi]`.
+    fn chi_mask(&self, pos: &PosZyx, base: Option<&[i8]>, lo: f64, hi: f64) -> Vec<i8> {
+        let chi = center_array(Unit::CHI_RAD, &pos.x, &pos.y, &pos.z, self.wavelength);
+        (0..chi.len())
+            .map(|i| i8::from(base.is_some_and(|m| m[i] != 0) || chi[i] > hi || chi[i] < lo))
+            .collect()
+    }
+
     /// The per-pixel `[signal, variance, norm, count]` rows (`preproc4`),
     /// applying the same corrections / mask / dummy pyFAI feeds to preproc.
     /// `data` is the image already cast to f32 (preproc's `data_t`); `pos`
@@ -421,16 +435,9 @@ impl AzimuthalIntegrator {
             image.len(),
             self.detector.size()
         );
-        // 1D azimuthal sector restriction is not yet ported (the 1D builders take
-        // no per-pixel chi); reject rather than silently bin the full ring.
-        assert!(
-            opts.azimuth_range.is_none(),
-            "azimuth_range is not yet supported for integrate1d (integrate2d only)"
-        );
         let pos = self.pixel_positions();
         let radial = unscaled_center_array(unit.space, &pos.x, &pos.y, &pos.z, self.wavelength);
         let mask = self.build_mask();
-        let prep = self.preproc_rows(image, &pos, mask.as_deref(), opts);
         let em = opts.error_model;
         // `radial_range` is given in the scaled unit; binning is on the unscaled
         // radial, so divide each endpoint by `unit.scale` (pyFAI's
@@ -438,81 +445,117 @@ impl AzimuthalIntegrator {
         let pos0_range = opts
             .radial_range
             .map(|(lo, hi)| (lo / unit.scale, hi / unit.scale));
+        // `azimuth_range` is given in degrees; convert to the radian chi frame
+        // (deg→rad, chiDiscAtPi, 2π wrap) via pyFAI's `normalize_azimuth_range`.
+        // `None` keeps the full ring. The no-split histogram folds it into the
+        // mask (its engine takes no chi); every other 1D engine filters per-pixel.
+        let pos1_range = normalize_azimuth_range(opts.azimuth_range);
 
         // The no-split histogram is the one path whose accumulators are f32; it
-        // also bins every pixel (masked pixels are zeroed by preproc but still
-        // set the range), so no mask is forwarded.
+        // bins every pixel (masked pixels are zeroed by preproc but still set the
+        // range), so no mask is forwarded — except the azimuthal restriction,
+        // which pyFAI's `histogram1d_engine` cannot take per-pixel, so it is folded
+        // into the preproc mask (`chi > chi_max | chi < chi_min`, radian center).
         if opts.method.split == Split::No && opts.method.algo == Algo::Histogram {
+            let chi_mask = pos1_range.map(|(lo, hi)| self.chi_mask(&pos, mask.as_deref(), lo, hi));
+            let m = chi_mask.as_deref().or(mask.as_deref());
+            let prep = self.preproc_rows(image, &pos, m, opts);
             let h = histogram1d(&radial, &prep, npt, pos0_range, em, 0.0);
             return histogram_to_result(h, unit.scale);
         }
 
-        // Every other method excludes masked pixels from the matrix/scatter.
-        // Radial units (q/2θ/r) are non-negative ⇒ `allow_pos0_neg = false`. The
-        // 1D full-split build is not handed chiDiscAtPi / pos1_period (common.py
-        // does not forward them), so they take the defaults true / 2π.
+        // Every other method excludes masked pixels from the matrix/scatter and
+        // filters the azimuthal sector per-pixel (so the preproc mask stays the
+        // bare gap/dummy mask — out-of-sector pixels keep their real signal and are
+        // dropped by the engine, not zeroed). Radial units (q/2θ/r) are
+        // non-negative ⇒ `allow_pos0_neg = false`. The 1D full-split build is not
+        // handed chiDiscAtPi / pos1_period (common.py does not forward them), so
+        // they take the defaults true / 2π.
+        let prep = self.preproc_rows(image, &pos, mask.as_deref(), opts);
         let mask_ref = mask.as_deref();
         let allow_neg = false;
+        // Per-pixel chi center, threaded into the bbox builders only when an
+        // azimuth_range is set (pyFAI passes pos1/delta_pos1 then).
+        let chi = pos1_range
+            .map(|_| center_array(Unit::CHI_RAD, &pos.x, &pos.y, &pos.z, self.wavelength));
         let r = match opts.method.split {
             Split::Full => {
                 // Full split bins on the four-corner array (radial + chi), f32
                 // upcast to f64 — the input pyFAI's FullSplitIntegrator receives.
+                // The azimuthal skip reads the chi corners directly, so no separate
+                // chi array is needed (pyFAI passes only `pos1_range`).
                 let corners = self.corner_array(unit);
                 let cf: Vec<f64> = corners.iter().map(|&v| v as f64).collect();
                 match opts.method.algo {
                     Algo::Histogram => histogram1d_full(
                         &cf, &prep, mask_ref, npt, em, 0.0, allow_neg, true, TWO_PI, pos0_range,
+                        pos1_range,
                     ),
                     Algo::Csr => {
                         let (m, c) = build_full_csr_1d(
-                            &cf, mask_ref, npt, allow_neg, true, TWO_PI, pos0_range,
+                            &cf, mask_ref, npt, allow_neg, true, TWO_PI, pos0_range, pos1_range,
                         );
                         csr_integrate1d(&m, &prep, c, em, 0.0)
                     }
                     Algo::Lut => {
                         let (m, c) = build_full_lut_1d(
-                            &cf, mask_ref, npt, allow_neg, true, TWO_PI, pos0_range,
+                            &cf, mask_ref, npt, allow_neg, true, TWO_PI, pos0_range, pos1_range,
                         );
                         lut_integrate1d(&m, &prep, c, em, 0.0)
                     }
                     Algo::Csc => {
                         let (m, c) = build_full_csc_1d(
-                            &cf, mask_ref, npt, allow_neg, true, TWO_PI, pos0_range,
+                            &cf, mask_ref, npt, allow_neg, true, TWO_PI, pos0_range, pos1_range,
                         );
                         csc_integrate1d(&m, &prep, c, em, 0.0)
                     }
                 }
             }
             split => {
-                // No / Bbox: the bbox-family build on (pos0, dpos0). No-split has
-                // dpos0 = None (each pixel collapses to its center); bbox uses the
-                // radial half-width `delta_array`.
-                let delta = (split == Split::Bbox).then(|| {
-                    let corners = self.corner_array(unit);
-                    delta_radial(&corners, &radial)
-                });
+                // No / Bbox: the bbox-family build on (pos0, dpos0[, pos1, dpos1]).
+                // No-split has dpos0 = None (each pixel collapses to its center);
+                // bbox uses the radial half-width `delta_radial`. The corner array
+                // (needed for the radial delta and/or the chi delta) is built once.
+                let corners =
+                    (split == Split::Bbox || chi.is_some()).then(|| self.corner_array(unit));
+                let delta = (split == Split::Bbox)
+                    .then(|| delta_radial(corners.as_ref().unwrap(), &radial));
                 let dpos0 = delta.as_deref();
+                // bbox azimuth: chi center + half-width. The build reads d1 only when
+                // the radial axis splits (do_split gate), so for no-split CSR the
+                // dpos1 is supplied but ignored — matching pyFAI calc_lut_1d.
+                let dchi = chi
+                    .as_ref()
+                    .map(|c| delta_chi(corners.as_ref().unwrap(), c));
+                let azim = chi.as_ref().zip(dchi.as_ref()).map(|(c, d)| BboxAzim1d {
+                    pos1: c,
+                    dpos1: d,
+                    range: pos1_range.expect("chi present ⟹ azimuth_range present"),
+                });
                 match opts.method.algo {
                     Algo::Histogram => {
                         // No-split-histogram returns above; this is bbox-histogram.
                         let d = dpos0.expect("bbox split has a radial delta");
                         histogram1d_bbox(
-                            &radial, d, &prep, mask_ref, npt, em, 0.0, allow_neg, pos0_range,
+                            &radial, d, &prep, mask_ref, npt, em, 0.0, allow_neg, pos0_range, azim,
                         )
                     }
                     Algo::Csr => {
-                        let (m, c) =
-                            build_bbox_csr_1d(&radial, dpos0, mask_ref, npt, allow_neg, pos0_range);
+                        let (m, c) = build_bbox_csr_1d(
+                            &radial, dpos0, mask_ref, npt, allow_neg, pos0_range, azim,
+                        );
                         csr_integrate1d(&m, &prep, c, em, 0.0)
                     }
                     Algo::Lut => {
-                        let (m, c) =
-                            build_bbox_lut_1d(&radial, dpos0, mask_ref, npt, allow_neg, pos0_range);
+                        let (m, c) = build_bbox_lut_1d(
+                            &radial, dpos0, mask_ref, npt, allow_neg, pos0_range, azim,
+                        );
                         lut_integrate1d(&m, &prep, c, em, 0.0)
                     }
                     Algo::Csc => {
-                        let (m, c) =
-                            build_bbox_csc_1d(&radial, dpos0, mask_ref, npt, allow_neg, pos0_range);
+                        let (m, c) = build_bbox_csc_1d(
+                            &radial, dpos0, mask_ref, npt, allow_neg, pos0_range, azim,
+                        );
                         csc_integrate1d(&m, &prep, c, em, 0.0)
                     }
                 }

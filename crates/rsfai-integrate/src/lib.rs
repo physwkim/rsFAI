@@ -78,7 +78,7 @@ pub use csc::{
 };
 pub use csr::{
     build_bbox_csr_1d, build_bbox_csr_2d, build_full_csr_1d, build_full_csr_2d, csr_integrate1d,
-    csr_integrate2d, Bbox2dBounds, Csr, CsrIntegrate1d,
+    csr_integrate2d, Bbox2dBounds, BboxAzim1d, Csr, CsrIntegrate1d,
 };
 pub use histogram::{
     histogram1d, histogram2d, histogram_preproc, Hist2dOptions, Integrate1d, Integrate2d,

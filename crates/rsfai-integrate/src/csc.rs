@@ -25,7 +25,7 @@
 
 use crate::csr::{
     build_bbox_csr_1d, build_bbox_csr_2d, build_full_csr_1d, build_full_csr_2d, finalize_reduction,
-    reduction_to_1d, reduction_to_2d, Bbox2dBounds, Csr, CsrIntegrate1d,
+    reduction_to_1d, reduction_to_2d, Bbox2dBounds, BboxAzim1d, Csr, CsrIntegrate1d,
 };
 use crate::histogram::Integrate2d;
 use rsfai_core::dtype::{AccT, DataT, ErrorModel, IndexT, PositionT};
@@ -230,10 +230,18 @@ pub fn build_bbox_csc_1d(
     bins: usize,
     allow_pos0_neg: bool,
     pos0_range: Option<(PositionT, PositionT)>,
+    azim: Option<BboxAzim1d>,
 ) -> (Csc, Vec<PositionT>) {
     let n_pixels = pos0.len();
-    let (csr, centers) =
-        build_bbox_csr_1d(pos0, delta_pos0, mask, bins, allow_pos0_neg, pos0_range);
+    let (csr, centers) = build_bbox_csr_1d(
+        pos0,
+        delta_pos0,
+        mask,
+        bins,
+        allow_pos0_neg,
+        pos0_range,
+        azim,
+    );
     (csr_to_csc(&csr, bins, n_pixels), centers)
 }
 
@@ -266,6 +274,7 @@ pub fn build_full_csc_1d(
     chi_disc_at_pi: bool,
     pos1_period: PositionT,
     pos0_range: Option<(PositionT, PositionT)>,
+    pos1_range: Option<(PositionT, PositionT)>,
 ) -> (Csc, Vec<PositionT>) {
     let n_pixels = corners.len() / 8;
     let (csr, centers) = build_full_csr_1d(
@@ -276,6 +285,7 @@ pub fn build_full_csc_1d(
         chi_disc_at_pi,
         pos1_period,
         pos0_range,
+        pos1_range,
     );
     (csr_to_csc(&csr, bins, n_pixels), centers)
 }
