@@ -105,6 +105,30 @@ pub fn center_array(unit: Unit, x: &[f64], y: &[f64], z: &[f64], wavelength: f64
         .collect()
 }
 
+/// The **unscaled** per-pixel radial value (`equation(space)`, no `unit.scale`) —
+/// pyFAI's `center_array(scale=False)`, the internal representation the binning
+/// engines (`histogram`/bbox/full) actually bin on; the reported axis multiplies
+/// the binned centers by `unit.scale`. This matches `delta_array` /
+/// `corner_array`, which also work in unscaled units, so the bbox half-width
+/// `|corner − center|` is taken in one consistent space.
+///
+/// Per-pixel map (each element independent) -> bit-exact under parallelism.
+pub fn unscaled_center_array(
+    space: Space,
+    x: &[f64],
+    y: &[f64],
+    z: &[f64],
+    wavelength: f64,
+) -> Vec<f64> {
+    use rayon::prelude::*;
+    assert_eq!(x.len(), y.len());
+    assert_eq!(x.len(), z.len());
+    (0..x.len())
+        .into_par_iter()
+        .map(|i| equation(space, x[i], y[i], z[i], wavelength))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
