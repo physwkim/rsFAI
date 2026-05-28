@@ -290,7 +290,7 @@ fn histogram1d<'py>(
     let prep_s = as_slice_2d(&prep)?;
     let em = self::error_model(error_model)?;
     let r = rs_histogram1d(radial_s, prep_s, npt, bin_range, em, empty);
-    integrate1d_to_dict(py, &r)
+    integrate1d_to_dict(py, r)
 }
 
 /// `histogram2d`: full 2D no-split integration. Returns a dict of the
@@ -332,7 +332,7 @@ fn histogram2d<'py>(
         empty,
     };
     let r = rs_histogram2d(radial_s, azim_s, prep_s, mask_slice(&mask)?, &opts);
-    integrate2d_to_dict(py, &r)
+    integrate2d_to_dict(py, r)
 }
 
 /// `histogram1d_bbox`: 1D direct-split bbox histogram (`histoBBox1d_engine`).
@@ -369,7 +369,7 @@ fn histogram1d_bbox<'py>(
         None,
         None,
     );
-    csr_integrate1d_to_dict(py, &r)
+    csr_integrate1d_to_dict(py, r)
 }
 
 /// `histogram2d_bbox`: 2D direct-split bbox histogram (`histoBBox2d_engine`).
@@ -425,7 +425,7 @@ fn histogram2d_bbox<'py>(
         em,
         empty,
     );
-    integrate2d_to_dict(py, &r)
+    integrate2d_to_dict(py, r)
 }
 
 /// `histogram1d_full`: 1D full pixel-splitting histogram (`fullSplit1D_engine`).
@@ -466,7 +466,7 @@ fn histogram1d_full<'py>(
         None,
         None,
     );
-    csr_integrate1d_to_dict(py, &r)
+    csr_integrate1d_to_dict(py, r)
 }
 
 /// `histogram2d_full`: 2D full pixel-splitting histogram (`fullSplit2D_engine`).
@@ -512,7 +512,7 @@ fn histogram2d_full<'py>(
         em,
         empty,
     );
-    integrate2d_to_dict(py, &r)
+    integrate2d_to_dict(py, r)
 }
 
 /// `histogram2d_pseudo`: 2D pseudo pixel-splitting histogram
@@ -552,7 +552,7 @@ fn histogram2d_pseudo<'py>(
         em,
         empty,
     );
-    integrate2d_to_dict(py, &r)
+    integrate2d_to_dict(py, r)
 }
 
 // --------------------------------------------------------------------------
@@ -732,7 +732,7 @@ fn csr_integrate1d<'py>(
     let centers = as_slice_1d(&bin_centers)?.to_vec();
     let em = self::error_model(error_model)?;
     let r = rs_csr_integrate1d(&csr, prep_s, centers, em, empty);
-    csr_integrate1d_to_dict(py, &r)
+    csr_integrate1d_to_dict(py, r)
 }
 
 /// `csr_integrate2d`: apply a 2D CSR matrix. Returns a dict of the
@@ -757,7 +757,7 @@ fn csr_integrate2d<'py>(
     let bc1 = as_slice_1d(&bin_centers1)?.to_vec();
     let em = self::error_model(error_model)?;
     let r = rs_csr_integrate2d(&csr, prep_s, bc0, bc1, em, empty);
-    integrate2d_to_dict(py, &r)
+    integrate2d_to_dict(py, r)
 }
 
 // --------------------------------------------------------------------------
@@ -938,7 +938,7 @@ fn csc_integrate1d<'py>(
     let centers = as_slice_1d(&bin_centers)?.to_vec();
     let em = self::error_model(error_model)?;
     let r = rs_csc_integrate1d(&csc, prep_s, centers, em, empty);
-    csr_integrate1d_to_dict(py, &r)
+    csr_integrate1d_to_dict(py, r)
 }
 
 /// `csc_integrate2d`: apply a 2D CSC matrix. Returns a dict of the
@@ -963,7 +963,7 @@ fn csc_integrate2d<'py>(
     let bc1 = as_slice_1d(&bin_centers1)?.to_vec();
     let em = self::error_model(error_model)?;
     let r = rs_csc_integrate2d(&csc, prep_s, bc0, bc1, em, empty);
-    integrate2d_to_dict(py, &r)
+    integrate2d_to_dict(py, r)
 }
 
 // --------------------------------------------------------------------------
@@ -1145,7 +1145,7 @@ fn lut_integrate1d<'py>(
     let centers = as_slice_1d(&bin_centers)?.to_vec();
     let em = self::error_model(error_model)?;
     let r = rs_lut_integrate1d(&lut, prep_s, centers, em, empty);
-    csr_integrate1d_to_dict(py, &r)
+    csr_integrate1d_to_dict(py, r)
 }
 
 /// `lut_integrate2d`: apply a 2D dense LUT. Returns a dict of the
@@ -1170,7 +1170,7 @@ fn lut_integrate2d<'py>(
     let bc1 = as_slice_1d(&bin_centers1)?.to_vec();
     let em = self::error_model(error_model)?;
     let r = rs_lut_integrate2d(&lut, prep_s, bc0, bc1, em, empty);
-    integrate2d_to_dict(py, &r)
+    integrate2d_to_dict(py, r)
 }
 
 // --------------------------------------------------------------------------
@@ -1347,7 +1347,7 @@ impl Engine {
         let prep_s = as_slice_2d(&prep)?;
         let em = self::error_model(error_model)?;
         let r = self.matrix.apply1d(prep_s, self.centers0.clone(), em, empty);
-        csr_integrate1d_to_dict(py, &r)
+        csr_integrate1d_to_dict(py, r)
     }
 
     /// Integrate a preprocessed `(npix, 4)` f32 frame into the 2D bins, reusing
@@ -1370,7 +1370,7 @@ impl Engine {
         let r = self
             .matrix
             .apply2d(prep_s, self.centers0.clone(), centers1, em, empty);
-        integrate2d_to_dict(py, &r)
+        integrate2d_to_dict(py, r)
     }
 }
 
@@ -1445,7 +1445,7 @@ impl PyAzimuthalIntegrator {
         // No-split histogram is the only 1D engine whose pyFAI accumulators are
         // f32; the sparse and split-histogram engines emit f64.
         let acc_f32 = m.split == Split::No && m.algo == Algo::Histogram;
-        integrate1d_result_to_dict(py, &r, acc_f32)
+        integrate1d_result_to_dict(py, r, acc_f32)
     }
 
     /// 2D integration of a detector `image` into a `(npt_azim, npt_rad)` cake,
@@ -1489,7 +1489,7 @@ impl PyAzimuthalIntegrator {
             .integrate2d(data, npt_rad, npt_azim, radial_unit(unit)?, &opts);
         // Every 2D engine emits f64 accumulators (matching pyFAI), so the 2D
         // dict needs no per-method dtype gate.
-        integrate2d_result_to_dict(py, &r)
+        integrate2d_result_to_dict(py, r)
     }
 }
 
@@ -1596,56 +1596,53 @@ fn lut_2d_tuple<'py>(py: Python<'py>, lut: Lut, bc0: Vec<f64>, bc1: Vec<f64>) ->
     )
 }
 
-fn integrate1d_to_dict<'py>(py: Python<'py>, r: &Integrate1d) -> PyResult<Bound<'py, PyDict>> {
+fn integrate1d_to_dict<'py>(py: Python<'py>, r: Integrate1d) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
-    d.set_item("position", r.position.clone().into_pyarray(py))?;
-    d.set_item("intensity", r.intensity.clone().into_pyarray(py))?;
-    d.set_item("sigma", r.sigma.clone().into_pyarray(py))?;
-    d.set_item("signal", r.signal.clone().into_pyarray(py))?;
-    d.set_item("variance", r.variance.clone().into_pyarray(py))?;
-    d.set_item("normalization", r.normalization.clone().into_pyarray(py))?;
-    d.set_item("count", r.count.clone().into_pyarray(py))?;
-    d.set_item("std", r.std.clone().into_pyarray(py))?;
-    d.set_item("sem", r.sem.clone().into_pyarray(py))?;
-    d.set_item("norm_sq", r.norm_sq.clone().into_pyarray(py))?;
+    d.set_item("position", r.position.into_pyarray(py))?;
+    d.set_item("intensity", r.intensity.into_pyarray(py))?;
+    d.set_item("sigma", r.sigma.into_pyarray(py))?;
+    d.set_item("signal", r.signal.into_pyarray(py))?;
+    d.set_item("variance", r.variance.into_pyarray(py))?;
+    d.set_item("normalization", r.normalization.into_pyarray(py))?;
+    d.set_item("count", r.count.into_pyarray(py))?;
+    d.set_item("std", r.std.into_pyarray(py))?;
+    d.set_item("sem", r.sem.into_pyarray(py))?;
+    d.set_item("norm_sq", r.norm_sq.into_pyarray(py))?;
     Ok(d)
 }
 
 fn csr_integrate1d_to_dict<'py>(
     py: Python<'py>,
-    r: &CsrIntegrate1d,
+    r: CsrIntegrate1d,
 ) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
-    d.set_item("position", r.position.clone().into_pyarray(py))?;
-    d.set_item("intensity", r.intensity.clone().into_pyarray(py))?;
-    d.set_item("sigma", r.sigma.clone().into_pyarray(py))?;
-    d.set_item("sum_signal", r.sum_signal.clone().into_pyarray(py))?;
-    d.set_item("sum_variance", r.sum_variance.clone().into_pyarray(py))?;
-    d.set_item(
-        "sum_normalization",
-        r.sum_normalization.clone().into_pyarray(py),
-    )?;
-    d.set_item("count", r.count.clone().into_pyarray(py))?;
-    d.set_item("std", r.std.clone().into_pyarray(py))?;
-    d.set_item("sem", r.sem.clone().into_pyarray(py))?;
-    d.set_item("sum_norm_sq", r.sum_norm_sq.clone().into_pyarray(py))?;
+    d.set_item("position", r.position.into_pyarray(py))?;
+    d.set_item("intensity", r.intensity.into_pyarray(py))?;
+    d.set_item("sigma", r.sigma.into_pyarray(py))?;
+    d.set_item("sum_signal", r.sum_signal.into_pyarray(py))?;
+    d.set_item("sum_variance", r.sum_variance.into_pyarray(py))?;
+    d.set_item("sum_normalization", r.sum_normalization.into_pyarray(py))?;
+    d.set_item("count", r.count.into_pyarray(py))?;
+    d.set_item("std", r.std.into_pyarray(py))?;
+    d.set_item("sem", r.sem.into_pyarray(py))?;
+    d.set_item("sum_norm_sq", r.sum_norm_sq.into_pyarray(py))?;
     Ok(d)
 }
 
-fn integrate2d_to_dict<'py>(py: Python<'py>, r: &Integrate2d) -> PyResult<Bound<'py, PyDict>> {
+fn integrate2d_to_dict<'py>(py: Python<'py>, r: Integrate2d) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
-    d.set_item("radial", r.radial.clone().into_pyarray(py))?;
-    d.set_item("azimuthal", r.azimuthal.clone().into_pyarray(py))?;
     d.set_item("bins", r.bins)?;
-    d.set_item("intensity", r.intensity.clone().into_pyarray(py))?;
-    d.set_item("sigma", r.sigma.clone().into_pyarray(py))?;
-    d.set_item("signal", r.signal.clone().into_pyarray(py))?;
-    d.set_item("variance", r.variance.clone().into_pyarray(py))?;
-    d.set_item("normalization", r.normalization.clone().into_pyarray(py))?;
-    d.set_item("count", r.count.clone().into_pyarray(py))?;
-    d.set_item("std", r.std.clone().into_pyarray(py))?;
-    d.set_item("sem", r.sem.clone().into_pyarray(py))?;
-    d.set_item("norm_sq", r.norm_sq.clone().into_pyarray(py))?;
+    d.set_item("radial", r.radial.into_pyarray(py))?;
+    d.set_item("azimuthal", r.azimuthal.into_pyarray(py))?;
+    d.set_item("intensity", r.intensity.into_pyarray(py))?;
+    d.set_item("sigma", r.sigma.into_pyarray(py))?;
+    d.set_item("signal", r.signal.into_pyarray(py))?;
+    d.set_item("variance", r.variance.into_pyarray(py))?;
+    d.set_item("normalization", r.normalization.into_pyarray(py))?;
+    d.set_item("count", r.count.into_pyarray(py))?;
+    d.set_item("std", r.std.into_pyarray(py))?;
+    d.set_item("sem", r.sem.into_pyarray(py))?;
+    d.set_item("norm_sq", r.norm_sq.into_pyarray(py))?;
     Ok(d)
 }
 
@@ -1656,15 +1653,17 @@ fn integrate2d_to_dict<'py>(py: Python<'py>, r: &Integrate2d) -> PyResult<Bound<
 /// `sum_*` as f32, and the parity harness rejects on a dtype mismatch, so that
 /// one path widens to f32 (losslessly — the f32 truncation already happened in
 /// the engine) to match.
-fn acc_array<'py>(py: Python<'py>, v: &[f64], acc_f32: bool) -> Bound<'py, PyAny> {
+fn acc_array<'py>(py: Python<'py>, v: Vec<f64>, acc_f32: bool) -> Bound<'py, PyAny> {
     if acc_f32 {
-        v.iter()
-            .map(|&x| x as f32)
+        // The f32 narrowing must allocate a new Vec; the f64 path moves `v` with
+        // no copy.
+        v.into_iter()
+            .map(|x| x as f32)
             .collect::<Vec<f32>>()
             .into_pyarray(py)
             .into_any()
     } else {
-        v.to_vec().into_pyarray(py).into_any()
+        v.into_pyarray(py).into_any()
     }
 }
 
@@ -1674,26 +1673,26 @@ fn acc_array<'py>(py: Python<'py>, v: &[f64], acc_f32: bool) -> Bound<'py, PyAny
 /// accumulator dtype per engine (see [`acc_array`]).
 fn integrate1d_result_to_dict<'py>(
     py: Python<'py>,
-    r: &Integrate1dResult,
+    r: Integrate1dResult,
     acc_f32: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
-    d.set_item("radial", r.radial.clone().into_pyarray(py))?;
-    d.set_item("intensity", r.intensity.clone().into_pyarray(py))?;
-    d.set_item("sigma", r.sigma.clone().into_pyarray(py))?;
-    d.set_item("count", acc_array(py, &r.count, acc_f32))?;
-    d.set_item("sum_signal", acc_array(py, &r.sum_signal, acc_f32))?;
-    d.set_item("sum_variance", acc_array(py, &r.sum_variance, acc_f32))?;
+    d.set_item("radial", r.radial.into_pyarray(py))?;
+    d.set_item("intensity", r.intensity.into_pyarray(py))?;
+    d.set_item("sigma", r.sigma.into_pyarray(py))?;
+    d.set_item("count", acc_array(py, r.count, acc_f32))?;
+    d.set_item("sum_signal", acc_array(py, r.sum_signal, acc_f32))?;
+    d.set_item("sum_variance", acc_array(py, r.sum_variance, acc_f32))?;
     d.set_item(
         "sum_normalization",
-        acc_array(py, &r.sum_normalization, acc_f32),
+        acc_array(py, r.sum_normalization, acc_f32),
     )?;
     d.set_item(
         "sum_normalization2",
-        acc_array(py, &r.sum_normalization2, acc_f32),
+        acc_array(py, r.sum_normalization2, acc_f32),
     )?;
-    d.set_item("std", r.std.clone().into_pyarray(py))?;
-    d.set_item("sem", r.sem.clone().into_pyarray(py))?;
+    d.set_item("std", r.std.into_pyarray(py))?;
+    d.set_item("sem", r.sem.into_pyarray(py))?;
     Ok(d)
 }
 
@@ -1715,36 +1714,28 @@ fn reshape_azim_rad<'py, T: numpy::Element>(
 /// npt_rad)`, matching `pyFAI.containers.Integrate2dResult`.
 fn integrate2d_result_to_dict<'py>(
     py: Python<'py>,
-    r: &Integrate2dResult,
+    r: Integrate2dResult,
 ) -> PyResult<Bound<'py, PyDict>> {
+    let bins = r.bins; // Copy: still readable after the per-field moves below.
     let d = PyDict::new(py);
-    d.set_item("radial", r.radial.clone().into_pyarray(py))?;
-    d.set_item("azimuthal", r.azimuthal.clone().into_pyarray(py))?;
-    d.set_item("bins", r.bins)?;
-    d.set_item(
-        "intensity",
-        reshape_azim_rad(py, r.intensity.clone(), r.bins)?,
-    )?;
-    d.set_item("sigma", reshape_azim_rad(py, r.sigma.clone(), r.bins)?)?;
-    d.set_item("count", reshape_azim_rad(py, r.count.clone(), r.bins)?)?;
-    d.set_item(
-        "sum_signal",
-        reshape_azim_rad(py, r.sum_signal.clone(), r.bins)?,
-    )?;
-    d.set_item(
-        "sum_variance",
-        reshape_azim_rad(py, r.sum_variance.clone(), r.bins)?,
-    )?;
+    d.set_item("bins", bins)?;
+    d.set_item("radial", r.radial.into_pyarray(py))?;
+    d.set_item("azimuthal", r.azimuthal.into_pyarray(py))?;
+    d.set_item("intensity", reshape_azim_rad(py, r.intensity, bins)?)?;
+    d.set_item("sigma", reshape_azim_rad(py, r.sigma, bins)?)?;
+    d.set_item("count", reshape_azim_rad(py, r.count, bins)?)?;
+    d.set_item("sum_signal", reshape_azim_rad(py, r.sum_signal, bins)?)?;
+    d.set_item("sum_variance", reshape_azim_rad(py, r.sum_variance, bins)?)?;
     d.set_item(
         "sum_normalization",
-        reshape_azim_rad(py, r.sum_normalization.clone(), r.bins)?,
+        reshape_azim_rad(py, r.sum_normalization, bins)?,
     )?;
     d.set_item(
         "sum_normalization2",
-        reshape_azim_rad(py, r.sum_normalization2.clone(), r.bins)?,
+        reshape_azim_rad(py, r.sum_normalization2, bins)?,
     )?;
-    d.set_item("std", reshape_azim_rad(py, r.std.clone(), r.bins)?)?;
-    d.set_item("sem", reshape_azim_rad(py, r.sem.clone(), r.bins)?)?;
+    d.set_item("std", reshape_azim_rad(py, r.std, bins)?)?;
+    d.set_item("sem", reshape_azim_rad(py, r.sem, bins)?)?;
     Ok(d)
 }
 
