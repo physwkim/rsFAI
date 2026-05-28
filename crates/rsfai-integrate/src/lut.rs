@@ -24,8 +24,9 @@
 //! guard — pyFAI's bare `else`).
 
 use crate::csr::{
-    build_bbox_csr_1d, build_bbox_csr_2d, build_full_csr_1d, build_full_csr_2d, finalize_reduction,
-    reduction_to_1d, reduction_to_2d, Bbox2dBounds, BboxAzim1d, Csr, CsrIntegrate1d,
+    build_bbox_csr_1d, build_bbox_csr_2d, build_full_csr_1d, build_full_csr_2d, finalize_bin,
+    reduction_to_1d, reduction_to_2d, scatter_bins, Bbox2dBounds, BboxAzim1d, BinReduction, Csr,
+    CsrIntegrate1d,
 };
 use crate::histogram::Integrate2d;
 use rsfai_core::dtype::{AccT, DataT, ErrorModel, IndexT, PositionT};
@@ -87,10 +88,19 @@ pub(crate) fn csr_to_lut(csr: &Csr, n_bins: usize) -> Lut {
 }
 
 /// The LUT apply's per-bin reduction: a per-output-bin gather over the dense
-/// matrix into `acc_t` accumulators, then the shared [`finalize_reduction`].
-/// Mirrors `LutIntegrator.integrate_ng`'s `prange` over output bins, skipping
-/// padding via `idx < 0 || coef == 0.0`. `prep` is the flat `[signal, variance,
-/// norm, count]`-per-pixel f32 array.
+/// matrix into `acc_t` accumulators, then [`finalize_bin`] and the shared
+/// [`scatter_bins`]. Mirrors `LutIntegrator.integrate_ng`'s `prange` over output
+/// bins, skipping padding via `idx < 0 || coef == 0.0`. `prep` is the flat
+/// `[signal, variance, norm, count]`-per-pixel f32 array.
+///
+/// Parallelized over output bins, and **bit-exact** while parallel: each bin
+/// reads only its own dense LUT row (`bin*lut_size .. (bin+1)*lut_size`) in
+/// ascending column order and writes only its own slot, so the per-bin
+/// accumulation order is identical to the serial code. (pyFAI's `prange`
+/// likewise assigns each output bin wholly to one thread — the same partition.)
+/// This matches [`crate::csr::csr_reduce`]'s structure; the gather differs (dense
+/// padded row vs compact CSR row) and the azimuthal branch has no `norm != 0`
+/// guard (pyFAI's bare `else`).
 fn lut_reduce(
     lut: &Lut,
     prep: &[DataT],
@@ -98,6 +108,8 @@ fn lut_reduce(
     error_model: ErrorModel,
     empty: DataT,
 ) -> crate::csr::CsrReduction {
+    use rayon::prelude::*;
+
     let do_variance = error_model != ErrorModel::No;
     let lut_size = lut.lut_size;
     assert_eq!(
@@ -106,65 +118,70 @@ fn lut_reduce(
         "lut.coef length must be n_bins * lut_size"
     );
 
-    let mut acc_sig = vec![0.0 as AccT; n_bins];
-    let mut acc_var = vec![0.0 as AccT; n_bins];
-    let mut acc_norm = vec![0.0 as AccT; n_bins];
-    let mut acc_norm_sq = vec![0.0 as AccT; n_bins];
-    let mut acc_count = vec![0.0 as AccT; n_bins];
+    let per_bin: Vec<BinReduction> = (0..n_bins)
+        .into_par_iter()
+        .map(|bin| {
+            let mut acc_sig: AccT = 0.0;
+            let mut acc_var: AccT = 0.0;
+            let mut acc_norm: AccT = 0.0;
+            let mut acc_norm_sq: AccT = 0.0;
+            let mut acc_count: AccT = 0.0;
 
-    for bin in 0..n_bins {
-        let row = bin * lut_size;
-        for j in 0..lut_size {
-            let idx = lut.idx[row + j];
-            let coef = lut.coef[row + j] as AccT; // data_t -> acc_t
-            if idx < 0 || coef == 0.0 {
-                continue; // padding / dropped entry
-            }
-            let p = idx as usize;
-            let sig = prep[4 * p] as AccT;
-            let var = prep[4 * p + 1] as AccT;
-            let norm = prep[4 * p + 2] as AccT;
-            let cnt = prep[4 * p + 3] as AccT;
-            acc_count[bin] += coef * cnt;
-            match error_model {
-                // pyFAI LUT_common.pxi `do_azimuthal_variance`: per-bin Welford.
-                // `b = sig/norm` in f64 (sig/norm are acc_t). Unlike CSR, the
-                // update branch has no `norm != 0` guard (pyFAI's bare `else`),
-                // so a zero-norm contribution still runs (b becomes inf/NaN,
-                // matching pyFAI).
-                ErrorModel::Azimuthal => {
-                    crate::azimuthal::azimuthal_step(
-                        &mut acc_sig[bin],
-                        &mut acc_var[bin],
-                        &mut acc_norm[bin],
-                        &mut acc_norm_sq[bin],
-                        coef * norm,
-                        coef * sig,
-                        sig / norm,
-                    );
+            let row = bin * lut_size;
+            for j in 0..lut_size {
+                let idx = lut.idx[row + j];
+                let coef = lut.coef[row + j] as AccT; // data_t -> acc_t
+                if idx < 0 || coef == 0.0 {
+                    continue; // padding / dropped entry
                 }
-                _ => {
-                    acc_sig[bin] += coef * sig;
-                    if do_variance {
-                        acc_var[bin] += coef * coef * var;
+                let p = idx as usize;
+                let sig = prep[4 * p] as AccT;
+                let var = prep[4 * p + 1] as AccT;
+                let norm = prep[4 * p + 2] as AccT;
+                let cnt = prep[4 * p + 3] as AccT;
+                acc_count += coef * cnt;
+                match error_model {
+                    // pyFAI LUT_common.pxi `do_azimuthal_variance`: per-bin Welford.
+                    // `b = sig/norm` in f64 (sig/norm are acc_t). Unlike CSR, the
+                    // update branch has no `norm != 0` guard (pyFAI's bare `else`),
+                    // so a zero-norm contribution still runs (b becomes inf/NaN,
+                    // matching pyFAI).
+                    ErrorModel::Azimuthal => {
+                        crate::azimuthal::azimuthal_step(
+                            &mut acc_sig,
+                            &mut acc_var,
+                            &mut acc_norm,
+                            &mut acc_norm_sq,
+                            coef * norm,
+                            coef * sig,
+                            sig / norm,
+                        );
                     }
-                    let w = coef * norm;
-                    acc_norm[bin] += w;
-                    acc_norm_sq[bin] += w * w;
+                    _ => {
+                        acc_sig += coef * sig;
+                        if do_variance {
+                            acc_var += coef * coef * var;
+                        }
+                        let w = coef * norm;
+                        acc_norm += w;
+                        acc_norm_sq += w * w;
+                    }
                 }
             }
-        }
-    }
 
-    finalize_reduction(
-        &acc_sig,
-        &acc_var,
-        &acc_norm,
-        &acc_norm_sq,
-        &acc_count,
-        do_variance,
-        empty,
-    )
+            finalize_bin(
+                acc_sig,
+                acc_var,
+                acc_norm,
+                acc_norm_sq,
+                acc_count,
+                do_variance,
+                empty,
+            )
+        })
+        .collect();
+
+    scatter_bins(per_bin)
 }
 
 /// Apply a 1D LUT to preprocessed rows — port of `LutIntegrator.integrate_ng`'s

@@ -1229,7 +1229,7 @@ pub(crate) struct CsrReduction {
 
 /// One output bin's reduction outputs, produced independently per bin and then
 /// scattered into the flat [`CsrReduction`] arrays.
-struct BinReduction {
+pub(crate) struct BinReduction {
     sum_signal: AccT,
     sum_variance: AccT,
     sum_normalization: AccT,
@@ -1245,7 +1245,7 @@ struct BinReduction {
 /// `intensity = sig/norm`, `std = sqrt(var/norm²)`, `sem = sqrt(var)/norm`, all in
 /// f64 (libc double `sqrt`) then downcast to f32; the `acc_norm_sq > 0` guard and
 /// the `do_variance` gate on std/sem mirror pyFAI exactly.
-fn finalize_bin(
+pub(crate) fn finalize_bin(
     acc_sig: AccT,
     acc_var: AccT,
     acc_norm: AccT,
@@ -1365,7 +1365,14 @@ fn csr_reduce(csr: &Csr, prep: &[DataT], error_model: ErrorModel, empty: DataT) 
         })
         .collect();
 
-    // Scatter the per-bin results into the flat output arrays (serial, O(bins)).
+    scatter_bins(per_bin)
+}
+
+/// Scatter independently-computed per-bin [`BinReduction`]s into the flat
+/// [`CsrReduction`] arrays (serial, O(bins)). Shared by [`csr_reduce`] and the
+/// LUT apply, whose per-bin gathers differ but whose scatter is identical.
+pub(crate) fn scatter_bins(per_bin: Vec<BinReduction>) -> CsrReduction {
+    let bins = per_bin.len();
     let mut sum_signal = Vec::with_capacity(bins);
     let mut sum_variance = Vec::with_capacity(bins);
     let mut sum_normalization = Vec::with_capacity(bins);
