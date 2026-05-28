@@ -29,7 +29,7 @@ use rsfai::{
     Algo, AzimuthalIntegrator, ErrorModelKind, IntegrationOptions, Method, RadialUnit, Split,
 };
 use rsfai_core::compare::{compare_f32, compare_f64};
-use rsfai_core::golden::{load_manifest, load_npy_f32, load_npy_f64, load_npy_i32};
+use rsfai_core::golden::{load_image_f32, load_manifest, load_npy_f32, load_npy_f64};
 
 /// Relative-error gate for the parallel-histogram accumulator fields.
 const REL_TOL: f64 = 1e-6;
@@ -183,9 +183,10 @@ fn dropin_matches_golden() {
         let ai =
             AzimuthalIntegrator::load(dir.join("geometry.poni")).expect("load poni + detector");
 
-        // Image (int32) -> f32, exactly the cast pyFAI applies before preproc.
-        let image_i32 = load_npy_i32(dir.join("image.npy")).expect("image");
-        let image: Vec<f32> = image_i32.iter().map(|&v| v as f32).collect();
+        // Image -> f32, exactly the cast pyFAI applies before preproc. Pilatus
+        // frames are int32, Eiger4M float32; the single owner reads the `.npy`
+        // dtype header and handles both.
+        let image = load_image_f32(dir.join("image.npy")).expect("image");
 
         // The no-split histogram accumulation is parallel (tolerance gate); every
         // other engine is serial (bit-exact). Axes are always bit-exact.

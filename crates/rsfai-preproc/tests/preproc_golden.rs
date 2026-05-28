@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use rsfai_core::compare::compare_f32;
 use rsfai_core::dtype::ErrorModel;
-use rsfai_core::golden::{load_manifest, load_npy_f32, load_npy_f64, load_npy_i32, load_npy_i8};
+use rsfai_core::golden::{load_image_f32, load_manifest, load_npy_f32, load_npy_f64, load_npy_i8};
 use rsfai_preproc::{preproc4, PreprocOptions};
 
 fn datasets_root() -> PathBuf {
@@ -42,9 +42,10 @@ fn preproc4_bit_exact() {
     for dir in dataset_dirs() {
         let manifest = load_manifest(dir.join("manifest.json")).expect("manifest");
 
-        // image (int32) -> f32, matching `raw.astype(float32)`.
-        let image = load_npy_i32(dir.join("image.npy")).expect("image");
-        let data: Vec<f32> = image.iter().map(|&v| v as f32).collect();
+        // Detector frame -> f32, matching `raw.astype(float32)`. The single
+        // owner handles both int32 (Pilatus-class) and float32 (Eiger-class)
+        // frames, so this site cannot reopen the int32-only assumption.
+        let data = load_image_f32(dir.join("image.npy")).expect("image");
 
         // solidangle (f64) -> f32 (pyFAI casts to the working dtype).
         let solidangle: Option<Vec<f32>> = if dir.join("solidangle.npy").exists() {

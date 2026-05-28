@@ -32,6 +32,28 @@ npy_loader!(load_npy_f32, f32);
 npy_loader!(load_npy_i32, i32);
 npy_loader!(load_npy_i8, i8);
 
+/// Load a detector frame `image.npy` as the f32 the integrator consumes,
+/// regardless of whether `gen_golden.py` stored it `int32` (Pilatus-class
+/// frames) or `float32` (Eiger-class frames). This is the single owner for "the
+/// detector frame as f32": every golden test routes through it, so a new
+/// float32-frame detector cannot reopen the int32-only assumption at a call
+/// site. Self-describing (reads the `.npy` dtype header), so it needs no
+/// manifest — usable by the reduced-manifest OpenCL datasets too.
+pub fn load_image_f32<P: AsRef<Path>>(path: P) -> Result<Vec<f32>> {
+    let p = path.as_ref();
+    match ndarray_npy::read_npy::<_, ArrayD<i32>>(p) {
+        Ok(a) => Ok(a.iter().map(|&v| v as f32).collect()),
+        // int32 reader rejects a float32 frame with WrongDescriptor; retry f32.
+        Err(ndarray_npy::ReadNpyError::WrongDescriptor(_)) => {
+            Ok(load_npy_f32(p)?.iter().copied().collect())
+        }
+        Err(source) => Err(CoreError::ReadNpy {
+            path: path_str(p),
+            source,
+        }),
+    }
+}
+
 /// Write an `.npy` file (used by tests that materialize fixtures).
 pub fn write_npy_f64<P: AsRef<Path>>(path: P, array: &ArrayD<f64>) -> Result<()> {
     let p = path.as_ref();
