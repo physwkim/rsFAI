@@ -1210,12 +1210,14 @@ pub fn build_full_csr_2d(
     (flatten_csr(&bin_idx, &bin_coef), bin_centers0, bin_centers1)
 }
 
-/// The per-bin reduction outputs shared by the 1D and 2D CSR/CSC apply — the body
+/// The per-cell reduction outputs shared by the 1D and 2D CSR/CSC apply — the body
 /// of `CsrIntegrator.integrate_ng` before the dimension-specific packaging. All
-/// vectors are flat, indexed by output bin (length `indptr.len() - 1`). `sum_*`
-/// / `count` are f64 (`acc_t`); `intensity`/`std`/`sem` are f32. Opaque to the
-/// CSC module, which produces it via [`finalize_reduction`] and packages it via
-/// [`reduction_to_1d`] / [`reduction_to_2d`].
+/// vectors are flat, one entry per output cell. `sum_*` / `count` are f64
+/// (`acc_t`); `intensity`/`std`/`sem` are f32. The CSR/LUT apply produces it via
+/// the fused [`fill_reduction`] (cells in final order — 1D bin order, 2D already
+/// transposed) and packages via [`reduction_to_1d`] / [`pack_2d`]. CSC instead
+/// produces it via [`finalize_reduction`] in radial-major bin order and packages
+/// via [`reduction_to_1d`] / [`reduction_to_2d`] (which transposes).
 pub(crate) struct CsrReduction {
     sum_signal: Vec<AccT>,
     sum_variance: Vec<AccT>,
@@ -1279,119 +1281,134 @@ pub(crate) fn finalize_bin(
     }
 }
 
-/// The per-output-bin weighted-mean reduction at the heart of
-/// `CsrIntegrator.integrate_ng`, dimension-agnostic: it iterates the
-/// `indptr.len() - 1` output bins (which is `bins` for 1D and `bins0·bins1` for
-/// 2D) and produces flat per-bin arrays. The 1D and 2D entry points differ only
-/// in how they package these (1D keeps them flat with a position axis; 2D
-/// reshapes to `(bins0, bins1)` and transposes). Every per-pixel value is
-/// promoted to f64 before the arithmetic; `sum_*` stay f64, `intensity`/`std`/
-/// `sem` are downcast to f32 (`std`/`sem` via libc double `sqrt`). The
-/// `acc_norm_sq > 0` guard mirrors pyFAI exactly.
-///
-/// Parallelized over output bins, and **bit-exact** while parallel: each bin
-/// reads only its own CSR row (`indptr[i]..indptr[i+1]`) in ascending entry
-/// order and writes only its own slot, so the per-bin accumulation order is
-/// identical to the serial code. (pyFAI's `prange` likewise assigns each output
-/// bin wholly to one thread — the same partition.)
-fn csr_reduce(csr: &Csr, prep: &[DataT], error_model: ErrorModel, empty: DataT) -> CsrReduction {
-    use rayon::prelude::*;
+/// Gather one output bin's contributions from its CSR row and finalize — the
+/// per-bin body of `CsrIntegrator.integrate_ng`. Reads only row `bin`
+/// (`indptr[bin]..indptr[bin+1]`) in ascending entry order and depends on no
+/// other bin, so it can be invoked for output cells in any order / in parallel
+/// and stays **bit-exact** (the per-bin accumulation order is fixed by the row
+/// regardless of thread count — pyFAI's `prange` likewise assigns each bin wholly
+/// to one thread). Every per-pixel value is promoted to f64 before the
+/// arithmetic; `sum_*` stay f64, `intensity`/`std`/`sem` downcast to f32. The
+/// `acc_norm_sq > 0` guard (in [`finalize_bin`]) mirrors pyFAI exactly.
+#[inline]
+pub(crate) fn csr_gather_bin(
+    csr: &Csr,
+    prep: &[DataT],
+    error_model: ErrorModel,
+    do_variance: bool,
+    empty: DataT,
+    bin: usize,
+) -> BinReduction {
+    let mut acc_sig: AccT = 0.0;
+    let mut acc_var: AccT = 0.0;
+    let mut acc_norm: AccT = 0.0;
+    let mut acc_norm_sq: AccT = 0.0;
+    let mut acc_count: AccT = 0.0;
 
-    let bins = csr.indptr.len() - 1;
-    let do_variance = error_model != ErrorModel::No;
+    let lo = csr.indptr[bin] as usize;
+    let hi = csr.indptr[bin + 1] as usize;
+    for j in lo..hi {
+        let coef = csr.data[j] as AccT; // data_t -> acc_t
+        if coef == 0.0 {
+            continue;
+        }
+        let idx = csr.indices[j] as usize;
+        let sig = prep[4 * idx] as AccT;
+        let var = prep[4 * idx + 1] as AccT;
+        let norm = prep[4 * idx + 2] as AccT;
+        let cnt = prep[4 * idx + 3] as AccT;
 
-    let per_bin: Vec<BinReduction> = (0..bins)
-        .into_par_iter()
-        .map(|i| {
-            let mut acc_sig: AccT = 0.0;
-            let mut acc_var: AccT = 0.0;
-            let mut acc_norm: AccT = 0.0;
-            let mut acc_norm_sq: AccT = 0.0;
-            let mut acc_count: AccT = 0.0;
-
-            let lo = csr.indptr[i] as usize;
-            let hi = csr.indptr[i + 1] as usize;
-            for j in lo..hi {
-                let coef = csr.data[j] as AccT; // data_t -> acc_t
-                if coef == 0.0 {
-                    continue;
-                }
-                let idx = csr.indices[j] as usize;
-                let sig = prep[4 * idx] as AccT;
-                let var = prep[4 * idx + 1] as AccT;
-                let norm = prep[4 * idx + 2] as AccT;
-                let cnt = prep[4 * idx + 3] as AccT;
-
-                acc_count += coef * cnt;
-                match error_model {
-                    // pyFAI CSR_common.pxi `do_azimuthal_variance`: per-bin
-                    // Welford. `b = sig/norm` in f64 (sig/norm are acc_t). A
-                    // zero-norm contribution that is not the bin's first is
-                    // skipped (pyFAI's `elif norm != 0.0`).
-                    ErrorModel::Azimuthal => {
-                        if acc_norm_sq <= 0.0 || norm != 0.0 {
-                            crate::azimuthal::azimuthal_step(
-                                &mut acc_sig,
-                                &mut acc_var,
-                                &mut acc_norm,
-                                &mut acc_norm_sq,
-                                coef * norm,
-                                coef * sig,
-                                sig / norm,
-                            );
-                        }
-                    }
-                    _ => {
-                        acc_sig += coef * sig;
-                        if do_variance {
-                            acc_var += coef * coef * var;
-                        }
-                        let w = coef * norm;
-                        acc_norm += w;
-                        acc_norm_sq += w * w;
-                    }
+        acc_count += coef * cnt;
+        match error_model {
+            // pyFAI CSR_common.pxi `do_azimuthal_variance`: per-bin Welford. `b =
+            // sig/norm` in f64 (sig/norm are acc_t). A zero-norm contribution that
+            // is not the bin's first is skipped (pyFAI's `elif norm != 0.0`).
+            ErrorModel::Azimuthal => {
+                if acc_norm_sq <= 0.0 || norm != 0.0 {
+                    crate::azimuthal::azimuthal_step(
+                        &mut acc_sig,
+                        &mut acc_var,
+                        &mut acc_norm,
+                        &mut acc_norm_sq,
+                        coef * norm,
+                        coef * sig,
+                        sig / norm,
+                    );
                 }
             }
-
-            finalize_bin(
-                acc_sig,
-                acc_var,
-                acc_norm,
-                acc_norm_sq,
-                acc_count,
-                do_variance,
-                empty,
-            )
-        })
-        .collect();
-
-    scatter_bins(per_bin)
-}
-
-/// Scatter independently-computed per-bin [`BinReduction`]s into the flat
-/// [`CsrReduction`] arrays (serial, O(bins)). Shared by [`csr_reduce`] and the
-/// LUT apply, whose per-bin gathers differ but whose scatter is identical.
-pub(crate) fn scatter_bins(per_bin: Vec<BinReduction>) -> CsrReduction {
-    let bins = per_bin.len();
-    let mut sum_signal = Vec::with_capacity(bins);
-    let mut sum_variance = Vec::with_capacity(bins);
-    let mut sum_normalization = Vec::with_capacity(bins);
-    let mut sum_norm_sq = Vec::with_capacity(bins);
-    let mut count = Vec::with_capacity(bins);
-    let mut intensity = Vec::with_capacity(bins);
-    let mut std = Vec::with_capacity(bins);
-    let mut sem = Vec::with_capacity(bins);
-    for b in per_bin {
-        sum_signal.push(b.sum_signal);
-        sum_variance.push(b.sum_variance);
-        sum_normalization.push(b.sum_normalization);
-        sum_norm_sq.push(b.sum_norm_sq);
-        count.push(b.count);
-        intensity.push(b.intensity);
-        std.push(b.std);
-        sem.push(b.sem);
+            _ => {
+                acc_sig += coef * sig;
+                if do_variance {
+                    acc_var += coef * coef * var;
+                }
+                let w = coef * norm;
+                acc_norm += w;
+                acc_norm_sq += w * w;
+            }
+        }
     }
 
+    finalize_bin(
+        acc_sig,
+        acc_var,
+        acc_norm,
+        acc_norm_sq,
+        acc_count,
+        do_variance,
+        empty,
+    )
+}
+
+/// The fused per-output-cell reduction shared by the CSR and LUT apply: for each
+/// of `n_cells` output cells it calls `gather(cell)` — which gathers the cell's
+/// source bin and finalizes (see [`csr_gather_bin`] / `lut_gather_bin`) — and
+/// writes the result straight into the flat [`CsrReduction`] columns. The
+/// `gather` closure carries the cell→source-bin map: identity for 1D, the
+/// `reshape(bins0, bins1).T` transpose-inverse for 2D, so the former three passes
+/// (reduce → scatter → 2D transpose) collapse into this one — no AoS intermediate,
+/// no separate scatter, no separate transpose.
+///
+/// Always parallel over cells, **bit-exact** while parallel: each cell reads only
+/// its own source bin (in fixed entry order) and writes only its own slot, so the
+/// result is independent of thread count. (The pass that previously regressed at
+/// small bin counts was a *separate* per-field scatter job stacked on the gather;
+/// fused into the gather's one job, the per-cell write is negligible even for 1D,
+/// so no bin-count gate is needed — and the 1D/coarse gather must stay parallel
+/// regardless, exactly as the former `csr_reduce`.)
+pub(crate) fn fill_reduction(
+    n_cells: usize,
+    gather: impl Fn(usize) -> BinReduction + Sync,
+) -> CsrReduction {
+    use rayon::prelude::*;
+    let mut sum_signal: Vec<AccT> = vec![0.0; n_cells];
+    let mut sum_variance: Vec<AccT> = vec![0.0; n_cells];
+    let mut sum_normalization: Vec<AccT> = vec![0.0; n_cells];
+    let mut sum_norm_sq: Vec<AccT> = vec![0.0; n_cells];
+    let mut count: Vec<AccT> = vec![0.0; n_cells];
+    let mut intensity: Vec<DataT> = vec![0.0; n_cells];
+    let mut std: Vec<DataT> = vec![0.0; n_cells];
+    let mut sem: Vec<DataT> = vec![0.0; n_cells];
+    sum_signal
+        .par_iter_mut()
+        .zip(sum_variance.par_iter_mut())
+        .zip(sum_normalization.par_iter_mut())
+        .zip(sum_norm_sq.par_iter_mut())
+        .zip(count.par_iter_mut())
+        .zip(intensity.par_iter_mut())
+        .zip(std.par_iter_mut())
+        .zip(sem.par_iter_mut())
+        .enumerate()
+        .for_each(|(t, (((((((s, v), nm), nsq), c), i), st), se))| {
+            let b = gather(t);
+            *s = b.sum_signal;
+            *v = b.sum_variance;
+            *nm = b.sum_normalization;
+            *nsq = b.sum_norm_sq;
+            *c = b.count;
+            *i = b.intensity;
+            *st = b.std;
+            *se = b.sem;
+        });
     CsrReduction {
         sum_signal,
         sum_variance,
@@ -1476,11 +1493,12 @@ pub(crate) fn reduction_to_1d(r: CsrReduction, bin_centers: Vec<PositionT>) -> C
     }
 }
 
-/// Package a [`CsrReduction`] as the 2D `Integrate2dtpl` field set: the flat
-/// per-bin arrays (output bin `i·bins1 + j`, radial-major) reshaped to
-/// `(bins0, bins1)` and transposed to **(azimuthal, radial)** (pyFAI's
-/// `.reshape(self.bins).T`), so cell `(azimuthal j, radial i)` lands at flat
-/// index `j·bins0 + i`. Shared by the CSR and CSC 2D apply.
+/// Package a [`CsrReduction`] as the 2D `Integrate2dtpl` field set, transposing
+/// the flat radial-major reduction (output bin `i·bins1 + j`) to **(azimuthal,
+/// radial)** (pyFAI's `.reshape(self.bins).T`), so cell `(azimuthal j, radial i)`
+/// lands at flat index `j·bins0 + i`. Used by the **CSC** apply, which scatters
+/// in radial-major bin order; the CSR/LUT apply instead folds this transpose into
+/// its per-cell gather index (see [`fill_reduction`]) and packages via [`pack_2d`].
 pub(crate) fn reduction_to_2d(
     r: CsrReduction,
     bins0: usize,
@@ -1489,18 +1507,18 @@ pub(crate) fn reduction_to_2d(
     bin_centers1: Vec<PositionT>,
 ) -> Integrate2d {
     let n = bins0 * bins1;
-    let mut signal = vec![0.0f64; n];
-    let mut variance = vec![0.0f64; n];
-    let mut normalization = vec![0.0f64; n];
-    let mut count = vec![0.0f64; n];
-    let mut norm_sq = vec![0.0f64; n];
-    let mut intensity = vec![0.0f32; n];
-    let mut std = vec![0.0f32; n];
-    let mut sem = vec![0.0f32; n];
+    let mut signal: Vec<f64> = vec![0.0; n];
+    let mut variance: Vec<f64> = vec![0.0; n];
+    let mut normalization: Vec<f64> = vec![0.0; n];
+    let mut count: Vec<f64> = vec![0.0; n];
+    let mut norm_sq: Vec<f64> = vec![0.0; n];
+    let mut intensity: Vec<f32> = vec![0.0; n];
+    let mut std: Vec<f32> = vec![0.0; n];
+    let mut sem: Vec<f32> = vec![0.0; n];
     for i in 0..bins0 {
         for j in 0..bins1 {
-            let b = i * bins1 + j; // reduction index (radial-major)
-            let t = j * bins0 + i; // transposed (azimuthal, radial)
+            let b = i * bins1 + j;
+            let t = j * bins0 + i;
             signal[t] = r.sum_signal[b];
             variance[t] = r.sum_variance[b];
             normalization[t] = r.sum_normalization[b];
@@ -1527,6 +1545,35 @@ pub(crate) fn reduction_to_2d(
     }
 }
 
+/// Package an **already-azimuthal-major** [`CsrReduction`] (output-cell order) as
+/// the 2D `Integrate2dtpl` field set — a plain field move, no transpose. The fused
+/// CSR/LUT 2D apply folds the `reshape(bins0, bins1).T` transpose into its per-cell
+/// gather index ([`fill_reduction`] with the transpose-inverse map), so the columns
+/// already arrive in final order. (CSC, which scatters in radial-major bin order,
+/// uses [`reduction_to_2d`] instead.)
+pub(crate) fn pack_2d(
+    r: CsrReduction,
+    bins0: usize,
+    bins1: usize,
+    bin_centers0: Vec<PositionT>,
+    bin_centers1: Vec<PositionT>,
+) -> Integrate2d {
+    Integrate2d {
+        radial: bin_centers0,
+        azimuthal: bin_centers1,
+        bins: (bins0, bins1),
+        intensity: r.intensity,
+        sigma: r.sem.clone(), // Integrate2dtpl position 4 (sigma) == position 10 (sem)
+        signal: r.sum_signal,
+        variance: r.sum_variance,
+        normalization: r.sum_normalization,
+        count: r.count,
+        std: r.std,
+        sem: r.sem,
+        norm_sq: r.sum_norm_sq,
+    }
+}
+
 /// Apply a CSR matrix to preprocessed rows (1D) — port of `CsrIntegrator.
 /// integrate_ng`'s 1D return. `prep` is the flat `[signal, variance, norm,
 /// count]`-per-pixel f32 array (the `preproc(..., split_result=4)` output).
@@ -1543,7 +1590,10 @@ pub fn csr_integrate1d(
     let bins = bin_centers.len();
     assert_eq!(csr.indptr.len(), bins + 1, "indptr length must be bins + 1");
 
-    let r = csr_reduce(csr, prep, error_model, empty);
+    let do_variance = error_model != ErrorModel::No;
+    let r = fill_reduction(bins, |t| {
+        csr_gather_bin(csr, prep, error_model, do_variance, empty, t)
+    });
     reduction_to_1d(r, bin_centers)
 }
 
@@ -1571,8 +1621,16 @@ pub fn csr_integrate2d(
         "indptr length must be bins0 * bins1 + 1"
     );
 
-    let r = csr_reduce(csr, prep, error_model, empty);
-    reduction_to_2d(r, bins0, bins1, bin_centers0, bin_centers1)
+    let do_variance = error_model != ErrorModel::No;
+    // Output cell `t` (azimuthal `j = t / bins0`, radial `i = t % bins0`) gathers
+    // source bin `i·bins1 + j` — the `reshape(bins0, bins1).T` transpose folded
+    // into the gather index, so the fused reduce writes final azimuthal-major
+    // order directly (no separate transpose pass; package with [`pack_2d`]).
+    let r = fill_reduction(bins0 * bins1, |t| {
+        let bin = (t % bins0) * bins1 + (t / bins0);
+        csr_gather_bin(csr, prep, error_model, do_variance, empty, bin)
+    });
+    pack_2d(r, bins0, bins1, bin_centers0, bin_centers1)
 }
 
 #[cfg(test)]
