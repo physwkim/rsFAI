@@ -1174,6 +1174,207 @@ fn lut_integrate2d<'py>(
 }
 
 // --------------------------------------------------------------------------
+// Cached sparse engine (build once, integrate many)
+// --------------------------------------------------------------------------
+
+/// The sparse matrix a cached [`Engine`] owns, held Rust-side.
+enum EngineMatrix {
+    Csr(Csr),
+    Lut(Lut),
+    Csc(Csc),
+}
+
+impl EngineMatrix {
+    fn apply1d(&self, prep: &[f32], centers: Vec<f64>, em: ErrorModel, empty: f32) -> CsrIntegrate1d {
+        match self {
+            EngineMatrix::Csr(c) => rs_csr_integrate1d(c, prep, centers, em, empty),
+            EngineMatrix::Lut(l) => rs_lut_integrate1d(l, prep, centers, em, empty),
+            EngineMatrix::Csc(c) => rs_csc_integrate1d(c, prep, centers, em, empty),
+        }
+    }
+
+    fn apply2d(
+        &self,
+        prep: &[f32],
+        c0: Vec<f64>,
+        c1: Vec<f64>,
+        em: ErrorModel,
+        empty: f32,
+    ) -> Integrate2d {
+        match self {
+            EngineMatrix::Csr(c) => rs_csr_integrate2d(c, prep, c0, c1, em, empty),
+            EngineMatrix::Lut(l) => rs_lut_integrate2d(l, prep, c0, c1, em, empty),
+            EngineMatrix::Csc(c) => rs_csc_integrate2d(c, prep, c0, c1, em, empty),
+        }
+    }
+}
+
+/// A cached integration engine: a prebuilt sparse matrix (CSR / dense LUT / CSC)
+/// plus its bin centers, owned Rust-side. Build the matrix once with the
+/// `from_*` constructors — fed the parts the `build_*` functions return — then
+/// call [`integrate1d`](Engine::integrate1d) / [`integrate2d`](Engine::integrate2d)
+/// per frame. The matrix is copied once at construction and reused with no
+/// per-frame marshalling, the streaming fast path the per-kernel `*_integrate*`
+/// functions cannot offer: those rebuild the matrix from their numpy args (a
+/// full `to_vec` copy) on every call. The integration math is unchanged — each
+/// method calls the same engine the per-kernel function does, so the result is
+/// bit-identical.
+///
+/// 1D vs 2D is set by whether a second bin-center axis was supplied at
+/// construction; calling the other dimension's method raises `ValueError`.
+#[pyclass]
+struct Engine {
+    matrix: EngineMatrix,
+    centers0: Vec<f64>,
+    centers1: Option<Vec<f64>>,
+}
+
+#[pymethods]
+impl Engine {
+    /// Cache a 1D CSR matrix from the `(data, indices, indptr, bin_centers)`
+    /// parts `build_bbox_csr_1d` / `build_full_csr_1d` return.
+    #[staticmethod]
+    fn from_csr_1d<'py>(
+        data: PyReadonlyArray1<'py, f32>,
+        indices: PyReadonlyArray1<'py, i32>,
+        indptr: PyReadonlyArray1<'py, i32>,
+        bin_centers: PyReadonlyArray1<'py, f64>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            matrix: EngineMatrix::Csr(csr_from_parts(&data, &indices, &indptr)?),
+            centers0: as_slice_1d(&bin_centers)?.to_vec(),
+            centers1: None,
+        })
+    }
+
+    /// Cache a 2D CSR matrix from the `(data, indices, indptr, bin_centers0,
+    /// bin_centers1)` parts `build_*_csr_2d` return.
+    #[staticmethod]
+    fn from_csr_2d<'py>(
+        data: PyReadonlyArray1<'py, f32>,
+        indices: PyReadonlyArray1<'py, i32>,
+        indptr: PyReadonlyArray1<'py, i32>,
+        bin_centers0: PyReadonlyArray1<'py, f64>,
+        bin_centers1: PyReadonlyArray1<'py, f64>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            matrix: EngineMatrix::Csr(csr_from_parts(&data, &indices, &indptr)?),
+            centers0: as_slice_1d(&bin_centers0)?.to_vec(),
+            centers1: Some(as_slice_1d(&bin_centers1)?.to_vec()),
+        })
+    }
+
+    /// Cache a 1D dense LUT from the `(idx, coef, lut_size, bin_centers)` parts
+    /// `build_*_lut_1d` return.
+    #[staticmethod]
+    fn from_lut_1d<'py>(
+        idx: PyReadonlyArray1<'py, i32>,
+        coef: PyReadonlyArray1<'py, f32>,
+        lut_size: usize,
+        bin_centers: PyReadonlyArray1<'py, f64>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            matrix: EngineMatrix::Lut(lut_from_parts(&idx, &coef, lut_size)?),
+            centers0: as_slice_1d(&bin_centers)?.to_vec(),
+            centers1: None,
+        })
+    }
+
+    /// Cache a 2D dense LUT from the `(idx, coef, lut_size, bin_centers0,
+    /// bin_centers1)` parts `build_*_lut_2d` return.
+    #[staticmethod]
+    fn from_lut_2d<'py>(
+        idx: PyReadonlyArray1<'py, i32>,
+        coef: PyReadonlyArray1<'py, f32>,
+        lut_size: usize,
+        bin_centers0: PyReadonlyArray1<'py, f64>,
+        bin_centers1: PyReadonlyArray1<'py, f64>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            matrix: EngineMatrix::Lut(lut_from_parts(&idx, &coef, lut_size)?),
+            centers0: as_slice_1d(&bin_centers0)?.to_vec(),
+            centers1: Some(as_slice_1d(&bin_centers1)?.to_vec()),
+        })
+    }
+
+    /// Cache a 1D CSC matrix from the `(data, indices, indptr, bin_centers)`
+    /// parts `build_*_csc_1d` return.
+    #[staticmethod]
+    fn from_csc_1d<'py>(
+        data: PyReadonlyArray1<'py, f32>,
+        indices: PyReadonlyArray1<'py, i32>,
+        indptr: PyReadonlyArray1<'py, i32>,
+        bin_centers: PyReadonlyArray1<'py, f64>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            matrix: EngineMatrix::Csc(csc_from_parts(&data, &indices, &indptr)?),
+            centers0: as_slice_1d(&bin_centers)?.to_vec(),
+            centers1: None,
+        })
+    }
+
+    /// Cache a 2D CSC matrix from the `(data, indices, indptr, bin_centers0,
+    /// bin_centers1)` parts `build_*_csc_2d` return.
+    #[staticmethod]
+    fn from_csc_2d<'py>(
+        data: PyReadonlyArray1<'py, f32>,
+        indices: PyReadonlyArray1<'py, i32>,
+        indptr: PyReadonlyArray1<'py, i32>,
+        bin_centers0: PyReadonlyArray1<'py, f64>,
+        bin_centers1: PyReadonlyArray1<'py, f64>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            matrix: EngineMatrix::Csc(csc_from_parts(&data, &indices, &indptr)?),
+            centers0: as_slice_1d(&bin_centers0)?.to_vec(),
+            centers1: Some(as_slice_1d(&bin_centers1)?.to_vec()),
+        })
+    }
+
+    /// Integrate a preprocessed `(npix, 4)` f32 frame into the 1D bins, reusing
+    /// the cached matrix. Returns the `Integrate1dtpl` field dict (as
+    /// `csr_integrate1d`). Raises `ValueError` on a 2D engine.
+    #[pyo3(signature = (prep, *, error_model=0, empty=0.0))]
+    fn integrate1d<'py>(
+        &self,
+        py: Python<'py>,
+        prep: PyReadonlyArray2<'py, f32>,
+        error_model: i32,
+        empty: f32,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        if self.centers1.is_some() {
+            return Err(PyValueError::new_err("2D engine: call integrate2d"));
+        }
+        let prep_s = as_slice_2d(&prep)?;
+        let em = self::error_model(error_model)?;
+        let r = self.matrix.apply1d(prep_s, self.centers0.clone(), em, empty);
+        csr_integrate1d_to_dict(py, &r)
+    }
+
+    /// Integrate a preprocessed `(npix, 4)` f32 frame into the 2D bins, reusing
+    /// the cached matrix. Returns the `Integrate2dtpl` field dict (flat
+    /// (azimuthal, radial) C-order, as `csr_integrate2d`). Raises `ValueError` on
+    /// a 1D engine.
+    #[pyo3(signature = (prep, *, error_model=0, empty=0.0))]
+    fn integrate2d<'py>(
+        &self,
+        py: Python<'py>,
+        prep: PyReadonlyArray2<'py, f32>,
+        error_model: i32,
+        empty: f32,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let Some(centers1) = self.centers1.clone() else {
+            return Err(PyValueError::new_err("1D engine: call integrate1d"));
+        };
+        let prep_s = as_slice_2d(&prep)?;
+        let em = self::error_model(error_model)?;
+        let r = self
+            .matrix
+            .apply2d(prep_s, self.centers0.clone(), centers1, em, empty);
+        integrate2d_to_dict(py, &r)
+    }
+}
+
+// --------------------------------------------------------------------------
 // High-level integrator (drop-in)
 // --------------------------------------------------------------------------
 
@@ -1584,6 +1785,7 @@ fn rsfai(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(build_full_lut_2d, m)?)?;
     m.add_function(wrap_pyfunction!(lut_integrate1d, m)?)?;
     m.add_function(wrap_pyfunction!(lut_integrate2d, m)?)?;
+    m.add_class::<Engine>()?;
     m.add_class::<PyAzimuthalIntegrator>()?;
     Ok(())
 }
