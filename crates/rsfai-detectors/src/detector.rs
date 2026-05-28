@@ -108,23 +108,40 @@ impl Detector {
         self.shape.0 * self.shape.1
     }
 
-    /// The reordered float index `(d1, d2)` for pixel `(i, j)` under the
-    /// detector orientation, port of `_reorder_indexes_from_orientation`
-    /// (`center=True`). The values are exact integers, so the result is exact
-    /// in both f32 and f64.
-    ///
-    /// Only orientations 0 and 3 (no reorder) are validated against golden
-    /// data; 1/2/4 panic until a golden dataset exercises them, rather than
-    /// shipping unverified arithmetic.
+    /// Reorder an index pair `(i, j)` for the detector orientation — the single
+    /// port of pyFAI's `_reorder_indexes_from_orientation` (equivalently
+    /// `_calc_pixel_index_from_orientation`, which builds the same values as
+    /// reversed `arange`s). `max0`/`max1` are the per-axis flip bounds:
+    /// `shape - 1` for pixel **centres** (`center=True`) and `shape` for the
+    /// `(shape + 1)` **corner** grid (`center=False`) — exactly pyFAI's
+    /// `shape1`/`shape2` split. Orientation 1 (TopLeft) flips both axes, 2
+    /// (TopRight) flips the slow axis, 4 (BottomLeft) flips the fast axis; 0 and
+    /// 3 (BottomRight, the default) leave the index unchanged. Bounds and
+    /// indices are exact integers, so the result is exact in both f32 and f64.
+    /// Both the centre path ([`centers_f64`](Self::centers_f64) /
+    /// [`centers_f32`](Self::centers_f32)) and the corner path
+    /// ([`corner_positions_f64`](Self::corner_positions_f64)) route through here
+    /// so the orientation arithmetic lives in one place.
     #[inline]
-    fn reordered_index(&self, i: usize, j: usize) -> (f64, f64) {
+    fn reorder(&self, i: usize, j: usize, max0: usize, max1: usize) -> (f64, f64) {
+        let (fi, fj) = (i as f64, j as f64);
         match self.orientation {
-            0 | 3 => (i as f64, j as f64),
+            0 | 3 => (fi, fj),
+            1 => (max0 as f64 - fi, max1 as f64 - fj),
+            2 => (max0 as f64 - fi, fj),
+            4 => (fi, max1 as f64 - fj),
             o => panic!(
-                "Detector::reordered_index: orientation {o} not yet ported \
-                 (no golden dataset exercises it); see _reorder_indexes_from_orientation"
+                "Detector::reorder: unsupported orientation {o} (valid 0..=4); \
+                 see _reorder_indexes_from_orientation"
             ),
         }
+    }
+
+    /// The reordered float pixel-**centre** index `(d1, d2)` for pixel `(i, j)`
+    /// (`center=True`, flip bound `shape - 1`).
+    #[inline]
+    fn reordered_index(&self, i: usize, j: usize) -> (f64, f64) {
+        self.reorder(i, j, self.shape.0 - 1, self.shape.1 - 1)
     }
 
     /// Raw pixel-centre positions `(p1, p2)` in metres as flat row-major `f64`
@@ -183,13 +200,10 @@ impl Detector {
         let mut p2 = Vec::with_capacity(c0 * c1);
         for i in 0..c0 {
             for j in 0..c1 {
-                // orientation 0/3: corner index == pixel index (no reorder);
-                // 1/2/4 reorder uses `shape` (not `shape-1`) for corners — not
-                // yet ported (no golden exercises it).
-                let (d1, d2) = match self.orientation {
-                    0 | 3 => (i as f64, j as f64),
-                    o => panic!("Detector::corner_positions_f64: orientation {o} not yet ported"),
-                };
+                // Corner grid flips about `shape` (not `shape - 1`): pyFAI's
+                // `_calc_pixel_index_from_orientation(center=False)` reverses an
+                // `arange(shape + 1)`, so corner index i maps to `shape - i`.
+                let (d1, d2) = self.reorder(i, j, s0, s1);
                 p1.push(self.pixel1 * d1);
                 p2.push(self.pixel2 * d2);
             }
@@ -303,6 +317,68 @@ mod tests {
             Detector::generic(1e-4, 1e-4, (2, 2)).get_dummies(),
             (None, None)
         );
+    }
+
+    #[test]
+    fn centre_reorder_flips_about_shape_minus_one() {
+        // 3x4 detector: centre flip bound = (shape-1) = (2, 3). Mirrors pyFAI's
+        // _reorder_indexes_from_orientation(center=True): orient 1 flips both
+        // axes, 2 the slow (dim0), 4 the fast (dim1), 0/3 leave it. Centres are
+        // pixel*(reordered_index + 0.5); all values exact integers in f64.
+        let base = Detector::generic(100e-6, 200e-6, (3, 4));
+        let centre = |o: i32, i: usize, j: usize| {
+            let d = Detector {
+                orientation: o,
+                ..base.clone()
+            };
+            let (p1, p2) = d.centers_f64();
+            (p1[i * 4 + j], p2[i * 4 + j])
+        };
+        // Pixel (0,0): identity for 0/3; orient1 -> idx (2,3); 2 -> (2,0);
+        // 4 -> (0,3); then +0.5 and *pixel.
+        assert_eq!(centre(0, 0, 0), (100e-6 * 0.5, 200e-6 * 0.5));
+        assert_eq!(centre(3, 0, 0), (100e-6 * 0.5, 200e-6 * 0.5));
+        assert_eq!(centre(1, 0, 0), (100e-6 * 2.5, 200e-6 * 3.5));
+        assert_eq!(centre(2, 0, 0), (100e-6 * 2.5, 200e-6 * 0.5));
+        assert_eq!(centre(4, 0, 0), (100e-6 * 0.5, 200e-6 * 3.5));
+        // f32 centre path reorders identically (exact for these small indices).
+        let d1 = Detector {
+            orientation: 1,
+            ..base.clone()
+        };
+        let (q1, q2) = d1.centers_f32();
+        assert_eq!((q1[0], q2[0]), (100e-6f32 * 2.5, 200e-6f32 * 3.5));
+    }
+
+    #[test]
+    fn corner_reorder_flips_about_shape() {
+        // Corner grid flips about `shape` (not shape-1): pyFAI reverses an
+        // arange(shape+1), so corner index i maps to shape - i. 3x4 detector ->
+        // bound (3, 4), corner grid (4 x 5), no half-pixel offset.
+        let base = Detector::generic(100e-6, 200e-6, (3, 4));
+        let corner = |o: i32, i: usize, j: usize| {
+            let d = Detector {
+                orientation: o,
+                ..base.clone()
+            };
+            let (cp1, cp2) = d.corner_positions_f64();
+            (cp1[i * 5 + j], cp2[i * 5 + j])
+        };
+        assert_eq!(corner(0, 0, 0), (0.0, 0.0));
+        assert_eq!(corner(3, 0, 0), (0.0, 0.0));
+        assert_eq!(corner(1, 0, 0), (100e-6 * 3.0, 200e-6 * 4.0));
+        assert_eq!(corner(2, 0, 0), (100e-6 * 3.0, 0.0));
+        assert_eq!(corner(4, 0, 0), (0.0, 200e-6 * 4.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported orientation 5")]
+    fn reorder_rejects_out_of_range_orientation() {
+        let d = Detector {
+            orientation: 5,
+            ..Detector::generic(1e-4, 1e-4, (2, 2))
+        };
+        let _ = d.centers_f64();
     }
 
     #[test]

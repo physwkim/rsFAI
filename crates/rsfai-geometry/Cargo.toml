@@ -12,6 +12,9 @@ thiserror.workspace = true
 # the detector's pixel positions), matching pyFAI where they are Geometry methods.
 rsfai-detectors.workspace = true
 rayon.workspace = true
+# Parse the PONI `Detector_config` JSON (detector orientation), as pyFAI's
+# io/ponifile.py does.
+serde_json.workspace = true
 
 [dev-dependencies]
 # Golden tests load .npy + compare (rsfai-core) and reshape with ndarray.

@@ -548,6 +548,7 @@ version = "0.0.0"
 dependencies = [
  "rayon",
  "rsfai-detectors",
+ "serde_json",
  "thiserror",
 ]
 

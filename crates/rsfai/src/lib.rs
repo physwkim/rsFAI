@@ -374,10 +374,20 @@ impl AzimuthalIntegrator {
 /// golden-validated detectors are resolved; anything else is an error so the
 /// integrator never silently runs an unverified detector path.
 fn resolve_detector(poni: &PoniFile) -> Result<Detector> {
-    match poni.detector.as_deref() {
-        Some("Pilatus1M") => Ok(Detector::pilatus1m()),
-        other => Err(Error::UnsupportedDetector(
-            other.unwrap_or("<none>").to_string(),
-        )),
+    let mut detector = match poni.detector.as_deref() {
+        Some("Pilatus1M") => Detector::pilatus1m(),
+        other => {
+            return Err(Error::UnsupportedDetector(
+                other.unwrap_or("<none>").to_string(),
+            ))
+        }
+    };
+    // A PONI may override the detector's default orientation (its
+    // `Detector_config` JSON carries `{"orientation": N}`); apply it so the
+    // drop-in reproduces `pyFAI.load(poni)` exactly, including the pixel-index
+    // reorder + transform sign-flip for orientations 1/2/4.
+    if let Some(o) = poni.orientation {
+        detector.orientation = o;
     }
+    Ok(detector)
 }

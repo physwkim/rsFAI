@@ -41,6 +41,7 @@ import pyFAI
 import fabio
 from pyFAI.test.utilstest import UtilsTest
 from pyFAI.containers import ErrorModel
+from pyFAI.detectors.orientation import Orientation
 from pyFAI import units
 import pyFAI.ext.preproc as ext_preproc
 
@@ -75,6 +76,34 @@ def _slug(s):
     )
 
 
+def _write_poni(src_path, dst_path, orientation, base_orientation):
+    """Copy the PONI, encoding a non-default detector ``orientation`` into its
+    ``Detector_config`` JSON so consumers that load only the PONI (the drop-in,
+    the in-process harness) build the detector at the right orientation —
+    ``pyFAI.load`` round-trips it the same way (``io/ponifile.py``). The
+    default-orientation case is a byte-for-byte copy so the committed PONIs stay
+    unchanged. The JSON value holds colons, but the PONI ``Key: value`` split
+    stops at the first colon, so re-dumping the config is safe.
+    """
+    if orientation == base_orientation:
+        shutil.copyfile(src_path, dst_path)
+        return
+    out_lines = []
+    replaced = False
+    for line in Path(src_path).read_text().splitlines(keepends=True):
+        key, sep, val = line.partition(":")
+        if sep and key.strip().lower() == "detector_config":
+            cfg = json.loads(val.strip() or "{}")
+            cfg["orientation"] = orientation
+            out_lines.append(f"{key}: {json.dumps(cfg)}\n")
+            replaced = True
+        else:
+            out_lines.append(line)
+    if not replaced:
+        out_lines.append(f'Detector_config: {{"orientation": {orientation}}}\n')
+    Path(dst_path).write_text("".join(out_lines))
+
+
 def generate(detector_name, poni_image, configs):
     """Generate all configs for one detector image.
 
@@ -104,6 +133,7 @@ def generate(detector_name, poni_image, configs):
         "shape": list(shape),
         "orientation": int(ai.detector.orientation),
     }
+    base_orientation = int(ai.detector.orientation)
 
     for cfg in configs:
         dim = cfg.get("dim", 1)
@@ -123,15 +153,30 @@ def generate(detector_name, poni_image, configs):
             npt = cfg["npt"]
             npt_slug = f"npt{npt}"
 
-        key = "__".join(
-            [
-                _slug(detector_name),
-                "-".join(method),
-                _slug(unit),
-                npt_slug,
-                f"err{error_model or 'none'}",
-            ]
-        )
+        # Detector orientation: a config may override the PONI's default.
+        # `orientation` is a read-only property, so set the backing field and
+        # invalidate the caches that depend on pixel position — the detector's
+        # pixel corners and the integrator's geometry arrays — so the override
+        # takes effect on every dumped array.
+        target_orient = cfg.get("orientation", base_orientation)
+        if int(ai.detector.orientation) != target_orient:
+            ai.detector._orientation = Orientation(target_orient)
+            ai.detector._pixel_corners = None
+            ai.reset()
+        det["orientation"] = int(ai.detector.orientation)
+
+        slugs = [
+            _slug(detector_name),
+            "-".join(method),
+            _slug(unit),
+            npt_slug,
+            f"err{error_model or 'none'}",
+        ]
+        # Only non-default orientations get a slug, so the existing dataset
+        # names (committed, referenced by the Rust tests) stay unchanged.
+        if target_orient != base_orientation:
+            slugs.append(f"orient{target_orient}")
+        key = "__".join(slugs)
         out_dir = DATASETS / key
         if out_dir.exists():
             shutil.rmtree(out_dir)
@@ -143,7 +188,7 @@ def generate(detector_name, poni_image, configs):
         _save(arrays, out_dir, "image", data)
         mask = ai.create_mask(data, mask=None).astype(np.int8)  # 1 = masked
         _save(arrays, out_dir, "mask", mask)
-        shutil.copyfile(poni_path, out_dir / "geometry.poni")
+        _write_poni(poni_path, out_dir / "geometry.poni", target_orient, base_orientation)
 
         solidangle = ai.solidAngleArray(shape) if correct_solid_angle else None
         if solidangle is not None:
@@ -418,6 +463,41 @@ def main():
                 "error_model": "poisson",
                 "correct_solid_angle": True,
                 "polarization_factor": None,
+            },
+            # Detector orientations 1/2/4 (TopLeft/TopRight/BottomLeft) vs the
+            # Pilatus default 3 (BottomRight). Orientation both reorders the
+            # pixel index (Detector._reorder_indexes_from_orientation, the rsFAI
+            # Detector::reorder port) AND flips the t1/t2 transform axes
+            # (_geometry f_t1/f_t2 `orient`, the rsFAI orient_t1/orient_t2 port);
+            # the two effects must combine to reproduce pixel_p1/p2, pos_zyx, q
+            # and chi bit-exactly. Same poisson no-split config as above so the
+            # full Integrate1dtpl field set is dumped per orientation.
+            {
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("no", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": None,
+                "orientation": 1,
+            },
+            {
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("no", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": None,
+                "orientation": 2,
+            },
+            {
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("no", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": None,
+                "orientation": 4,
             },
             {
                 "npt": 1000,

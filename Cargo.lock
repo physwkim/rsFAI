@@ -509,6 +509,7 @@ dependencies = [
  "rayon",
  "rsfai-core",
  "rsfai-detectors",
+ "serde_json",
  "thiserror",
 ]
 

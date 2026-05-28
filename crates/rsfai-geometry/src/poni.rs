@@ -17,8 +17,13 @@ use crate::error::{GeometryError, Result};
 pub struct PoniFile {
     pub poni_version: Option<u32>,
     pub detector: Option<String>,
-    /// Raw `Detector_config` JSON text, if present (parsed in M2).
+    /// Raw `Detector_config` JSON text, if present.
     pub detector_config: Option<String>,
+    /// Detector orientation (pyFAI `Orientation`, 0–4) extracted from the
+    /// `Detector_config` JSON's `"orientation"` key, if present. `None` means
+    /// the file did not specify one, so the resolved detector keeps its default
+    /// (e.g. Pilatus → 3). pyFAI's `io/ponifile.py` round-trips this the same way.
+    pub orientation: Option<i32>,
     /// Sample–detector distance `L` (m).
     pub dist: f64,
     /// PONI coordinate along the slow (Y) axis (m).
@@ -42,6 +47,7 @@ impl PoniFile {
         let mut poni_version = None;
         let mut detector = None;
         let mut detector_config = None;
+        let mut orientation = None;
         let mut dist = None;
         let mut poni1 = None;
         let mut poni2 = None;
@@ -74,7 +80,16 @@ impl PoniFile {
                     poni_version = major.parse::<u32>().ok();
                 }
                 "detector" => detector = Some(value.to_string()),
-                "detector_config" => detector_config = Some(value.to_string()),
+                "detector_config" => {
+                    detector_config = Some(value.to_string());
+                    // pyFAI stores the detector's orientation in this JSON blob
+                    // (`{"orientation": N}`); pull it out so the detector model
+                    // can be built with the orientation the file describes.
+                    orientation = serde_json::from_str::<serde_json::Value>(value)
+                        .ok()
+                        .and_then(|v| v.get("orientation").and_then(|o| o.as_i64()))
+                        .map(|o| o as i32);
+                }
                 "distance" | "dist" => dist = Some(parse_f64(value)?),
                 "poni1" => poni1 = Some(parse_f64(value)?),
                 "poni2" => poni2 = Some(parse_f64(value)?),
@@ -92,6 +107,7 @@ impl PoniFile {
             poni_version,
             detector,
             detector_config,
+            orientation,
             dist: dist.ok_or(GeometryError::PoniMissingKey("Distance"))?,
             poni1: poni1.ok_or(GeometryError::PoniMissingKey("Poni1"))?,
             poni2: poni2.ok_or(GeometryError::PoniMissingKey("Poni2"))?,
@@ -139,6 +155,8 @@ Wavelength: 1.0e-10
         assert_eq!(p.poni_version, Some(2));
         assert_eq!(p.detector.as_deref(), Some("Pilatus1M"));
         assert_eq!(p.detector_config.as_deref(), Some("{}"));
+        // Empty config carries no orientation -> resolved detector keeps default.
+        assert_eq!(p.orientation, None);
         // Exact f64 round-trip of the decimal literals.
         assert_eq!(p.dist, 1.58323111834);
         assert_eq!(p.poni1, 0.0334170169115);
@@ -147,6 +165,21 @@ Wavelength: 1.0e-10
         assert_eq!(p.rot2, 0.00755810191106);
         assert_eq!(p.rot3, 4.12987220385e-08);
         assert_eq!(p.wavelength, Some(1.0e-10));
+    }
+
+    #[test]
+    fn parses_orientation_from_detector_config() {
+        // pyFAI writes the detector orientation into the Detector_config JSON
+        // (`{"orientation": 1}`); the colon inside the JSON must not confuse the
+        // `Key: value` split (split_once stops at the first colon).
+        let text = PILATUS1M_PONI.replace(
+            "Detector_config: {}",
+            r#"Detector_config: {"pixel1": 0.000172, "pixel2": 0.000172, "orientation": 1}"#,
+        );
+        let p = PoniFile::parse(&text).unwrap();
+        assert_eq!(p.orientation, Some(1));
+        // Other geometry still parses unchanged.
+        assert_eq!(p.dist, 1.58323111834);
     }
 
     #[test]

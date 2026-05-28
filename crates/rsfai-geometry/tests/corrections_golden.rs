@@ -63,10 +63,21 @@ fn solid_angle_and_polarization_bit_exact() {
             .and_then(|d| d.get("name"))
             .and_then(|v| v.as_str())
             .expect("detector name");
-        let Some(det) = detector_for(det_name) else {
+        let Some(mut det) = detector_for(det_name) else {
             eprintln!("skip {}: detector {det_name} not ported", manifest.dataset);
             continue;
         };
+        // The factory resolves the detector's *default* orientation; apply the
+        // orientation the golden was actually generated with (a config may
+        // override it, e.g. the orient1/2/4 datasets). Mirrors gen_golden
+        // recording det["orientation"].
+        det.orientation = manifest
+            .extra
+            .get("detector")
+            .and_then(|d| d.get("orientation"))
+            .and_then(|v| v.as_i64())
+            .map(|o| o as i32)
+            .unwrap_or(det.orientation);
         let poni = PoniFile::load(dir.join("geometry.poni")).expect("poni");
 
         // ---- solid angle (order 3, f64) -----------------------------------
