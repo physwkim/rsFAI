@@ -90,3 +90,27 @@ pub use lut::{
 pub use split_histogram::{
     histogram1d_bbox, histogram1d_full, histogram2d_bbox, histogram2d_full, histogram2d_pseudo,
 };
+
+use rsfai_core::dtype::{DataT, ErrorModel};
+
+/// The per-pixel variance as seen by the engines that **re-run
+/// `preproc_value_inplace` internally** — CSC, the direct-split histograms
+/// (`splitBBox`/`splitPixel`), and the 2D no-split histogram
+/// (`histogram2d_engine`). pyFAI's cython preproc assigns the Poisson variance
+/// `max(1, data)` only for `error_model == 2` exactly (`regrid_common.pxi:205`),
+/// **not** via the `poissonian` property — which is also true for hybrid
+/// (`value == 2 or value == 4`). So for the hybrid error model these engines see
+/// a per-pixel variance of 0, whereas CSR/LUT and the 1D no-split histogram —
+/// which consume the *Python-level* (poissonian) preproc — propagate the Poisson
+/// variance. This reproduces that pyFAI inconsistency by zeroing the variance for
+/// hybrid; every other model passes through unchanged (azimuthal already carries
+/// variance 0 out of preproc). Hybrid in plain integration is itself an accident
+/// — it is meant for `sigma_clip` peak-picking (`containers.py:122`).
+#[inline]
+pub(crate) fn internal_preproc_variance(error_model: ErrorModel, raw: DataT) -> DataT {
+    if error_model == ErrorModel::Hybrid {
+        0.0
+    } else {
+        raw
+    }
+}

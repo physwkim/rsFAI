@@ -160,7 +160,9 @@ pub fn histogram1d_bbox(
             }
         }
         let s = prep[4 * idx];
-        let v = prep[4 * idx + 1];
+        // Direct-split engines re-run preproc internally → hybrid variance 0
+        // (see crate::internal_preproc_variance).
+        let v = crate::internal_preproc_variance(error_model, prep[4 * idx + 1]);
         let n = prep[4 * idx + 2];
         let c = prep[4 * idx + 3];
         let c0 = pos0[idx];
@@ -327,7 +329,9 @@ pub fn histogram2d_bbox(
             }
         }
         let s = prep[4 * idx];
-        let v = prep[4 * idx + 1];
+        // Direct-split engines re-run preproc internally → hybrid variance 0
+        // (see crate::internal_preproc_variance).
+        let v = crate::internal_preproc_variance(error_model, prep[4 * idx + 1]);
         let n = prep[4 * idx + 2];
         let c = prep[4 * idx + 3];
         let c0 = pos0[idx];
@@ -533,7 +537,9 @@ pub fn histogram1d_full(
             }
         }
         let s = prep[4 * idx];
-        let v = prep[4 * idx + 1];
+        // Direct-split engines re-run preproc internally → hybrid variance 0
+        // (see crate::internal_preproc_variance).
+        let v = crate::internal_preproc_variance(error_model, prep[4 * idx + 1]);
         let n = prep[4 * idx + 2];
         let c = prep[4 * idx + 3];
 
@@ -650,7 +656,9 @@ pub fn histogram2d_full(
             }
         }
         let s = prep[4 * idx];
-        let v = prep[4 * idx + 1];
+        // Direct-split engines re-run preproc internally → hybrid variance 0
+        // (see crate::internal_preproc_variance).
+        let v = crate::internal_preproc_variance(error_model, prep[4 * idx + 1]);
         let n = prep[4 * idx + 2];
         let c = prep[4 * idx + 3];
 
@@ -891,7 +899,9 @@ pub fn histogram2d_pseudo(
         }
 
         let mut s = prep[4 * idx];
-        let mut v = prep[4 * idx + 1];
+        // Pseudo-split re-runs preproc internally → hybrid variance 0 (see
+        // crate::internal_preproc_variance); the scale below keeps 0 at 0.
+        let mut v = crate::internal_preproc_variance(error_model, prep[4 * idx + 1]);
         let mut n = prep[4 * idx + 2];
         let mut c = prep[4 * idx + 3];
 

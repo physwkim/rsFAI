@@ -62,13 +62,8 @@ fn unit_from_str(s: &str) -> RadialUnit {
 }
 
 fn error_model_from_code(code: i64) -> ErrorModelKind {
-    match code {
-        0 => ErrorModelKind::No,
-        1 => ErrorModelKind::Variance,
-        2 => ErrorModelKind::Poisson,
-        3 => ErrorModelKind::Azimuthal,
-        other => panic!("dropin_golden: error_model_code {other} not mapped"),
-    }
+    ErrorModelKind::from_code(code as i32)
+        .unwrap_or_else(|| panic!("dropin_golden: error_model_code {code} not mapped"))
 }
 
 /// f32 golden field at `out_<name>.npy` vs `actual`. `exact` selects the gate:

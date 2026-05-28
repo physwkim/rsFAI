@@ -44,13 +44,7 @@ fn dataset_dirs() -> Vec<PathBuf> {
 }
 
 fn error_model_from_code(code: i64) -> ErrorModel {
-    match code {
-        0 => ErrorModel::No,
-        1 => ErrorModel::Variance,
-        2 => ErrorModel::Poisson,
-        3 => ErrorModel::Azimuthal,
-        other => panic!("unknown error_model_code {other}"),
-    }
+    ErrorModel::from_code(code as i32).unwrap_or_else(|| panic!("unknown error_model_code {code}"))
 }
 
 fn vec_f64(dir: &std::path::Path, file: &str) -> Vec<f64> {

@@ -126,7 +126,9 @@ fn csc_reduce(
             continue; // pixel contributes to no bin (masked / out of range)
         }
         let sig = prep[4 * idx] as AccT;
-        let var = prep[4 * idx + 1] as AccT;
+        // CSC re-runs preproc internally, so hybrid's per-pixel variance is 0
+        // (see crate::internal_preproc_variance).
+        let var = crate::internal_preproc_variance(error_model, prep[4 * idx + 1]) as AccT;
         let norm = prep[4 * idx + 2] as AccT;
         let cnt = prep[4 * idx + 3] as AccT;
         // pyFAI CSC_common.pxi integrate_ng computes preproc per pixel and skips

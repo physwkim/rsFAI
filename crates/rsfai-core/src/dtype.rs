@@ -55,6 +55,13 @@ pub enum ErrorModel {
     Poisson,
     /// 3: azimuthal — Welford-style online variance across the bin.
     Azimuthal,
+    /// 4: hybrid. In pyFAI's integration path this is identical to
+    /// [`ErrorModel::Poisson`] (`poissonian` is true, and the reduce kernels
+    /// have no hybrid branch — `histogram_engine` routes "Variance, Poisson and
+    /// Hybrid" through one `do_variance` path). The azimuthal-then-Poisson
+    /// behaviour that distinguishes it lives only in `sigma_clip`/`medfilt`
+    /// (peak-picking outlier rejection), which is out of scope here.
+    Hybrid,
 }
 
 impl ErrorModel {
@@ -66,15 +73,30 @@ impl ErrorModel {
             ErrorModel::Variance => 1,
             ErrorModel::Poisson => 2,
             ErrorModel::Azimuthal => 3,
+            ErrorModel::Hybrid => 4,
+        }
+    }
+
+    /// Inverse of [`code`](Self::code): map pyFAI's integer error-model code
+    /// back to the enum. Returns `None` for codes outside `0..=4`.
+    #[inline]
+    pub fn from_code(code: i32) -> Option<ErrorModel> {
+        match code {
+            0 => Some(ErrorModel::No),
+            1 => Some(ErrorModel::Variance),
+            2 => Some(ErrorModel::Poisson),
+            3 => Some(ErrorModel::Azimuthal),
+            4 => Some(ErrorModel::Hybrid),
+            _ => None,
         }
     }
 
     /// Whether the variance is taken as the signal (`max(1.0, data)`), matching
-    /// pyFAI's `ErrorModel.poissonian`. True for Poisson (and Hybrid, which is
-    /// not yet modelled here); false otherwise.
+    /// pyFAI's `ErrorModel.poissonian` (`value == 2 or value == 4`). True for
+    /// Poisson and Hybrid; false otherwise.
     #[inline]
     pub fn poissonian(self) -> bool {
-        matches!(self, ErrorModel::Poisson)
+        matches!(self, ErrorModel::Poisson | ErrorModel::Hybrid)
     }
 }
 
@@ -93,5 +115,30 @@ mod tests {
         assert!(calc_upper_bound(10.0) > 10.0);
         assert!(calc_upper_bound(-10.0) > -10.0); // /EPS32 moves toward zero
         assert_eq!(calc_upper_bound(0.0), 0.0);
+    }
+
+    #[test]
+    fn error_model_code_roundtrips() {
+        for em in [
+            ErrorModel::No,
+            ErrorModel::Variance,
+            ErrorModel::Poisson,
+            ErrorModel::Azimuthal,
+            ErrorModel::Hybrid,
+        ] {
+            assert_eq!(ErrorModel::from_code(em.code()), Some(em));
+        }
+        assert_eq!(ErrorModel::from_code(5), None);
+        assert_eq!(ErrorModel::from_code(-1), None);
+    }
+
+    #[test]
+    fn hybrid_is_poissonian_like_poisson() {
+        // pyFAI ErrorModel.poissonian == (value == 2 or value == 4).
+        assert!(ErrorModel::Poisson.poissonian());
+        assert!(ErrorModel::Hybrid.poissonian());
+        assert!(!ErrorModel::No.poissonian());
+        assert!(!ErrorModel::Variance.poissonian());
+        assert!(!ErrorModel::Azimuthal.poissonian());
     }
 }

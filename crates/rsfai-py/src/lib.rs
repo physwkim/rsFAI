@@ -9,7 +9,7 @@
 //! The bindings add no arithmetic of their own — every value is produced by the
 //! already-validated Rust engines. The only conversions here are:
 //!   * borrowing C-contiguous numpy buffers as Rust slices (zero-copy in),
-//!   * mapping the integer `error_model` code (0/1/2/3) to [`ErrorModel`],
+//!   * mapping the integer `error_model` code (0/1/2/3/4) to [`ErrorModel`],
 //!   * copying the engine output `Vec`s into fresh numpy arrays (out).
 //!
 //! Preprocessed rows (`prep`) are passed as an `(npix, 4)` f32 array — its
@@ -95,15 +95,12 @@ type Lut2dPy<'py> = (
 
 /// Map pyFAI's integer error-model code to the Rust enum.
 fn error_model(code: i32) -> PyResult<ErrorModel> {
-    match code {
-        0 => Ok(ErrorModel::No),
-        1 => Ok(ErrorModel::Variance),
-        2 => Ok(ErrorModel::Poisson),
-        3 => Ok(ErrorModel::Azimuthal),
-        other => Err(PyValueError::new_err(format!(
-            "unknown error_model code {other} (expected 0=no, 1=variance, 2=poisson, 3=azimuthal)"
-        ))),
-    }
+    ErrorModel::from_code(code).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "unknown error_model code {code} (expected 0=no, 1=variance, 2=poisson, \
+             3=azimuthal, 4=hybrid)"
+        ))
+    })
 }
 
 /// Map a pyFAI radial-unit string (the names used in the golden manifests and

@@ -191,8 +191,11 @@ pub fn histogram_preproc(
                 }
                 row[3] += c as AccT;
             }
-            // Variance / Poisson: norm² via `nrm*nrm` with nrm an f64 (acc_t).
-            ErrorModel::Variance | ErrorModel::Poisson => {
+            // Variance / Poisson / Hybrid: norm² via `nrm*nrm` with nrm an f64
+            // (acc_t). Hybrid is Poisson-identical in the integration path —
+            // pyFAI's `histogram_preproc` takes the same non-azimuthal `else`
+            // branch (`error_model != 0 && != 3`), with `nrm*nrm` in f64.
+            ErrorModel::Variance | ErrorModel::Poisson | ErrorModel::Hybrid => {
                 let sig = s as AccT;
                 let var = v as AccT;
                 let nrm = n as AccT;
@@ -479,6 +482,7 @@ pub fn histogram2d(
     // Parallel histogram via thread-local grids merged by `merge_bins` (the same
     // non-deterministic fold/reduce as the 1D engine; validated at rel <= 1e-6).
     let n_grid = bins0 * bins1;
+    let error_model = opts.error_model;
     let accumulate = |acc: &mut [[AccT; 5]], idx: usize| {
         if let Some(m) = mask {
             if m[idx] != 0 {
@@ -494,9 +498,11 @@ pub fn histogram2d(
         }
         let n = prep[4 * idx + 2];
         let cell = &mut acc[bin0 as usize * bins1 + bin1 as usize];
-        // update_2d_accumulator with weight 1.0 (w2 = 1.0).
+        // update_2d_accumulator with weight 1.0 (w2 = 1.0). The 2D no-split
+        // histogram re-runs preproc internally, so hybrid variance is 0 here (see
+        // crate::internal_preproc_variance), unlike the 1D `histogram_preproc`.
         cell[0] += prep[4 * idx] as AccT;
-        cell[1] += prep[4 * idx + 1] as AccT;
+        cell[1] += crate::internal_preproc_variance(error_model, prep[4 * idx + 1]) as AccT;
         cell[2] += n as AccT;
         cell[3] += prep[4 * idx + 3] as AccT;
         cell[4] += (n * n) as AccT; // f32 multiply, then promote

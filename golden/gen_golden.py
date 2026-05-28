@@ -876,6 +876,74 @@ def main():
                 "correct_solid_angle": True,
                 "polarization_factor": 0.99,
             },
+            # ---- Hybrid error model (error_model=4) -------------------------
+            # In the integration path "hybrid" is byte-identical to "poisson":
+            # ErrorModel.poissonian is True (so preproc takes variance =
+            # max(1, signal)) and the reduce kernels have NO hybrid branch
+            # (histogram_preproc/integrate_ng take the same non-azimuthal
+            # do_variance path as Poisson). The azimuthal-then-Poisson behaviour
+            # that distinguishes hybrid lives only in sigma_clip/medfilt
+            # (peak-picking), which is out of scope. These configs pin that
+            # every engine accepts error_model=4 and produces the Poisson result
+            # bit-for-bit (rsfai == pyFAI). One per engine family, plus a 2D to
+            # exercise the 2D code-4 path and the drop-in.
+            {
+                # No-split 1D histogram_preproc (f64 nrm*nrm arm) + drop-in.
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("no", "histogram", "cython"),
+                "error_model": "hybrid",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # No-split 2D histogram + drop-in integrate2d, error_model=4.
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("no", "histogram", "cython"),
+                "error_model": "hybrid",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # CSR integrate_ng, error_model=4 (do_variance gather).
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "csr", "cython"),
+                "error_model": "hybrid",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # CSC integrate_ng, error_model=4 (do_variance scatter).
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "csc", "cython"),
+                "error_model": "hybrid",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # LUT integrate_ng, error_model=4 (do_variance gather).
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "lut", "cython"),
+                "error_model": "hybrid",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # Direct-split bbox 1D histogram (update_1d_accumulator),
+                # error_model=4.
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "histogram", "cython"),
+                "error_model": "hybrid",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
         ],
     )
     print("done.")

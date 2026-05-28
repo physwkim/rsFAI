@@ -260,7 +260,7 @@ impl AzimuthalIntegrator {
             polarization: polarization.as_deref(),
             mask,
             normalization_factor: opts.normalization_factor,
-            poissonian: opts.error_model == ErrorModel::Poisson,
+            poissonian: opts.error_model.poissonian(),
             check_dummy: dummy.is_some(),
             dummy: dummy.unwrap_or(0.0),
             delta_dummy: delta_dummy.unwrap_or(0.0),

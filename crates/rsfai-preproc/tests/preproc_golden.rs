@@ -79,7 +79,10 @@ fn preproc4_bit_exact() {
             .as_f64()
             .unwrap_or(1.0) as f32;
         let code = manifest.config["error_model_code"].as_i64().unwrap_or(0) as i32;
-        let poissonian = code == ErrorModel::Poisson.code();
+        // Poisson and Hybrid both take variance = max(1, signal).
+        let poissonian = ErrorModel::from_code(code)
+            .unwrap_or_else(|| panic!("unknown error_model_code {code}"))
+            .poissonian();
 
         // Dummy (dead/gap-pixel) masking the integrator applies, recorded in the
         // manifest as f32-exact floats. `delta_dummy` may be null (exact match,
