@@ -33,8 +33,8 @@ use pyo3::types::PyDict;
 
 use rsfai_core::dtype::ErrorModel;
 use rsfai_engine::{
-    AzimuthalIntegrator as RsAzimuthalIntegrator, Integrate1dResult, Integrate2dResult,
-    IntegrationOptions, RadialUnit,
+    Algo, AzimuthalIntegrator as RsAzimuthalIntegrator, Integrate1dResult, Integrate2dResult,
+    IntegrationOptions, Method, RadialUnit, Split,
 };
 use rsfai_integrate::{
     build_bbox_csc_1d as rs_build_bbox_csc_1d, build_bbox_csc_2d as rs_build_bbox_csc_2d,
@@ -118,6 +118,44 @@ fn radial_unit(name: &str) -> PyResult<RadialUnit> {
              (expected one of q_nm^-1, q_A^-1, 2th_deg, 2th_rad, r_mm, r_m)"
         ))),
     }
+}
+
+/// Map a pyFAI method tuple to the engine [`Method`]. `None` ⇒ the default
+/// `("no", "histogram")`. The tuple's first two elements are `(split, algo)`;
+/// the third (the implementation, e.g. `"cython"`) is ignored — the port is the
+/// cython algorithm. `"pseudo"` (2D-only, not ported) and any unknown token are
+/// errors so an unsupported method never silently runs a different path.
+fn parse_method(method: Option<&[String]>) -> PyResult<Method> {
+    let Some(m) = method else {
+        return Ok(Method::default());
+    };
+    if m.len() < 2 {
+        return Err(PyValueError::new_err(
+            "method must be a (split, algo[, impl]) tuple of strings",
+        ));
+    }
+    let split = match m[0].as_str() {
+        "no" => Split::No,
+        "bbox" => Split::Bbox,
+        "full" => Split::Full,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "unsupported split {other:?} (expected no, bbox, or full)"
+            )))
+        }
+    };
+    let algo = match m[1].as_str() {
+        "histogram" => Algo::Histogram,
+        "csr" => Algo::Csr,
+        "lut" => Algo::Lut,
+        "csc" => Algo::Csc,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "unsupported algo {other:?} (expected histogram, csr, lut, or csc)"
+            )))
+        }
+    };
+    Ok(Method { split, algo })
 }
 
 /// Borrow a contiguous 1D readonly numpy array as a slice, or a clear error.
@@ -1099,13 +1137,14 @@ impl PyAzimuthalIntegrator {
     }
 
     /// 1D integration of a detector `image` (an `(slow, fast)` f32 frame) into
-    /// `npt` radial bins in `unit`, no split. Returns a dict keyed like
+    /// `npt` radial bins in `unit`, using the `method` `(split, algo[, impl])`
+    /// tuple (default `("no", "histogram")`). Returns a dict keyed like
     /// `pyFAI.containers.Integrate1dResult` (`radial`, `intensity`, `sigma`,
     /// `count`, `sum_signal`, `sum_variance`, `sum_normalization`,
     /// `sum_normalization2`, `std`, `sem`).
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
-        image, npt, unit, *, correct_solid_angle=true,
+        image, npt, unit, *, method=None, correct_solid_angle=true,
         polarization_factor=None, normalization_factor=1.0, error_model=0,
     ))]
     fn integrate1d<'py>(
@@ -1114,29 +1153,35 @@ impl PyAzimuthalIntegrator {
         image: PyReadonlyArray2<'py, f32>,
         npt: usize,
         unit: &str,
+        method: Option<Vec<String>>,
         correct_solid_angle: bool,
         polarization_factor: Option<f64>,
         normalization_factor: f32,
         error_model: i32,
     ) -> PyResult<Bound<'py, PyDict>> {
         let data = self.image_slice(&image)?;
+        let m = parse_method(method.as_deref())?;
         let opts = self.options(
             correct_solid_angle,
             polarization_factor,
             normalization_factor,
             error_model,
+            m,
         )?;
         let r = self.inner.integrate1d(data, npt, radial_unit(unit)?, &opts);
-        integrate1d_result_to_dict(py, &r)
+        // No-split histogram is the only 1D engine whose pyFAI accumulators are
+        // f32; the sparse and split-histogram engines emit f64.
+        let acc_f32 = m.split == Split::No && m.algo == Algo::Histogram;
+        integrate1d_result_to_dict(py, &r, acc_f32)
     }
 
     /// 2D integration of a detector `image` into a `(npt_azim, npt_rad)` cake,
-    /// radial in `unit`, azimuth in degrees, no split. Returns a dict keyed like
-    /// `pyFAI.containers.Integrate2dResult`; the per-cell arrays are 2D, shaped
-    /// `(npt_azim, npt_rad)` to match pyFAI.
+    /// radial in `unit`, azimuth in degrees, using the `method` split + algo.
+    /// Returns a dict keyed like `pyFAI.containers.Integrate2dResult`; the
+    /// per-cell arrays are 2D, shaped `(npt_azim, npt_rad)` to match pyFAI.
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
-        image, npt_rad, npt_azim, unit, *, correct_solid_angle=true,
+        image, npt_rad, npt_azim, unit, *, method=None, correct_solid_angle=true,
         polarization_factor=None, normalization_factor=1.0, error_model=0,
     ))]
     fn integrate2d<'py>(
@@ -1146,21 +1191,26 @@ impl PyAzimuthalIntegrator {
         npt_rad: usize,
         npt_azim: usize,
         unit: &str,
+        method: Option<Vec<String>>,
         correct_solid_angle: bool,
         polarization_factor: Option<f64>,
         normalization_factor: f32,
         error_model: i32,
     ) -> PyResult<Bound<'py, PyDict>> {
         let data = self.image_slice(&image)?;
+        let m = parse_method(method.as_deref())?;
         let opts = self.options(
             correct_solid_angle,
             polarization_factor,
             normalization_factor,
             error_model,
+            m,
         )?;
         let r = self
             .inner
             .integrate2d(data, npt_rad, npt_azim, radial_unit(unit)?, &opts);
+        // Every 2D engine emits f64 accumulators (matching pyFAI), so the 2D
+        // dict needs no per-method dtype gate.
         integrate2d_result_to_dict(py, &r)
     }
 }
@@ -1190,16 +1240,14 @@ impl PyAzimuthalIntegrator {
         polarization_factor: Option<f64>,
         normalization_factor: f32,
         error_model_code: i32,
+        method: Method,
     ) -> PyResult<IntegrationOptions> {
         Ok(IntegrationOptions {
             correct_solid_angle,
             polarization_factor,
             normalization_factor,
             error_model: error_model(error_model_code)?,
-            // This Python surface exposes only the no-split histogram method; the
-            // method tuple is wired through a later step. `Default` is `(no,
-            // histogram)`.
-            method: Default::default(),
+            method,
         })
     }
 }
@@ -1318,38 +1366,48 @@ fn integrate2d_to_dict<'py>(py: Python<'py>, r: &Integrate2d) -> PyResult<Bound<
     Ok(d)
 }
 
-/// Build the pyFAI-keyed dict from a high-level 1D result. Keys mirror
-/// `pyFAI.containers.Integrate1dResult` attributes so a parity test compares
-/// field-by-field; every array is 1D of length `npt`.
-/// Downcast an f64 accumulator vector to the f32 numpy array pyFAI's no-split
-/// histogram engine emits. `Integrate1dResult` carries the accumulators as f64
-/// (the sparse engines' native width), but pyFAI's no-split histogram
-/// `Integrate1dtpl` stores `count`/`sum_*` as f32, and `test_inprocess_dropin.py`
-/// rejects on a dtype mismatch — so this path widens to f32 to match.
-fn acc_f32_array<'py>(py: Python<'py>, v: &[f64]) -> Bound<'py, PyArray1<f32>> {
-    v.iter()
-        .map(|&x| x as f32)
-        .collect::<Vec<f32>>()
-        .into_pyarray(py)
+/// Emit an f64 accumulator vector as the numpy dtype pyFAI's engine produces:
+/// **f32** for the no-split histogram (`acc_f32 = true`), **f64** otherwise.
+/// `Integrate1dResult` carries the accumulators as f64 (the sparse engines'
+/// native width); pyFAI's no-split histogram `Integrate1dtpl` stores `count`/
+/// `sum_*` as f32, and the parity harness rejects on a dtype mismatch, so that
+/// one path widens to f32 (losslessly — the f32 truncation already happened in
+/// the engine) to match.
+fn acc_array<'py>(py: Python<'py>, v: &[f64], acc_f32: bool) -> Bound<'py, PyAny> {
+    if acc_f32 {
+        v.iter()
+            .map(|&x| x as f32)
+            .collect::<Vec<f32>>()
+            .into_pyarray(py)
+            .into_any()
+    } else {
+        v.to_vec().into_pyarray(py).into_any()
+    }
 }
 
+/// Build the pyFAI-keyed dict from a high-level 1D result. Keys mirror
+/// `pyFAI.containers.Integrate1dResult` attributes so a parity test compares
+/// field-by-field; every array is 1D of length `npt`. `acc_f32` selects the
+/// accumulator dtype per engine (see [`acc_array`]).
 fn integrate1d_result_to_dict<'py>(
     py: Python<'py>,
     r: &Integrate1dResult,
+    acc_f32: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
     d.set_item("radial", r.radial.clone().into_pyarray(py))?;
     d.set_item("intensity", r.intensity.clone().into_pyarray(py))?;
     d.set_item("sigma", r.sigma.clone().into_pyarray(py))?;
-    // The only method this surface exposes is no-split histogram, whose pyFAI
-    // accumulators are f32; downcast the f64 result fields to match the golden.
-    d.set_item("count", acc_f32_array(py, &r.count))?;
-    d.set_item("sum_signal", acc_f32_array(py, &r.sum_signal))?;
-    d.set_item("sum_variance", acc_f32_array(py, &r.sum_variance))?;
-    d.set_item("sum_normalization", acc_f32_array(py, &r.sum_normalization))?;
+    d.set_item("count", acc_array(py, &r.count, acc_f32))?;
+    d.set_item("sum_signal", acc_array(py, &r.sum_signal, acc_f32))?;
+    d.set_item("sum_variance", acc_array(py, &r.sum_variance, acc_f32))?;
+    d.set_item(
+        "sum_normalization",
+        acc_array(py, &r.sum_normalization, acc_f32),
+    )?;
     d.set_item(
         "sum_normalization2",
-        acc_f32_array(py, &r.sum_normalization2),
+        acc_array(py, &r.sum_normalization2, acc_f32),
     )?;
     d.set_item("std", r.std.clone().into_pyarray(py))?;
     d.set_item("sem", r.sem.clone().into_pyarray(py))?;

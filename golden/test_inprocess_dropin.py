@@ -12,10 +12,11 @@ feeds the rsfai *kernels* the dumped Tier-A intermediates, here the drop-in
 ``rsfai.AzimuthalIntegrator.load(poni).integrate1d/2d(image, …)`` regenerates
 pixel positions, corrections, gap mask, dummy, and preproc rows itself from the
 geometry and the frame — exactly as ``pyFAI.load(poni).integrate1d_ng(...)``
-does — so the only inputs are the ``.poni`` and the image. It covers the
-no-split histogram path (``("no", "histogram", …)``) for 1D and 2D; other method
-tuples are skipped (the drop-in does not yet implement them), as are detectors
-the drop-in cannot resolve.
+does — so the only inputs are the ``.poni`` and the image. It covers every
+cython method tuple ``(split, algo[, impl])`` with ``split ∈ {no, bbox, full}``
+and ``algo ∈ {histogram, csr, lut, csc}``, for 1D and 2D, passing ``method`` to
+the drop-in. The 2D ``pseudo`` split is not ported, so its dataset is skipped,
+as are detectors the drop-in cannot resolve.
 
 Each exposed output field is checked against BOTH the committed golden AND a
 live in-process pyFAI run, so by transitivity ``rsfai == live pyFAI``. The gate
@@ -23,10 +24,12 @@ mirrors ``crates/rsfai/tests/dropin_golden.rs`` and ``doc/bit-exact-ladder.md``:
 
   * bin-center **axes** (``radial``, ``azimuthal``) derive from order-independent
     min/max + linspace — gated **bit-exact** on both legs;
-  * **accumulator** fields come from the rayon-parallel histogram (non-
-    deterministic f64 add order) — the rsfai leg is gated at relative error
-    ``<= REL_TOL`` (1e-6); the live leg, single-threaded against single-threaded
-    golden, is the libm anchor and stays **bit-exact**.
+  * **accumulator** fields: the serial engines (sparse ``csr``/``lut``/``csc``
+    and the split ``bbox``/``full`` histograms) run in pixel-index order, so the
+    rsfai leg is gated **bit-exact**; only the no-split histogram is rayon-
+    parallel (non-deterministic f64 add order) and is gated at relative error
+    ``<= REL_TOL`` (1e-6). The live leg, single-threaded against single-threaded
+    golden, is the libm anchor and stays **bit-exact** for every engine.
 
 Every comparison reports bit-exactness, max-ULP, and max relative error, so the
 observed divergence (0 in practice for the Pilatus1M datasets, where each bin's
@@ -172,6 +175,7 @@ def run_rsfai_dropin(d, cfg):
     unit = cfg["unit"]
     em = cfg["error_model_code"]
     common = dict(
+        method=tuple(cfg["method"]),
         correct_solid_angle=cfg["correct_solid_angle"],
         polarization_factor=cfg["polarization_factor"],
         normalization_factor=cfg["normalization_factor"],
@@ -246,8 +250,12 @@ def main():
 
     for d in dataset_dirs():
         cfg = json.load(open(DATASETS / d / "manifest.json"))["config"]
-        if method_of(cfg) != ("no", "histogram"):
-            continue  # drop-in implements the no-split histogram path only
+        split, algo = method_of(cfg)
+        if split == "pseudo":
+            continue  # the 2D pseudo split is not ported
+        # Only the no-split histogram is rayon-parallel; every other engine is
+        # serial, so its accumulator output is bit-exact (mirrors dropin_golden.rs).
+        acc_exact = (split, algo) != ("no", "histogram")
 
         print(f"=== {d} ===")
         rsfai_fields = run_rsfai_dropin(d, cfg)
@@ -265,8 +273,13 @@ def main():
             is_axis = field in axis_fields
 
             r_bit, r_rel, r_nan, r_detail = compare(rsfai_fields[field], golden)
-            # Axis: bit-exact. Accumulator (rsfai leg): relative <= REL_TOL.
-            r_ok = r_bit if is_axis else (r_rel <= REL_TOL and r_nan == 0)
+            # Axis: always bit-exact. Accumulator (rsfai leg): bit-exact for the
+            # serial engines, relative <= REL_TOL for the parallel no-split
+            # histogram.
+            if is_axis or acc_exact:
+                r_ok = r_bit
+            else:
+                r_ok = r_rel <= REL_TOL and r_nan == 0
 
             l_arr = live_fields.get(field)
             if l_arr is None:
@@ -277,7 +290,7 @@ def main():
 
             total_checked += 2
             total_fail += (not r_ok) + (not l_ok)
-            gate = "exact" if is_axis else f"rel<={REL_TOL:.0e}"
+            gate = "exact" if (is_axis or acc_exact) else f"rel<={REL_TOL:.0e}"
             status = "PASS" if (r_ok and l_ok) else "FAIL"
             print(f"  out_{field:20s} {status} [{gate:>10s}] | rsfai: {r_detail} | live: {l_detail}")
         print()
