@@ -6,13 +6,14 @@
 //! and [`rsfai_integrate`] (the binning engines) — into a single
 //! [`AzimuthalIntegrator`] that mirrors `pyFAI.integrator.AzimuthalIntegrator`.
 //!
-//! Method coverage so far: the no-split histogram path
-//! (`("no", "histogram", "cython")`) for 1D and 2D. Each link in the chain is
-//! already validated bit-exact against golden data; this crate composes them
-//! and is validated end-to-end (PONI + image in, only) against the live pyFAI
-//! integrator. The bbox/CSR and full-split paths (which additionally need the
-//! `delta_array` / `corner_array` geometry, not yet ported) are layered on top
-//! of this same orchestrator next.
+//! Method coverage: every cython method tuple `(split, algo, "cython")` with
+//! `split ∈ {no, bbox, full}` and `algo ∈ {histogram, csr, lut, csc}`, for both
+//! 1D and 2D — selected by [`IntegrationOptions::method`]. The bbox/full splits
+//! additionally build the `delta_array` (radial + chi half-widths) and the
+//! four-corner `corner_array` geometry. Each link in the chain is already
+//! validated bit-exact against golden data; this crate composes them and is
+//! validated end-to-end (PONI + image in, only) against the live pyFAI
+//! integrator. (The 2D `pseudo` split is not ported.)
 //!
 //! ## What the integrator reproduces, in order
 //!
@@ -27,20 +28,25 @@
 //!    (the dead-pixel sentinel) — exactly the masking pyFAI applies before
 //!    preproc when the caller passes no explicit mask/dummy.
 //! 5. `preproc4` → the per-pixel `[signal, variance, norm, count]` rows.
-//! 6. `histogram1d` / `histogram2d` → the binned reduction.
+//! 6. The `opts.method` engine → the binned reduction: a direct
+//!    `histogram`/`histogram_bbox`/`histogram_full` scatter, or a
+//!    `csr`/`lut`/`csc` sparse matrix built once then applied.
 
 use std::f64::consts::PI;
 
 use rsfai_core::dtype::ErrorModel;
 use rsfai_detectors::Detector;
 use rsfai_geometry::{
-    calc_pos_zyx, center_array, corner_array_f32, delta_radial, polarization_array,
+    calc_pos_zyx, center_array, corner_array_f32, delta_chi, delta_radial, polarization_array,
     solid_angle_array, unscaled_center_array, PoniFile, PosZyx, Unit,
 };
 use rsfai_integrate::{
-    build_bbox_csc_1d, build_bbox_csr_1d, build_bbox_lut_1d, build_full_csc_1d, build_full_csr_1d,
-    build_full_lut_1d, csc_integrate1d, csr_integrate1d, histogram1d, histogram1d_bbox,
-    histogram1d_full, histogram2d, lut_integrate1d, CsrIntegrate1d, Hist2dOptions, Integrate1d,
+    build_bbox_csc_1d, build_bbox_csc_2d, build_bbox_csr_1d, build_bbox_csr_2d, build_bbox_lut_1d,
+    build_bbox_lut_2d, build_full_csc_1d, build_full_csc_2d, build_full_csr_1d, build_full_csr_2d,
+    build_full_lut_1d, build_full_lut_2d, csc_integrate1d, csc_integrate2d, csr_integrate1d,
+    csr_integrate2d, histogram1d, histogram1d_bbox, histogram1d_full, histogram2d,
+    histogram2d_bbox, histogram2d_full, lut_integrate1d, lut_integrate2d, Bbox2dBounds,
+    CsrIntegrate1d, Hist2dOptions, Integrate1d, Integrate2d,
 };
 use rsfai_preproc::{preproc4, PreprocOptions};
 
@@ -60,6 +66,13 @@ const SOLID_ANGLE_ORDER: f64 = 3.0;
 /// `2π`, the `pos1_period` the 1D full-split build defaults to (`common.py` does
 /// not forward `unit.period` for 1D).
 const TWO_PI: f64 = 2.0 * PI;
+
+/// The azimuth `pos1_period` for 2D: `common.py` forwards the azimuth unit's
+/// period, `CHI_DEG.period = 360`. `> 0` engages the `[-π, π]` chi clip; the 2D
+/// binning is on the unscaled chi in radians (`CHI_RAD`), but pyFAI passes the
+/// degree-unit period verbatim, so the port does too (validated by the 2D
+/// `csr`/`lut`/`csc` golden tests).
+const AZIMUTH_PERIOD_DEG: f64 = 360.0;
 
 /// Pixel-splitting scheme — the first element of pyFAI's method tuple.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -450,9 +463,11 @@ impl AzimuthalIntegrator {
     }
 
     /// Integrate `image` into a 2D `(radial, azimuthal)` cake of `npt_rad ×
-    /// npt_azim` bins, radial in `unit` and azimuth in degrees
-    /// (`CHI_DEG`), using the no-split histogram path. The azimuthal
-    /// discontinuity is at π (`chiDiscAtPi = True`, pyFAI's default).
+    /// npt_azim` bins, radial in `unit` and azimuth in degrees (`CHI_DEG`), using
+    /// the `opts.method` split and binning algorithm. Binning is on the unscaled
+    /// radial (pos0) and unscaled chi in radians (pos1); the azimuthal
+    /// discontinuity is at π (`chiDiscAtPi = True`, pyFAI's default), and the
+    /// reported axes scale once (radial × `unit.scale`, azimuth × `CHI_DEG.scale`).
     pub fn integrate2d(
         &self,
         image: &[f32],
@@ -469,47 +484,117 @@ impl AzimuthalIntegrator {
             self.detector.size()
         );
         let pos = self.pixel_positions();
-        // Bin on the unscaled internal radial; the reported axis scales once
-        // (the 2D dispatch for bbox/full is wired in a later step — this path is
-        // still the no-split histogram).
+        // Bin on the unscaled internal radial (pos0) and the unscaled chi in
+        // radians (pos1; `CHI_RAD.scale == 1`); the reported axes scale once —
+        // radial × `unit.scale`, azimuth × `CHI_DEG.scale` (degrees).
         let radial = unscaled_center_array(unit.space, &pos.x, &pos.y, &pos.z, self.wavelength);
         let azimuthal = center_array(Unit::CHI_RAD, &pos.x, &pos.y, &pos.z, self.wavelength);
         let mask = self.build_mask();
         let prep = self.preproc_rows(image, &pos, mask.as_deref(), opts);
+        let em = opts.error_model;
+        let bins = (npt_rad, npt_azim);
 
-        let hopts = Hist2dOptions {
-            bins: (npt_rad, npt_azim),
-            radial_range: None,
-            azimuth_range: None,
-            error_model: opts.error_model,
-            // Standard radial units (q/2θ/r) are non-negative.
-            allow_radial_neg: false,
-            chi_disc_at_pi: true,
-            // pyFAI passes the azimuth unit's period (CHI_DEG.period = 360);
-            // only its sign matters here — `> 0` enables the [-π, π] clip.
-            pos1_period: 360.0,
-            empty: 0.0,
-        };
-        let h = histogram2d(&radial, &azimuthal, &prep, mask.as_deref(), &hopts);
-
-        Integrate2dResult {
-            radial: h.radial.iter().map(|&r| r * unit.scale).collect(),
-            azimuthal: h
-                .azimuthal
-                .iter()
-                .map(|&a| a * Unit::CHI_DEG.scale)
-                .collect(),
-            bins: h.bins,
-            intensity: h.intensity,
-            sigma: h.sigma,
-            count: h.count,
-            sum_signal: h.signal,
-            sum_variance: h.variance,
-            sum_normalization: h.normalization,
-            sum_normalization2: h.norm_sq,
-            std: h.std,
-            sem: h.sem,
+        // No-split histogram: bins every pixel (masked pixels are zeroed by
+        // preproc but still set the range), so no mask is forwarded.
+        if opts.method.split == Split::No && opts.method.algo == Algo::Histogram {
+            let hopts = Hist2dOptions {
+                bins,
+                radial_range: None,
+                azimuth_range: None,
+                error_model: em,
+                // Standard radial units (q/2θ/r) are non-negative.
+                allow_radial_neg: false,
+                chi_disc_at_pi: true,
+                pos1_period: AZIMUTH_PERIOD_DEG,
+                empty: 0.0,
+            };
+            let h = histogram2d(&radial, &azimuthal, &prep, mask.as_deref(), &hopts);
+            return integrate2d_to_result(h, unit.scale);
         }
+
+        // Every other engine excludes masked pixels from the matrix/scatter.
+        // chiDiscAtPi = true, pos1_period = CHI_DEG.period (= 360), allow_pos0_neg
+        // = false (radial units are non-negative) — the 2D `Bbox2dBounds` pyFAI's
+        // common.py forwards.
+        let mask_ref = mask.as_deref();
+        let bounds = Bbox2dBounds {
+            allow_pos0_neg: false,
+            chi_disc_at_pi: true,
+            pos1_period: AZIMUTH_PERIOD_DEG,
+        };
+        let h = match opts.method.split {
+            Split::Full => {
+                // Full split bins on the four-corner array (radial + chi), f32
+                // upcast to f64 — the input pyFAI's FullSplitIntegrator receives.
+                let corners = self.corner_array(unit);
+                let cf: Vec<f64> = corners.iter().map(|&v| v as f64).collect();
+                match opts.method.algo {
+                    Algo::Histogram => {
+                        histogram2d_full(&cf, &prep, mask_ref, bins, &bounds, em, 0.0)
+                    }
+                    Algo::Csr => {
+                        let (m, c0, c1) =
+                            build_full_csr_2d(&cf, mask_ref, bins, false, true, AZIMUTH_PERIOD_DEG);
+                        csr_integrate2d(&m, &prep, c0, c1, em, 0.0)
+                    }
+                    Algo::Lut => {
+                        let (m, c0, c1) =
+                            build_full_lut_2d(&cf, mask_ref, bins, false, true, AZIMUTH_PERIOD_DEG);
+                        lut_integrate2d(&m, &prep, c0, c1, em, 0.0)
+                    }
+                    Algo::Csc => {
+                        let (m, c0, c1) =
+                            build_full_csc_2d(&cf, mask_ref, bins, false, true, AZIMUTH_PERIOD_DEG);
+                        csc_integrate2d(&m, &prep, c0, c1, em, 0.0)
+                    }
+                }
+            }
+            split => {
+                // No / Bbox: the bbox-family build on (pos0, dpos0, pos1, dpos1).
+                // No-split has both deltas None (each pixel collapses to its
+                // center); bbox uses the radial (`delta_radial`) and azimuthal
+                // (`delta_chi`) half-widths from the corner array.
+                let deltas = (split == Split::Bbox).then(|| {
+                    let corners = self.corner_array(unit);
+                    (
+                        delta_radial(&corners, &radial),
+                        delta_chi(&corners, &azimuthal),
+                    )
+                });
+                let (dpos0, dpos1) = match &deltas {
+                    Some((d0, d1)) => (Some(d0.as_slice()), Some(d1.as_slice())),
+                    None => (None, None),
+                };
+                match opts.method.algo {
+                    Algo::Histogram => {
+                        // No-split-histogram returns above; this is bbox-histogram.
+                        let (d0, d1) = deltas.as_ref().expect("bbox split has deltas");
+                        histogram2d_bbox(
+                            &radial, d0, &azimuthal, d1, &prep, mask_ref, bins, &bounds, em, 0.0,
+                        )
+                    }
+                    Algo::Csr => {
+                        let (m, c0, c1) = build_bbox_csr_2d(
+                            &radial, dpos0, &azimuthal, dpos1, mask_ref, bins, &bounds,
+                        );
+                        csr_integrate2d(&m, &prep, c0, c1, em, 0.0)
+                    }
+                    Algo::Lut => {
+                        let (m, c0, c1) = build_bbox_lut_2d(
+                            &radial, dpos0, &azimuthal, dpos1, mask_ref, bins, &bounds,
+                        );
+                        lut_integrate2d(&m, &prep, c0, c1, em, 0.0)
+                    }
+                    Algo::Csc => {
+                        let (m, c0, c1) = build_bbox_csc_2d(
+                            &radial, dpos0, &azimuthal, dpos1, mask_ref, bins, &bounds,
+                        );
+                        csc_integrate2d(&m, &prep, c0, c1, em, 0.0)
+                    }
+                }
+            }
+        };
+        integrate2d_to_result(h, unit.scale)
     }
 }
 
@@ -527,6 +612,30 @@ fn histogram_to_result(h: Integrate1d, scale: f64) -> Integrate1dResult {
         sum_variance: widen(h.variance),
         sum_normalization: widen(h.normalization),
         sum_normalization2: widen(h.norm_sq),
+        std: h.std,
+        sem: h.sem,
+    }
+}
+
+/// Map a 2D engine's `Integrate2d` (f64 accumulators in every 2D engine) to the
+/// public result, scaling the bin-center axes once: radial × `scale`, azimuth ×
+/// `CHI_DEG.scale` (radians → degrees).
+fn integrate2d_to_result(h: Integrate2d, scale: f64) -> Integrate2dResult {
+    Integrate2dResult {
+        radial: h.radial.iter().map(|&r| r * scale).collect(),
+        azimuthal: h
+            .azimuthal
+            .iter()
+            .map(|&a| a * Unit::CHI_DEG.scale)
+            .collect(),
+        bins: h.bins,
+        intensity: h.intensity,
+        sigma: h.sigma,
+        count: h.count,
+        sum_signal: h.signal,
+        sum_variance: h.variance,
+        sum_normalization: h.normalization,
+        sum_normalization2: h.norm_sq,
         std: h.std,
         sem: h.sem,
     }

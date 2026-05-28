@@ -1,7 +1,8 @@
 //! End-to-end drop-in validation: `AzimuthalIntegrator::load(poni).integrate1d/
 //! 2d(image, …)` — PONI + detector image in, **nothing else** — must reproduce
-//! the committed golden curve, for every 1D method tuple and the no-split
-//! histogram 2D path.
+//! the committed golden curve, for every 1D and 2D method tuple (no/bbox/full ×
+//! histogram/csr/lut/csc). The 2D `pseudo` split is not ported, so its dataset
+//! is skipped (`split_from` returns `None`).
 //!
 //! This is the Tier-C integration test for the orchestrator. Unlike the
 //! per-kernel golden tests (which feed dumped intermediates), here the
@@ -167,11 +168,6 @@ fn dropin_matches_golden() {
             continue; // unmapped method (e.g. 2D "pseudo")
         };
         let dim = cfg["dim"].as_i64().unwrap_or(1);
-        // 2D dispatch (bbox/full) is wired in a later step; for now integrate2d
-        // is the no-split histogram only, so drive only that method in 2D.
-        if dim == 2 && (split != Split::No || algo != Algo::Histogram) {
-            continue;
-        }
 
         eprintln!("=== {} ===", manifest.dataset);
 
@@ -225,29 +221,31 @@ fn dropin_matches_golden() {
             let npt_rad = cfg["npt_rad"].as_u64().expect("npt_rad") as usize;
             let npt_azim = cfg["npt_azim"].as_u64().expect("npt_azim") as usize;
             let res = ai.integrate2d(&image, npt_rad, npt_azim, unit, &opts);
-            // 2D no-split histogram: sums/count are full-precision f64. Axes
-            // bit-exact; accumulator fields relative <= REL_TOL.
+            // 2D accumulators are full-precision f64 in every engine. Axes always
+            // bit-exact; accumulator-derived fields bit-exact for the serial
+            // engines (sparse + split-histogram), relative <= REL_TOL for the
+            // parallel no-split histogram (`acc_exact`).
             results.push(cmp_f64(&dir, "radial", &res.radial, true));
             results.push(cmp_f64(&dir, "azimuthal", &res.azimuthal, true));
-            results.push(cmp_f32(&dir, "intensity", &res.intensity, false));
-            results.push(cmp_f32(&dir, "sigma", &res.sigma, false));
-            results.push(cmp_f64(&dir, "count", &res.count, false));
-            results.push(cmp_f64(&dir, "sum_signal", &res.sum_signal, false));
-            results.push(cmp_f64(&dir, "sum_variance", &res.sum_variance, false));
+            results.push(cmp_f32(&dir, "intensity", &res.intensity, acc_exact));
+            results.push(cmp_f32(&dir, "sigma", &res.sigma, acc_exact));
+            results.push(cmp_f64(&dir, "count", &res.count, acc_exact));
+            results.push(cmp_f64(&dir, "sum_signal", &res.sum_signal, acc_exact));
+            results.push(cmp_f64(&dir, "sum_variance", &res.sum_variance, acc_exact));
             results.push(cmp_f64(
                 &dir,
                 "sum_normalization",
                 &res.sum_normalization,
-                false,
+                acc_exact,
             ));
             results.push(cmp_f64(
                 &dir,
                 "sum_normalization2",
                 &res.sum_normalization2,
-                false,
+                acc_exact,
             ));
-            results.push(cmp_f32(&dir, "std", &res.std, false));
-            results.push(cmp_f32(&dir, "sem", &res.sem, false));
+            results.push(cmp_f32(&dir, "std", &res.std, acc_exact));
+            results.push(cmp_f32(&dir, "sem", &res.sem, acc_exact));
         }
 
         let checked = results.iter().filter(|r| r.is_some()).count();
