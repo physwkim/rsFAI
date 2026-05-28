@@ -79,10 +79,11 @@ impl Detector {
             orientation: 3,
             module_size: Some((514, 1030)),
             module_gap: Some((37, 10)),
-            // The Eiger classes in `_dectris.py` do not override DUMMY, so they
-            // inherit the base `Detector.DUMMY = None` (no sentinel).
-            dummy: None,
-            delta_dummy: None,
+            // `Eiger(_Dectris)` inherits the `_Dectris` sentinel `DUMMY = -2`,
+            // `DELTA_DUMMY = 1.5` (`_dectris.py:71`) — the same dead-pixel value
+            // as Pilatus, not the base `Detector.DUMMY = None`.
+            dummy: Some(-2.0),
+            delta_dummy: Some(1.5),
         }
     }
 
@@ -306,12 +307,15 @@ mod tests {
     }
 
     #[test]
-    fn pilatus_dummies_are_minus2_pm_1_5() {
-        // Pilatus marks dead/gap pixels at -2 with a ±1.5 tolerance; get_dummies
-        // returns them as f32 (the data_t the preproc engine consumes).
-        let (dummy, delta) = Detector::pilatus1m().get_dummies();
-        assert_eq!(dummy, Some(-2.0f32));
-        assert_eq!(delta, Some(1.5f32));
+    fn dectris_dummies_are_minus2_pm_1_5() {
+        // Every `_Dectris` detector marks dead/gap pixels at -2 with a ±1.5
+        // tolerance (`_dectris.py:71` DUMMY/DELTA_DUMMY); get_dummies returns
+        // them as f32 (the data_t the preproc engine consumes).
+        for det in [Detector::pilatus1m(), Detector::eiger4m()] {
+            let (dummy, delta) = det.get_dummies();
+            assert_eq!(dummy, Some(-2.0f32), "{}", det.name);
+            assert_eq!(delta, Some(1.5f32), "{}", det.name);
+        }
         // A gapless generic detector defines no sentinel.
         assert_eq!(
             Detector::generic(1e-4, 1e-4, (2, 2)).get_dummies(),
