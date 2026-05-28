@@ -56,6 +56,42 @@ python golden/bench_compare.py         # full CPU tuple matrix (+ histogram/csc)
 python golden/bench_gpu.py             # CPU vs GPU + detector-size scaling
 ```
 
+### Pure-Rust path (no Python)
+
+The numbers above call rsFAI across the PyO3/numpy boundary. For the embedded /
+streaming case — build the sparse matrix once, then loop `preproc4 + apply`
+entirely in Rust with no FFI round-trip — the `native_bench` (1D) and
+`native_bench_2d` (2D) examples time the same kernels directly. Median **apply**
+ms/frame on the same M4 Pro (12-core, multi-threaded); the matrix is built once
+and untimed, and `preproc4` adds ~0.6 ms/frame on top:
+
+| tuple | 1D npt1000 | 2D 100×36 | 2D 1000×360 | 2D 5000×360 |
+|---|--:|--:|--:|--:|
+| no-csr   | 0.29 | 0.29 | 1.13 | **3.64** |
+| bbox-csr | 0.48 | 0.37 | 1.64 | 7.93 |
+| full-csr | 0.48 | 0.33 | 1.71 | 7.95 |
+| no-lut   | 0.33 | 0.75 | 3.19 | 8.86 |
+| bbox-lut | 0.57 | 0.79 | 6.43 | 26.32 |
+| full-lut | 0.55 | 0.95 | 6.45 | 24.49 |
+
+The 2D apply is a single parallel pass over output cells — gather the source bin,
+finalize, and write the final arrays, with the `reshape(bins0,bins1).T` transpose
+folded into the gather index — so it scales ~5.4–6.7× across the 12 cores
+(no-csr 5000×360: 22.4 ms single-thread → 3.6 ms multi-thread). At that fine
+caking the pure-Rust **total** (preproc + apply, ~4.1 ms for no-csr) is faster
+than pyFAI's `integrate2d_ng` on the same workload (~5.8 ms in this env, ≈1.4×);
+CSR with pixel-splitting runs ~0.8× of pyFAI. LUT trails CSR for fine 2D because
+its dense padded matrix gathers ~10× the entries of the compact CSR — prefer CSR
+for fine 2D binning.
+
+Reproduce (no `daq` env needed — pure Rust):
+
+```sh
+cargo run --release -p rsfai-integrate --example native_bench      # 1D, npt1000
+cargo run --release -p rsfai-integrate --example native_bench_2d   # 2D, nr×na sweep
+RAYON_NUM_THREADS=1 cargo run --release -p rsfai-integrate --example native_bench_2d  # single-thread
+```
+
 ## Layout
 
 | Crate | Role | Milestone |
