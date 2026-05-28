@@ -1,0 +1,259 @@
+{
+  "dataset": "Eiger4M__full-csr-cython__q_nmm1__npt100x36__errpoisson",
+  "detector_name": "Eiger4M",
+  "pyfai_version": "2026.5.0",
+  "numpy_version": "2.4.3",
+  "platform": "macOS-26.5-arm64-arm-64bit-Mach-O",
+  "omp_num_threads": "1",
+  "build": {
+    "from_source": true,
+    "source_tree": "~/codes/pyFAI",
+    "cflags": "-ffp-contract=off",
+    "cxxflags": "-ffp-contract=off"
+  },
+  "provenance_note": "pyFAI rebuilt from local source with -ffp-contract=off (no FMA); see doc/bit-exact-ladder.md",
+  "config": {
+    "dim": 2,
+    "npt_rad": 100,
+    "npt_azim": 36,
+    "azim_scale": 57.29577951308232,
+    "pos1_period": 360.0,
+    "chi_disc_at_pi": true,
+    "unit": "q_nm^-1",
+    "unit_scale": 1.0,
+    "method": [
+      "full",
+      "csr",
+      "cython"
+    ],
+    "error_model": "poisson",
+    "error_model_code": 2,
+    "correct_solid_angle": true,
+    "polarization_factor": 0.99,
+    "normalization_factor": 1.0,
+    "radial_range": null,
+    "azimuth_range": null,
+    "dummy": -2.0,
+    "delta_dummy": 1.5
+  },
+  "geometry": {
+    "dist": 0.162558188965,
+    "poni1": 0.0963249893098,
+    "poni2": 0.0863684201475,
+    "rot1": 0.00459634184823,
+    "rot2": 0.000845922278262,
+    "rot3": -2.85542293455e-09,
+    "wavelength": 9.21815574169e-11
+  },
+  "detector": {
+    "name": "Eiger 4M",
+    "pixel1": 7.5e-05,
+    "pixel2": 7.5e-05,
+    "shape": [
+      2167,
+      2070
+    ],
+    "orientation": 3
+  },
+  "ulp_budget": {
+    "pos0_center": 0,
+    "chi_center": 0
+  },
+  "arrays": {
+    "image": {
+      "dtype": "float32",
+      "shape": [
+        2167,
+        2070
+      ]
+    },
+    "mask": {
+      "dtype": "int8",
+      "shape": [
+        2167,
+        2070
+      ]
+    },
+    "solidangle": {
+      "dtype": "float64",
+      "shape": [
+        2167,
+        2070
+      ]
+    },
+    "polarization": {
+      "dtype": "float32",
+      "shape": [
+        2167,
+        2070
+      ]
+    },
+    "pos0_center": {
+      "dtype": "float64",
+      "shape": [
+        2167,
+        2070
+      ]
+    },
+    "pos0_center_unscaled": {
+      "dtype": "float64",
+      "shape": [
+        2167,
+        2070
+      ]
+    },
+    "pos0_delta": {
+      "dtype": "float64",
+      "shape": [
+        2167,
+        2070
+      ]
+    },
+    "chi_center": {
+      "dtype": "float64",
+      "shape": [
+        2167,
+        2070
+      ]
+    },
+    "chi_delta": {
+      "dtype": "float64",
+      "shape": [
+        2167,
+        2070
+      ]
+    },
+    "corners": {
+      "dtype": "float32",
+      "shape": [
+        2167,
+        2070,
+        4,
+        2
+      ]
+    },
+    "pos_zyx": {
+      "dtype": "float64",
+      "shape": [
+        2167,
+        2070,
+        3
+      ]
+    },
+    "pixel_p1": {
+      "dtype": "float64",
+      "shape": [
+        2167,
+        2070
+      ]
+    },
+    "pixel_p2": {
+      "dtype": "float64",
+      "shape": [
+        2167,
+        2070
+      ]
+    },
+    "preproc": {
+      "dtype": "float32",
+      "shape": [
+        2167,
+        2070,
+        4
+      ]
+    },
+    "out_radial": {
+      "dtype": "float64",
+      "shape": [
+        100
+      ]
+    },
+    "out_azimuthal": {
+      "dtype": "float64",
+      "shape": [
+        36
+      ]
+    },
+    "out_intensity": {
+      "dtype": "float32",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_sigma": {
+      "dtype": "float32",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_count": {
+      "dtype": "float64",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_sum_signal": {
+      "dtype": "float64",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_sum_variance": {
+      "dtype": "float64",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_sum_normalization": {
+      "dtype": "float64",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_sum_normalization2": {
+      "dtype": "float64",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_std": {
+      "dtype": "float32",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "out_sem": {
+      "dtype": "float32",
+      "shape": [
+        36,
+        100
+      ]
+    },
+    "csr_data": {
+      "dtype": "float32",
+      "shape": [
+        4613430
+      ]
+    },
+    "csr_indices": {
+      "dtype": "int32",
+      "shape": [
+        4613430
+      ]
+    },
+    "csr_indptr": {
+      "dtype": "int32",
+      "shape": [
+        3601
+      ]
+    }
+  }
+}

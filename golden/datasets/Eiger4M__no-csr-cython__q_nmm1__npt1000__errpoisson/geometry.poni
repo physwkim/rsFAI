@@ -1,0 +1,72 @@
+# Nota: C-Order, 1 refers to the Y axis, 2 to the X axis 
+# Calibration done at Wed Dec 14 13:17:19 2016
+Detector: Eiger4M
+PixelSize1: 7.5e-05
+PixelSize2: 7.5e-05
+Distance: 0.162529991552
+Poni1: 0.096734694213
+Poni2: 0.0867366780446
+Rot1: 0.00680025518878
+Rot2: -0.00150689789362
+Rot3: -2.29349473136e-09
+Wavelength: 9.21815574169e-11
+# Nota: C-Order, 1 refers to the Y axis, 2 to the X axis 
+# Calibration done at Wed Dec 14 13:17:44 2016
+Detector: Eiger4M
+PixelSize1: 7.5e-05
+PixelSize2: 7.5e-05
+Distance: 0.162550983585
+Poni1: 0.0962968989698
+Poni2: 0.086460131794
+Rot1: 0.00505253933388
+Rot2: 0.00101733080519
+Rot3: -2.56999081337e-09
+Wavelength: 9.21815574169e-11
+# Nota: C-Order, 1 refers to the Y axis, 2 to the X axis 
+# Calibration done at Wed Dec 14 13:18:09 2016
+Detector: Eiger4M
+PixelSize1: 7.5e-05
+PixelSize2: 7.5e-05
+Distance: 0.16255197144
+Poni1: 0.0962439398861
+Poni2: 0.0863945715583
+Rot1: 0.0047046375568
+Rot2: 0.00129838652127
+Rot3: -2.77258027079e-09
+Wavelength: 9.21815574169e-11
+# Nota: C-Order, 1 refers to the Y axis, 2 to the X axis 
+# Calibration done at Wed Dec 14 13:19:25 2016
+Detector: Eiger4M
+PixelSize1: 7.5e-05
+PixelSize2: 7.5e-05
+Distance: 0.16255760409
+Poni1: 0.0963383796868
+Poni2: 0.0863893321752
+Rot1: 0.00470783451902
+Rot2: 0.000774591909023
+Rot3: -2.81735946457e-09
+Wavelength: 9.21815574169e-11
+# Nota: C-Order, 1 refers to the Y axis, 2 to the X axis 
+# Calibration done at Wed Dec 14 13:19:35 2016
+Detector: Eiger4M
+PixelSize1: 7.5e-05
+PixelSize2: 7.5e-05
+Distance: 0.162558188965
+Poni1: 0.0963249893098
+Poni2: 0.0863684201475
+Rot1: 0.00459634184823
+Rot2: 0.000845922278262
+Rot3: -2.85542293455e-09
+Wavelength: 9.21815574169e-11
+# Nota: C-Order, 1 refers to the Y axis, 2 to the X axis 
+# Calibration done at Wed Dec 14 13:19:40 2016
+Detector: Eiger4M
+PixelSize1: 7.5e-05
+PixelSize2: 7.5e-05
+Distance: 0.162558188965
+Poni1: 0.0963249893098
+Poni2: 0.0863684201475
+Rot1: 0.00459634184823
+Rot2: 0.000845922278262
+Rot3: -2.85542293455e-09
+Wavelength: 9.21815574169e-11

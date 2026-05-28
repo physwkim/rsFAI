@@ -1026,6 +1026,76 @@ def main():
             },
         ],
     )
+
+    # ---- Eiger4M: a coverage-expansion detector ------------------------------
+    # Eiger4M (2167×2070, 75 µm pixels, module 514×1030 gap 37×10, _Dectris
+    # DUMMY=-2 ±1.5). The frame is float32 (vs Pilatus int32) and carries 494
+    # active saturated pixels (2^32), so only the serial engines — whose f64
+    # sums are bit-exact regardless of huge values — are used. The point is to
+    # validate the *detector model* (centers, corners, delta_radial/delta_chi,
+    # the module-gap mask, the dummy) through the full pipeline for a second
+    # detector; the per-engine numerics are already exhausted by Pilatus. CSR
+    # spans no/bbox/full (centers / +bbox deltas / +corner array) in 1D and 2D.
+    generate(
+        "Eiger4M",
+        ("Eiger4M.poni", "Eiger4M.edf"),
+        configs=[
+            {
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("no", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": None,
+            },
+            {
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("full", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("no", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("full", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+        ],
+    )
     print("done.")
 
 

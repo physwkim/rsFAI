@@ -260,8 +260,8 @@ impl AzimuthalIntegrator {
 
     /// Load an integrator from a `.poni` file, resolving the detector model
     /// from the file's `Detector:` name. Only detectors with a golden-validated
-    /// path are resolved (currently Pilatus1M); supply the detector explicitly
-    /// via [`from_poni`](Self::from_poni) for others.
+    /// path are resolved (currently Pilatus1M and Eiger4M); supply the detector
+    /// explicitly via [`from_poni`](Self::from_poni) for others.
     pub fn load<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         let poni = PoniFile::load(path)?;
         let detector = resolve_detector(&poni)?;
@@ -664,6 +664,7 @@ fn csr_to_result(r: CsrIntegrate1d, scale: f64) -> Integrate1dResult {
 fn resolve_detector(poni: &PoniFile) -> Result<Detector> {
     let mut detector = match poni.detector.as_deref() {
         Some("Pilatus1M") => Detector::pilatus1m(),
+        Some("Eiger4M") => Detector::eiger4m(),
         other => {
             return Err(Error::UnsupportedDetector(
                 other.unwrap_or("<none>").to_string(),
