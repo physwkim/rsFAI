@@ -1196,6 +1196,10 @@ impl PyAzimuthalIntegrator {
             polarization_factor,
             normalization_factor,
             error_model: error_model(error_model_code)?,
+            // This Python surface exposes only the no-split histogram method; the
+            // method tuple is wired through a later step. `Default` is `(no,
+            // histogram)`.
+            method: Default::default(),
         })
     }
 }
@@ -1317,6 +1321,18 @@ fn integrate2d_to_dict<'py>(py: Python<'py>, r: &Integrate2d) -> PyResult<Bound<
 /// Build the pyFAI-keyed dict from a high-level 1D result. Keys mirror
 /// `pyFAI.containers.Integrate1dResult` attributes so a parity test compares
 /// field-by-field; every array is 1D of length `npt`.
+/// Downcast an f64 accumulator vector to the f32 numpy array pyFAI's no-split
+/// histogram engine emits. `Integrate1dResult` carries the accumulators as f64
+/// (the sparse engines' native width), but pyFAI's no-split histogram
+/// `Integrate1dtpl` stores `count`/`sum_*` as f32, and `test_inprocess_dropin.py`
+/// rejects on a dtype mismatch — so this path widens to f32 to match.
+fn acc_f32_array<'py>(py: Python<'py>, v: &[f64]) -> Bound<'py, PyArray1<f32>> {
+    v.iter()
+        .map(|&x| x as f32)
+        .collect::<Vec<f32>>()
+        .into_pyarray(py)
+}
+
 fn integrate1d_result_to_dict<'py>(
     py: Python<'py>,
     r: &Integrate1dResult,
@@ -1325,16 +1341,15 @@ fn integrate1d_result_to_dict<'py>(
     d.set_item("radial", r.radial.clone().into_pyarray(py))?;
     d.set_item("intensity", r.intensity.clone().into_pyarray(py))?;
     d.set_item("sigma", r.sigma.clone().into_pyarray(py))?;
-    d.set_item("count", r.count.clone().into_pyarray(py))?;
-    d.set_item("sum_signal", r.sum_signal.clone().into_pyarray(py))?;
-    d.set_item("sum_variance", r.sum_variance.clone().into_pyarray(py))?;
-    d.set_item(
-        "sum_normalization",
-        r.sum_normalization.clone().into_pyarray(py),
-    )?;
+    // The only method this surface exposes is no-split histogram, whose pyFAI
+    // accumulators are f32; downcast the f64 result fields to match the golden.
+    d.set_item("count", acc_f32_array(py, &r.count))?;
+    d.set_item("sum_signal", acc_f32_array(py, &r.sum_signal))?;
+    d.set_item("sum_variance", acc_f32_array(py, &r.sum_variance))?;
+    d.set_item("sum_normalization", acc_f32_array(py, &r.sum_normalization))?;
     d.set_item(
         "sum_normalization2",
-        r.sum_normalization2.clone().into_pyarray(py),
+        acc_f32_array(py, &r.sum_normalization2),
     )?;
     d.set_item("std", r.std.clone().into_pyarray(py))?;
     d.set_item("sem", r.sem.clone().into_pyarray(py))?;

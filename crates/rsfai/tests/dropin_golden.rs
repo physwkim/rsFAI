@@ -1,31 +1,56 @@
 //! End-to-end drop-in validation: `AzimuthalIntegrator::load(poni).integrate1d/
 //! 2d(image, …)` — PONI + detector image in, **nothing else** — must reproduce
-//! the committed golden curve bit-for-bit, for every no-split histogram dataset.
+//! the committed golden curve, for every 1D method tuple and the no-split
+//! histogram 2D path.
 //!
 //! This is the Tier-C integration test for the orchestrator. Unlike the
 //! per-kernel golden tests (which feed dumped intermediates), here the
 //! integrator regenerates the pixel positions, corrections, gap mask, dummy,
-//! and preproc rows itself from the `.poni` and the image, then bins them. A
-//! bit-exact match therefore exercises the whole chain
-//! (`centers_f64 → calc_pos_zyx → center_array`/`solid_angle`/`polarization` →
-//! `get_dummies`/`calc_mask` → `preproc4` → `histogram1d`/`2d`) composed
-//! correctly. Fields the dataset does not expose (e.g. the variance family
-//! under the `no` error model) are skipped.
+//! corner/delta geometry, and preproc rows itself from the `.poni` and the
+//! image, then bins them. A match therefore exercises the whole chain
+//! (`centers_f64 → calc_pos_zyx → center_array`/`corner_array`/`delta_array`/
+//! `solid_angle`/`polarization` → `get_dummies`/`calc_mask` → `preproc4` →
+//! `histogram`/`csr`/`lut`/`csc`) composed correctly. Fields the dataset does
+//! not expose (e.g. the variance family under the `no` error model) are skipped.
 //!
-//! The histogram **accumulation** is parallelized (non-deterministic f64 add
-//! order), so the accumulator-derived fields are validated at relative error
-//! `<= REL_TOL` (1e-6), while the bin-center **axes** (`radial`/`azimuthal`),
-//! which derive from the order-independent min/max + `linspace`, stay
-//! **bit-exact**. See `doc/bit-exact-ladder.md`.
+//! Gate by engine determinism: the **no-split histogram** accumulation is
+//! parallelized (non-deterministic f64 add order), so its accumulator-derived
+//! fields are validated at relative error `<= REL_TOL` (1e-6). The sparse
+//! (`csr`/`lut`/`csc`) and split-histogram engines run **serially** in
+//! pixel-index order, so their entire output — including the f64 `sum_*`/`count`
+//! accumulators — is asserted **bit-exact**. The bin-center axes
+//! (`radial`/`azimuthal`), order-independent min/max + `linspace`, are always
+//! bit-exact. See `doc/bit-exact-ladder.md`.
 
 use std::path::{Path, PathBuf};
 
-use rsfai::{AzimuthalIntegrator, ErrorModelKind, IntegrationOptions, RadialUnit};
+use rsfai::{
+    Algo, AzimuthalIntegrator, ErrorModelKind, IntegrationOptions, Method, RadialUnit, Split,
+};
 use rsfai_core::compare::{compare_f32, compare_f64};
 use rsfai_core::golden::{load_manifest, load_npy_f32, load_npy_f64, load_npy_i32};
 
 /// Relative-error gate for the parallel-histogram accumulator fields.
 const REL_TOL: f64 = 1e-6;
+
+fn split_from(s: &str) -> Option<Split> {
+    Some(match s {
+        "no" => Split::No,
+        "bbox" => Split::Bbox,
+        "full" => Split::Full,
+        _ => return None, // "pseudo" is 2D-only; not driven here.
+    })
+}
+
+fn algo_from(s: &str) -> Option<Algo> {
+    Some(match s {
+        "histogram" => Algo::Histogram,
+        "csr" => Algo::Csr,
+        "lut" => Algo::Lut,
+        "csc" => Algo::Csc,
+        _ => return None,
+    })
+}
 
 fn datasets_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../golden/datasets")
@@ -122,7 +147,7 @@ fn cmp_f64(dir: &Path, name: &str, actual: &[f64], exact: bool) -> Option<bool> 
 }
 
 #[test]
-fn histogram_dropin_within_tolerance() {
+fn dropin_matches_golden() {
     let mut datasets_checked = 0usize;
     let mut total_fail = 0usize;
 
@@ -135,11 +160,16 @@ fn histogram_dropin_within_tolerance() {
             .iter()
             .map(|v| v.as_str().unwrap().to_string())
             .collect();
-        // The drop-in implements the no-split histogram path only; the bbox/full
-        // split-histogram goldens are validated kernel-side (split_histogram_golden).
-        if method.first().map(String::as_str) != Some("no")
-            || method.get(1).map(String::as_str) != Some("histogram")
-        {
+        let (Some(split), Some(algo)) = (
+            method.first().and_then(|s| split_from(s)),
+            method.get(1).and_then(|s| algo_from(s)),
+        ) else {
+            continue; // unmapped method (e.g. 2D "pseudo")
+        };
+        let dim = cfg["dim"].as_i64().unwrap_or(1);
+        // 2D dispatch (bbox/full) is wired in a later step; for now integrate2d
+        // is the no-split histogram only, so drive only that method in 2D.
+        if dim == 2 && (split != Split::No || algo != Algo::Histogram) {
             continue;
         }
 
@@ -151,6 +181,7 @@ fn histogram_dropin_within_tolerance() {
             polarization_factor: cfg["polarization_factor"].as_f64(),
             normalization_factor: cfg["normalization_factor"].as_f64().unwrap_or(1.0) as f32,
             error_model: error_model_from_code(cfg["error_model_code"].as_i64().unwrap_or(0)),
+            method: Method { split, algo },
         };
 
         let ai =
@@ -160,40 +191,42 @@ fn histogram_dropin_within_tolerance() {
         let image_i32 = load_npy_i32(dir.join("image.npy")).expect("image");
         let image: Vec<f32> = image_i32.iter().map(|&v| v as f32).collect();
 
-        let dim = cfg["dim"].as_i64().unwrap_or(1);
+        // The no-split histogram accumulation is parallel (tolerance gate); every
+        // other engine is serial (bit-exact). Axes are always bit-exact.
+        let is_no_hist = split == Split::No && algo == Algo::Histogram;
+        let acc_exact = !is_no_hist;
         let mut results: Vec<Option<bool>> = vec![];
 
         if dim == 1 {
             let npt = cfg["npt"].as_u64().expect("npt") as usize;
             let res = ai.integrate1d(&image, npt, unit, &opts);
-            // Axis: bit-exact. Accumulator fields: relative <= REL_TOL.
             results.push(cmp_f64(&dir, "radial", &res.radial, true));
-            results.push(cmp_f32(&dir, "intensity", &res.intensity, false));
-            results.push(cmp_f32(&dir, "sigma", &res.sigma, false));
-            results.push(cmp_f32(&dir, "count", &res.count, false));
-            results.push(cmp_f32(&dir, "sum_signal", &res.sum_signal, false));
-            results.push(cmp_f32(&dir, "sum_variance", &res.sum_variance, false));
-            results.push(cmp_f32(
-                &dir,
-                "sum_normalization",
-                &res.sum_normalization,
-                false,
-            ));
-            results.push(cmp_f32(
-                &dir,
-                "sum_normalization2",
-                &res.sum_normalization2,
-                false,
-            ));
-            results.push(cmp_f32(&dir, "std", &res.std, false));
-            results.push(cmp_f32(&dir, "sem", &res.sem, false));
+            results.push(cmp_f32(&dir, "intensity", &res.intensity, acc_exact));
+            results.push(cmp_f32(&dir, "sigma", &res.sigma, acc_exact));
+            results.push(cmp_f32(&dir, "std", &res.std, acc_exact));
+            results.push(cmp_f32(&dir, "sem", &res.sem, acc_exact));
+            // The accumulators are f64 in the result; the no-split histogram
+            // golden stores them as f32, so compare that path downcast.
+            let mut cmp_acc = |name: &str, v: &[f64]| {
+                let r = if is_no_hist {
+                    let v32: Vec<f32> = v.iter().map(|&x| x as f32).collect();
+                    cmp_f32(&dir, name, &v32, false)
+                } else {
+                    cmp_f64(&dir, name, v, true)
+                };
+                results.push(r);
+            };
+            cmp_acc("count", &res.count);
+            cmp_acc("sum_signal", &res.sum_signal);
+            cmp_acc("sum_variance", &res.sum_variance);
+            cmp_acc("sum_normalization", &res.sum_normalization);
+            cmp_acc("sum_normalization2", &res.sum_normalization2);
         } else {
             let npt_rad = cfg["npt_rad"].as_u64().expect("npt_rad") as usize;
             let npt_azim = cfg["npt_azim"].as_u64().expect("npt_azim") as usize;
             let res = ai.integrate2d(&image, npt_rad, npt_azim, unit, &opts);
-            // 2D: radial/azimuthal/intensity/sigma/std/sem are f32-or-f64 per
-            // the engine; sums and count are full-precision f64. Axes bit-exact;
-            // accumulator fields relative <= REL_TOL.
+            // 2D no-split histogram: sums/count are full-precision f64. Axes
+            // bit-exact; accumulator fields relative <= REL_TOL.
             results.push(cmp_f64(&dir, "radial", &res.radial, true));
             results.push(cmp_f64(&dir, "azimuthal", &res.azimuthal, true));
             results.push(cmp_f32(&dir, "intensity", &res.intensity, false));
@@ -226,7 +259,7 @@ fn histogram_dropin_within_tolerance() {
 
     assert!(
         datasets_checked > 0,
-        "no histogram golden datasets found; run golden/gen_golden.py"
+        "no golden datasets found; run golden/gen_golden.py"
     );
     assert_eq!(
         total_fail, 0,

@@ -29,12 +29,19 @@
 //! 5. `preproc4` → the per-pixel `[signal, variance, norm, count]` rows.
 //! 6. `histogram1d` / `histogram2d` → the binned reduction.
 
+use std::f64::consts::PI;
+
 use rsfai_core::dtype::ErrorModel;
 use rsfai_detectors::Detector;
 use rsfai_geometry::{
-    calc_pos_zyx, center_array, polarization_array, solid_angle_array, PoniFile, PosZyx, Unit,
+    calc_pos_zyx, center_array, corner_array_f32, delta_radial, polarization_array,
+    solid_angle_array, unscaled_center_array, PoniFile, PosZyx, Unit,
 };
-use rsfai_integrate::{histogram1d, histogram2d, Hist2dOptions};
+use rsfai_integrate::{
+    build_bbox_csc_1d, build_bbox_csr_1d, build_bbox_lut_1d, build_full_csc_1d, build_full_csr_1d,
+    build_full_lut_1d, csc_integrate1d, csr_integrate1d, histogram1d, histogram1d_bbox,
+    histogram1d_full, histogram2d, lut_integrate1d, CsrIntegrate1d, Hist2dOptions, Integrate1d,
+};
 use rsfai_preproc::{preproc4, PreprocOptions};
 
 mod error;
@@ -49,6 +56,49 @@ pub use rsfai_geometry::Unit as RadialUnit;
 /// The order pyFAI's `solidAngleArray` uses by default (`SolidAngleFactor`,
 /// `1/cos³`). Matches the `corrections_golden` validation.
 const SOLID_ANGLE_ORDER: f64 = 3.0;
+
+/// `2π`, the `pos1_period` the 1D full-split build defaults to (`common.py` does
+/// not forward `unit.period` for 1D).
+const TWO_PI: f64 = 2.0 * PI;
+
+/// Pixel-splitting scheme — the first element of pyFAI's method tuple.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Split {
+    /// No split: each pixel falls wholly in the bin its center lands in.
+    #[default]
+    No,
+    /// Bounding-box split: a pixel is spread over the bins its `center ± delta`
+    /// box overlaps (separable in radial/azimuth).
+    Bbox,
+    /// Full split: a pixel's four corners are clipped against the bin grid.
+    Full,
+}
+
+/// Binning algorithm — the second element of pyFAI's method tuple. All four
+/// reproduce the same per-pixel split; they differ only in the data structure
+/// (`histogram` scatters directly; `csr`/`lut`/`csc` build a sparse matrix once
+/// and re-apply it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Algo {
+    /// Direct histogram scatter.
+    #[default]
+    Histogram,
+    /// Compressed sparse row matrix.
+    Csr,
+    /// Dense look-up table.
+    Lut,
+    /// Compressed sparse column matrix.
+    Csc,
+}
+
+/// An integration method = `(split, algo)`, the cython implementation of pyFAI's
+/// `(split, algo, "cython")` method tuple. The default `("no", "histogram")` is
+/// the path the orchestrator originally shipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Method {
+    pub split: Split,
+    pub algo: Algo,
+}
 
 /// Knobs shared by [`AzimuthalIntegrator::integrate1d`] and
 /// [`AzimuthalIntegrator::integrate2d`], mirroring the pyFAI integrate kwargs
@@ -68,25 +118,34 @@ pub struct IntegrationOptions {
     pub normalization_factor: f32,
     /// Error model: `No` skips the variance/sigma propagation.
     pub error_model: ErrorModel,
+    /// Pixel-split + binning algorithm. The default `("no", "histogram")` keeps
+    /// the original no-split path; `bbox`/`full` engage the corner/delta geometry.
+    pub method: Method,
 }
 
 impl Default for IntegrationOptions {
     /// pyFAI's defaults: solid angle on, no polarization, unit normalization,
-    /// no error model.
+    /// no error model, no-split histogram.
     fn default() -> Self {
         IntegrationOptions {
             correct_solid_angle: true,
             polarization_factor: None,
             normalization_factor: 1.0,
             error_model: ErrorModel::No,
+            method: Method::default(),
         }
     }
 }
 
 /// The 1D integration result, field-for-field the subset of pyFAI's
-/// `Integrate1dResult` the engines populate. `radial` carries the unit scale;
-/// the `sum_*` arrays are the raw f32 histograms (the `acc_t` accumulators
-/// downcast to `data_t`, matching the 1D histogram engine).
+/// `Integrate1dResult` the engines populate. `radial` carries the unit scale.
+///
+/// The `sum_*` / `count` accumulators are **f64** (`acc_t`): the sparse engines
+/// (`csr`/`lut`/`csc`) and the split-histogram engines expose them at full
+/// precision, so the drop-in does too. The no-split histogram engine downcasts
+/// them to f32 internally (`data_t`); that path widens its f32 result back to
+/// f64 here (the f32 value, losslessly), so a single type serves every method.
+/// `intensity`/`sigma`/`std`/`sem` are f32 in every engine.
 #[derive(Debug, Clone)]
 pub struct Integrate1dResult {
     /// Scaled radial bin centres (`position * unit.scale`), length `npt`.
@@ -95,16 +154,16 @@ pub struct Integrate1dResult {
     pub intensity: Vec<f32>,
     /// Standard error on the mean (= `sem`; f32). Zero unless an error model.
     pub sigma: Vec<f32>,
-    /// Number of valid pixels per bin (f32).
-    pub count: Vec<f32>,
-    /// Binned signal (f32).
-    pub sum_signal: Vec<f32>,
-    /// Binned variance (f32).
-    pub sum_variance: Vec<f32>,
-    /// Binned normalization (f32).
-    pub sum_normalization: Vec<f32>,
-    /// Binned normalization² (f32).
-    pub sum_normalization2: Vec<f32>,
+    /// Number of valid pixels per bin (f64).
+    pub count: Vec<f64>,
+    /// Binned signal (f64).
+    pub sum_signal: Vec<f64>,
+    /// Binned variance (f64).
+    pub sum_variance: Vec<f64>,
+    /// Binned normalization (f64).
+    pub sum_normalization: Vec<f64>,
+    /// Binned normalization² (f64).
+    pub sum_normalization2: Vec<f64>,
     /// Propagated standard deviation `sqrt(variance / norm²)` (f32).
     pub std: Vec<f32>,
     /// Standard error on the mean `sqrt(variance) / normalization` (f32).
@@ -215,6 +274,27 @@ impl AzimuthalIntegrator {
         )
     }
 
+    /// The f32 `(npix, 4, 2)` corner array (radial in `unit.space` + chi) the
+    /// bbox/full splits bin on: `corner_array_f32` over the corner-grid lab
+    /// coords (`calc_pos_zyx` over `detector.corner_positions_f64`). `chiDiscAtPi
+    /// = true` (pyFAI's default).
+    fn corner_array(&self, unit: Unit) -> Vec<f32> {
+        let (cp1, cp2) = self.detector.corner_positions_f64();
+        let grid = calc_pos_zyx(
+            self.dist,
+            self.poni1,
+            self.poni2,
+            self.rot1,
+            self.rot2,
+            self.rot3,
+            &cp1,
+            &cp2,
+            None,
+            self.detector.orientation,
+        );
+        corner_array_f32(&grid, self.detector.shape, unit, self.wavelength, true)
+    }
+
     /// The static gap mask as a flat row-major `i8` vector (`1` = masked), or
     /// `None` for a gapless detector — exactly `create_mask(data, mask=None)`
     /// when the integrator carries only the detector mask.
@@ -270,8 +350,14 @@ impl AzimuthalIntegrator {
     }
 
     /// Integrate `image` (the detector frame already cast to f32) into a 1D
-    /// radial curve of `npt` bins in `unit`, using the no-split histogram path.
-    /// `image` must be the flat row-major frame of length `detector.size()`.
+    /// radial curve of `npt` bins in `unit`, using the `opts.method` split and
+    /// binning algorithm. `image` must be the flat row-major frame of length
+    /// `detector.size()`.
+    ///
+    /// Binning is on the **unscaled** internal radial (`unscaled_center_array`),
+    /// and the reported `radial` axis multiplies the binned centers by
+    /// `unit.scale` — pyFAI's structure, so a non-unit scale (e.g. `2th_deg`) is
+    /// applied exactly once.
     pub fn integrate1d(
         &self,
         image: &[f32],
@@ -287,26 +373,80 @@ impl AzimuthalIntegrator {
             self.detector.size()
         );
         let pos = self.pixel_positions();
-        let radial = center_array(unit, &pos.x, &pos.y, &pos.z, self.wavelength);
+        let radial = unscaled_center_array(unit.space, &pos.x, &pos.y, &pos.z, self.wavelength);
         let mask = self.build_mask();
         let prep = self.preproc_rows(image, &pos, mask.as_deref(), opts);
+        let em = opts.error_model;
 
-        // The 1D histogram bins every pixel (masked pixels contribute zeroed
-        // rows from preproc but still set the data range); no mask, full range.
-        let h = histogram1d(&radial, &prep, npt, None, opts.error_model, 0.0);
-
-        Integrate1dResult {
-            radial: h.position.iter().map(|&p| p * unit.scale).collect(),
-            intensity: h.intensity,
-            sigma: h.sigma,
-            count: h.count,
-            sum_signal: h.signal,
-            sum_variance: h.variance,
-            sum_normalization: h.normalization,
-            sum_normalization2: h.norm_sq,
-            std: h.std,
-            sem: h.sem,
+        // The no-split histogram is the one path whose accumulators are f32; it
+        // also bins every pixel (masked pixels are zeroed by preproc but still
+        // set the range), so no mask is forwarded.
+        if opts.method.split == Split::No && opts.method.algo == Algo::Histogram {
+            let h = histogram1d(&radial, &prep, npt, None, em, 0.0);
+            return histogram_to_result(h, unit.scale);
         }
+
+        // Every other method excludes masked pixels from the matrix/scatter.
+        // Radial units (q/2θ/r) are non-negative ⇒ `allow_pos0_neg = false`. The
+        // 1D full-split build is not handed chiDiscAtPi / pos1_period (common.py
+        // does not forward them), so they take the defaults true / 2π.
+        let mask_ref = mask.as_deref();
+        let allow_neg = false;
+        let r = match opts.method.split {
+            Split::Full => {
+                // Full split bins on the four-corner array (radial + chi), f32
+                // upcast to f64 — the input pyFAI's FullSplitIntegrator receives.
+                let corners = self.corner_array(unit);
+                let cf: Vec<f64> = corners.iter().map(|&v| v as f64).collect();
+                match opts.method.algo {
+                    Algo::Histogram => histogram1d_full(
+                        &cf, &prep, mask_ref, npt, em, 0.0, allow_neg, true, TWO_PI,
+                    ),
+                    Algo::Csr => {
+                        let (m, c) = build_full_csr_1d(&cf, mask_ref, npt, allow_neg, true, TWO_PI);
+                        csr_integrate1d(&m, &prep, c, em, 0.0)
+                    }
+                    Algo::Lut => {
+                        let (m, c) = build_full_lut_1d(&cf, mask_ref, npt, allow_neg, true, TWO_PI);
+                        lut_integrate1d(&m, &prep, c, em, 0.0)
+                    }
+                    Algo::Csc => {
+                        let (m, c) = build_full_csc_1d(&cf, mask_ref, npt, allow_neg, true, TWO_PI);
+                        csc_integrate1d(&m, &prep, c, em, 0.0)
+                    }
+                }
+            }
+            split => {
+                // No / Bbox: the bbox-family build on (pos0, dpos0). No-split has
+                // dpos0 = None (each pixel collapses to its center); bbox uses the
+                // radial half-width `delta_array`.
+                let delta = (split == Split::Bbox).then(|| {
+                    let corners = self.corner_array(unit);
+                    delta_radial(&corners, &radial)
+                });
+                let dpos0 = delta.as_deref();
+                match opts.method.algo {
+                    Algo::Histogram => {
+                        // No-split-histogram returns above; this is bbox-histogram.
+                        let d = dpos0.expect("bbox split has a radial delta");
+                        histogram1d_bbox(&radial, d, &prep, mask_ref, npt, em, 0.0, allow_neg)
+                    }
+                    Algo::Csr => {
+                        let (m, c) = build_bbox_csr_1d(&radial, dpos0, mask_ref, npt, allow_neg);
+                        csr_integrate1d(&m, &prep, c, em, 0.0)
+                    }
+                    Algo::Lut => {
+                        let (m, c) = build_bbox_lut_1d(&radial, dpos0, mask_ref, npt, allow_neg);
+                        lut_integrate1d(&m, &prep, c, em, 0.0)
+                    }
+                    Algo::Csc => {
+                        let (m, c) = build_bbox_csc_1d(&radial, dpos0, mask_ref, npt, allow_neg);
+                        csc_integrate1d(&m, &prep, c, em, 0.0)
+                    }
+                }
+            }
+        };
+        csr_to_result(r, unit.scale)
     }
 
     /// Integrate `image` into a 2D `(radial, azimuthal)` cake of `npt_rad ×
@@ -329,7 +469,10 @@ impl AzimuthalIntegrator {
             self.detector.size()
         );
         let pos = self.pixel_positions();
-        let radial = center_array(unit, &pos.x, &pos.y, &pos.z, self.wavelength);
+        // Bin on the unscaled internal radial; the reported axis scales once
+        // (the 2D dispatch for bbox/full is wired in a later step — this path is
+        // still the no-split histogram).
+        let radial = unscaled_center_array(unit.space, &pos.x, &pos.y, &pos.z, self.wavelength);
         let azimuthal = center_array(Unit::CHI_RAD, &pos.x, &pos.y, &pos.z, self.wavelength);
         let mask = self.build_mask();
         let prep = self.preproc_rows(image, &pos, mask.as_deref(), opts);
@@ -367,6 +510,42 @@ impl AzimuthalIntegrator {
             std: h.std,
             sem: h.sem,
         }
+    }
+}
+
+/// Map the no-split histogram engine's `Integrate1d` (f32 accumulators) to the
+/// unified result, widening the f32 `sum_*`/`count` to f64 (lossless — the f32
+/// truncation already happened in the engine's final reduction).
+fn histogram_to_result(h: Integrate1d, scale: f64) -> Integrate1dResult {
+    let widen = |v: Vec<f32>| v.into_iter().map(f64::from).collect();
+    Integrate1dResult {
+        radial: h.position.iter().map(|&p| p * scale).collect(),
+        intensity: h.intensity,
+        sigma: h.sigma,
+        count: widen(h.count),
+        sum_signal: widen(h.signal),
+        sum_variance: widen(h.variance),
+        sum_normalization: widen(h.normalization),
+        sum_normalization2: widen(h.norm_sq),
+        std: h.std,
+        sem: h.sem,
+    }
+}
+
+/// Map a sparse / split engine's `CsrIntegrate1d` (f64 accumulators) to the
+/// unified result. `sum_norm_sq` is the `sum_normalization2` field.
+fn csr_to_result(r: CsrIntegrate1d, scale: f64) -> Integrate1dResult {
+    Integrate1dResult {
+        radial: r.position.iter().map(|&p| p * scale).collect(),
+        intensity: r.intensity,
+        sigma: r.sigma,
+        count: r.count,
+        sum_signal: r.sum_signal,
+        sum_variance: r.sum_variance,
+        sum_normalization: r.sum_normalization,
+        sum_normalization2: r.sum_norm_sq,
+        std: r.std,
+        sem: r.sem,
     }
 }
 
