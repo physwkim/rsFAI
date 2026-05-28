@@ -429,7 +429,14 @@ def run_live(d, cfg):
 
 
 def dataset_dirs():
-    return sorted(p.name for p in DATASETS.iterdir() if (p / "manifest.json").exists())
+    # Skip OpenCL datasets: they carry a reduced manifest (no error_model_code /
+    # cython intermediates) and are validated by the rsfai-opencl harness, not
+    # this cython-kernel parity test. Mirrors the Rust golden discovery filter.
+    return sorted(
+        p.name
+        for p in DATASETS.iterdir()
+        if (p / "manifest.json").exists() and not (p / "opencl_params.json").exists()
+    )
 
 
 def main():
