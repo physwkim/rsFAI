@@ -87,6 +87,7 @@ pub(crate) fn calc_boundaries_1d(
     delta_pos0: Option<&[PositionT]>,
     mask: Option<&[i8]>,
     allow_pos0_neg: bool,
+    pos0_range: Option<(PositionT, PositionT)>,
 ) -> (PositionT, PositionT) {
     let mut pos0_min = PositionT::INFINITY;
     let mut pos0_max = PositionT::NEG_INFINITY;
@@ -105,7 +106,27 @@ pub(crate) fn calc_boundaries_1d(
         pos0_min = pos0_min.max(0.0);
         pos0_max = pos0_max.max(0.0);
     }
+    apply_range(&mut pos0_min, &mut pos0_max, pos0_range);
     (pos0_min, pos0_max)
+}
+
+/// Override `(min, max)` with an explicit range — pyFAI's `calc_boundaries` tail
+/// (`pos0_min = min(pos0_range); pos0_max = max(pos0_range)` for a 2-tuple),
+/// applied **after** the `allow_pos0_neg` clamp / `clip_pos1` so a user range is
+/// honored verbatim (not re-clamped to 0 or the azimuthal period). The fold that
+/// produced the incoming `(min, max)` still runs — its result is simply
+/// discarded here — matching pyFAI, which only skips the fold when *both* ranges
+/// are given (and even then the folded values would be overwritten).
+#[inline]
+pub(crate) fn apply_range(
+    min: &mut PositionT,
+    max: &mut PositionT,
+    range: Option<(PositionT, PositionT)>,
+) {
+    if let Some((lo, hi)) = range {
+        *min = lo.min(hi);
+        *max = lo.max(hi);
+    }
 }
 
 /// Build the bbox CSR matrix and the (unscaled) bin centers — port of
@@ -118,6 +139,7 @@ pub fn build_bbox_csr_1d(
     mask: Option<&[i8]>,
     bins: usize,
     allow_pos0_neg: bool,
+    pos0_range: Option<(PositionT, PositionT)>,
 ) -> (Csr, Vec<PositionT>) {
     assert!(bins >= 1, "bins must be >= 1");
     let size = pos0.len();
@@ -128,7 +150,8 @@ pub fn build_bbox_csr_1d(
         assert_eq!(m.len(), size, "mask length mismatch");
     }
 
-    let (pos0_min, pos0_maxin) = calc_boundaries_1d(pos0, delta_pos0, mask, allow_pos0_neg);
+    let (pos0_min, pos0_maxin) =
+        calc_boundaries_1d(pos0, delta_pos0, mask, allow_pos0_neg, pos0_range);
     let pos0_max = calc_upper_bound(pos0_maxin);
     let delta = (pos0_max - pos0_min) / (bins as PositionT);
 
@@ -219,13 +242,22 @@ fn flatten_csr(bin_idx: &[Vec<IndexT>], bin_coef: &[Vec<DataT>]) -> Csr {
 // clipped against the `(radial, azimuthal)` grid; the overlap fractions are the
 // CSR coefficients. Output bin index is `bin0·bins1 + bin1` (radial-major).
 
-/// Axis-bounding policy for the 2D bbox boundary fold — the `calc_boundaries`
-/// knobs passed as one unit. `allow_pos0_neg = false` clamps the radial axis to
-/// `>= 0`; when `pos1_period > 0` the azimuthal axis is clipped to `[-π, π]`
-/// (`chi_disc_at_pi`) or `[0, 2π]`, using **f32 π** (`float pi = <float> M_PI`).
-/// The 1D CSR setup (`common.py`) does not forward `chiDiscAtPi` to
-/// `HistoBBox2d`, so it takes the constructor default `true`; `pos1_period` is
-/// `azimuth_unit.period` (acts only as the clip flag — the range is radian ±π).
+/// Axis-bounding policy for the 2D boundary fold — the `calc_boundaries` knobs
+/// passed as one unit, shared by the bbox builds, `histogram2d_full`, and (via
+/// [`calc_boundaries_full_2d`]) the full-split 2D builds. `allow_pos0_neg =
+/// false` clamps the radial axis to `>= 0`; when `pos1_period > 0` the azimuthal
+/// axis is clipped to `[-π, π]` (`chi_disc_at_pi`) or `[0, 2π]`, using **f32 π**
+/// (`float pi = <float> M_PI`). The 1D CSR setup (`common.py`) does not forward
+/// `chiDiscAtPi` to `HistoBBox2d`, so it takes the constructor default `true`;
+/// `pos1_period` is `azimuth_unit.period` (acts only as the clip flag — the
+/// range is radian ±π).
+///
+/// `radial_range` / `azimuth_range`, when `Some`, override the corresponding
+/// folded axis with the explicit `(min, max)` — pyFAI's `calc_boundaries` tail
+/// (`pos0_min = min(pos0_range); pos0_max = max(pos0_range)`), applied **after**
+/// the clamp/clip so a user range is honored verbatim. The values are the
+/// **unscaled** radial / **radian** azimuth the engines bin in (the orchestrator
+/// converts the user's scaled-unit / degree ranges before populating these).
 #[derive(Debug, Clone)]
 pub struct Bbox2dBounds {
     /// Allow the radial axis below 0 (false clamps min/max to `>= 0`).
@@ -234,6 +266,10 @@ pub struct Bbox2dBounds {
     pub chi_disc_at_pi: bool,
     /// Azimuthal period; `> 0` turns on the `[-π, π]` clip.
     pub pos1_period: PositionT,
+    /// Explicit unscaled radial `(min, max)` override, or `None` for the data fold.
+    pub radial_range: Option<(PositionT, PositionT)>,
+    /// Explicit radian azimuthal `(min, max)` override, or `None` for the fold.
+    pub azimuth_range: Option<(PositionT, PositionT)>,
 }
 
 /// 2D bbox boundaries — port of `calc_boundaries`: folds each pixel's bounding
@@ -288,6 +324,8 @@ pub(crate) fn calc_boundaries_2d(
         pos1_max = pos1_max.min(max_bound);
         pos1_min = pos1_min.max(min_bound);
     }
+    apply_range(&mut pos0_min, &mut pos0_max, bounds.radial_range);
+    apply_range(&mut pos1_min, &mut pos1_max, bounds.azimuth_range);
     (pos0_min, pos0_max, pos1_min, pos1_max)
 }
 
@@ -616,6 +654,7 @@ pub(crate) fn calc_boundaries_full_1d(
     corners: &[PositionT],
     mask: Option<&[i8]>,
     allow_pos0_neg: bool,
+    pos0_range: Option<(PositionT, PositionT)>,
 ) -> (PositionT, PositionT) {
     let size = corners.len() / 8;
     let mut pos0_min = PositionT::INFINITY;
@@ -646,6 +685,7 @@ pub(crate) fn calc_boundaries_full_1d(
         pos0_min = pos0_min.max(0.0);
         pos0_max = pos0_max.max(0.0);
     }
+    apply_range(&mut pos0_min, &mut pos0_max, pos0_range);
     (pos0_min, pos0_max)
 }
 
@@ -658,6 +698,7 @@ pub(crate) fn calc_boundaries_full_1d(
 /// per-bin trapezoidal overlap normalized to sum to 1 (computed in f64, downcast
 /// to f32). For the standard radial units this path is invoked with
 /// `chi_disc_at_pi = true`, `pos1_period = 2π`, `allow_pos0_neg = false`.
+#[allow(clippy::too_many_arguments)]
 pub fn build_full_csr_1d(
     corners: &[PositionT],
     mask: Option<&[i8]>,
@@ -665,6 +706,7 @@ pub fn build_full_csr_1d(
     allow_pos0_neg: bool,
     chi_disc_at_pi: bool,
     pos1_period: PositionT,
+    pos0_range: Option<(PositionT, PositionT)>,
 ) -> (Csr, Vec<PositionT>) {
     assert!(bins >= 1, "bins must be >= 1");
     assert_eq!(
@@ -677,7 +719,7 @@ pub fn build_full_csr_1d(
         assert_eq!(m.len(), size, "mask length mismatch");
     }
 
-    let (pos0_min, pos0_maxin) = calc_boundaries_full_1d(corners, mask, allow_pos0_neg);
+    let (pos0_min, pos0_maxin) = calc_boundaries_full_1d(corners, mask, allow_pos0_neg, pos0_range);
     let pos0_max = calc_upper_bound(pos0_maxin);
     let delta = (pos0_max - pos0_min) / (bins as PositionT);
 
@@ -786,9 +828,7 @@ pub(crate) fn clip(value: f64, min_val: f64, max_val: f64) -> f64 {
 pub(crate) fn calc_boundaries_full_2d(
     corners: &[PositionT],
     mask: Option<&[i8]>,
-    allow_pos0_neg: bool,
-    chi_disc_at_pi: bool,
-    pos1_period: PositionT,
+    bounds: &Bbox2dBounds,
 ) -> (PositionT, PositionT, PositionT, PositionT) {
     let size = corners.len() / 8;
     let mut pos0_min = PositionT::INFINITY;
@@ -819,18 +859,20 @@ pub(crate) fn calc_boundaries_full_2d(
         pos1_max = pos1_max.max(max4(z0, z1, z2, z3));
         pos1_min = pos1_min.min(min4(z0, z1, z2, z3));
     }
-    if !allow_pos0_neg {
+    if !bounds.allow_pos0_neg {
         pos0_min = pos0_min.max(0.0);
         pos0_max = pos0_max.max(0.0);
     }
-    if pos1_period > 0.0 {
-        let cd: i32 = if chi_disc_at_pi { 1 } else { 0 };
+    if bounds.pos1_period > 0.0 {
+        let cd: i32 = if bounds.chi_disc_at_pi { 1 } else { 0 };
         let pi32 = std::f32::consts::PI;
         let max_bound = ((2 - cd) as f32 * pi32) as PositionT;
         let min_bound = (-(cd as f32) * pi32) as PositionT;
         pos1_max = pos1_max.min(max_bound);
         pos1_min = pos1_min.max(min_bound);
     }
+    apply_range(&mut pos0_min, &mut pos0_max, bounds.radial_range);
+    apply_range(&mut pos1_min, &mut pos1_max, bounds.azimuth_range);
     (pos0_min, pos0_max, pos1_min, pos1_max)
 }
 
@@ -999,11 +1041,10 @@ pub fn build_full_csr_2d(
     corners: &[PositionT],
     mask: Option<&[i8]>,
     bins: (usize, usize),
-    allow_pos0_neg: bool,
-    chi_disc_at_pi: bool,
-    pos1_period: PositionT,
+    bounds: &Bbox2dBounds,
 ) -> (Csr, Vec<PositionT>, Vec<PositionT>) {
     let (bins0, bins1) = bins;
+    let (chi_disc_at_pi, pos1_period) = (bounds.chi_disc_at_pi, bounds.pos1_period);
     assert!(bins0 >= 1 && bins1 >= 1, "bins must be >= 1 in each dim");
     assert_eq!(
         corners.len() % 8,
@@ -1016,7 +1057,7 @@ pub fn build_full_csr_2d(
     }
 
     let (pos0_min, pos0_maxin, pos1_min, pos1_maxin) =
-        calc_boundaries_full_2d(corners, mask, allow_pos0_neg, chi_disc_at_pi, pos1_period);
+        calc_boundaries_full_2d(corners, mask, bounds);
     let pos0_max = calc_upper_bound(pos0_maxin);
     let pos1_max = calc_upper_bound(pos1_maxin);
     let delta0 = (pos0_max - pos0_min) / (bins0 as PositionT);
@@ -1482,7 +1523,7 @@ mod tests {
         // Two pixels with no delta -> no splitting -> each lands in one bin with
         // coef 1.0.
         let pos0 = [1.0f64, 2.0];
-        let (csr, centers) = build_bbox_csr_1d(&pos0, None, None, 4, false);
+        let (csr, centers) = build_bbox_csr_1d(&pos0, None, None, 4, false, None);
         assert_eq!(centers.len(), 4);
         assert_eq!(csr.indptr[0], 0);
         assert_eq!(*csr.indptr.last().unwrap(), 2); // two entries total
@@ -1494,7 +1535,7 @@ mod tests {
         // One pixel spanning multiple bins: its split coefficients sum to 1.
         let pos0 = [5.0f64];
         let delta = [3.0f64]; // wide -> spans several bins
-        let (csr, _) = build_bbox_csr_1d(&pos0, Some(&delta), None, 10, false);
+        let (csr, _) = build_bbox_csr_1d(&pos0, Some(&delta), None, 10, false, None);
         let s: f32 = csr.data.iter().sum();
         assert!((s - 1.0).abs() < 1e-6, "split coefs sum to ~1, got {s}");
     }
@@ -1513,7 +1554,8 @@ mod tests {
     #[test]
     fn full_split_single_bin_pixel_keeps_unit_coef() {
         let corners = two_pixel_corners();
-        let (csr, _) = build_full_csr_1d(&corners, None, 8, false, true, std::f64::consts::TAU);
+        let (csr, _) =
+            build_full_csr_1d(&corners, None, 8, false, true, std::f64::consts::TAU, None);
         // Pixel 0 stays within one bin -> exactly one entry, coef 1.0.
         let p0: Vec<f32> = csr
             .indices
@@ -1528,7 +1570,8 @@ mod tests {
     #[test]
     fn full_split_coefs_sum_to_one() {
         let corners = two_pixel_corners();
-        let (csr, _) = build_full_csr_1d(&corners, None, 8, false, true, std::f64::consts::TAU);
+        let (csr, _) =
+            build_full_csr_1d(&corners, None, 8, false, true, std::f64::consts::TAU, None);
         // The split pixel's overlap coefficients are normalized to sum to 1.
         let s: f32 = csr
             .indices
@@ -1545,7 +1588,7 @@ mod tests {
         // Two pixels in bin 0 (no split): signal [10, 20], norm [2, 2].
         // sum_signal = 30, sum_norm = 4, intensity = 7.5.
         let pos0 = [1.0f64, 1.0];
-        let (csr, centers) = build_bbox_csr_1d(&pos0, None, None, 3, false);
+        let (csr, centers) = build_bbox_csr_1d(&pos0, None, None, 3, false, None);
         let prep = [10.0f32, 0.0, 2.0, 1.0, 20.0, 0.0, 2.0, 1.0];
         let r = csr_integrate1d(&csr, &prep, centers, ErrorModel::No, 0.0);
         assert_eq!(r.sum_signal[0], 30.0);

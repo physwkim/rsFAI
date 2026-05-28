@@ -116,10 +116,6 @@ pub struct Method {
 /// Knobs shared by [`AzimuthalIntegrator::integrate1d`] and
 /// [`AzimuthalIntegrator::integrate2d`], mirroring the pyFAI integrate kwargs
 /// that affect the per-pixel preprocessing and the reduction.
-///
-/// Radial/azimuth ranges are intentionally absent: no golden dataset exercises
-/// a non-default range, so the range-normalization path is not yet ported (it
-/// would ship unvalidated arithmetic). The full data range is always used.
 #[derive(Debug, Clone)]
 pub struct IntegrationOptions {
     /// Apply the solid-angle correction (`correctSolidAngle`).
@@ -134,11 +130,16 @@ pub struct IntegrationOptions {
     /// Pixel-split + binning algorithm. The default `("no", "histogram")` keeps
     /// the original no-split path; `bbox`/`full` engage the corner/delta geometry.
     pub method: Method,
+    /// Radial `(min, max)` in the integration unit's **scaled** values (pyFAI's
+    /// `radial_range`), or `None` to bin the full data range. The orchestrator
+    /// divides by `unit.scale` to the unscaled radial the engines bin in. Pixels
+    /// outside the range are dropped (boundary clip / per-pixel skip).
+    pub radial_range: Option<(f64, f64)>,
 }
 
 impl Default for IntegrationOptions {
     /// pyFAI's defaults: solid angle on, no polarization, unit normalization,
-    /// no error model, no-split histogram.
+    /// no error model, no-split histogram, full data range.
     fn default() -> Self {
         IntegrationOptions {
             correct_solid_angle: true,
@@ -146,6 +147,7 @@ impl Default for IntegrationOptions {
             normalization_factor: 1.0,
             error_model: ErrorModel::No,
             method: Method::default(),
+            radial_range: None,
         }
     }
 }
@@ -390,12 +392,18 @@ impl AzimuthalIntegrator {
         let mask = self.build_mask();
         let prep = self.preproc_rows(image, &pos, mask.as_deref(), opts);
         let em = opts.error_model;
+        // `radial_range` is given in the scaled unit; binning is on the unscaled
+        // radial, so divide each endpoint by `unit.scale` (pyFAI's
+        // `_normalize_range`). `None` keeps the full data range.
+        let pos0_range = opts
+            .radial_range
+            .map(|(lo, hi)| (lo / unit.scale, hi / unit.scale));
 
         // The no-split histogram is the one path whose accumulators are f32; it
         // also bins every pixel (masked pixels are zeroed by preproc but still
         // set the range), so no mask is forwarded.
         if opts.method.split == Split::No && opts.method.algo == Algo::Histogram {
-            let h = histogram1d(&radial, &prep, npt, None, em, 0.0);
+            let h = histogram1d(&radial, &prep, npt, pos0_range, em, 0.0);
             return histogram_to_result(h, unit.scale);
         }
 
@@ -413,18 +421,24 @@ impl AzimuthalIntegrator {
                 let cf: Vec<f64> = corners.iter().map(|&v| v as f64).collect();
                 match opts.method.algo {
                     Algo::Histogram => histogram1d_full(
-                        &cf, &prep, mask_ref, npt, em, 0.0, allow_neg, true, TWO_PI,
+                        &cf, &prep, mask_ref, npt, em, 0.0, allow_neg, true, TWO_PI, pos0_range,
                     ),
                     Algo::Csr => {
-                        let (m, c) = build_full_csr_1d(&cf, mask_ref, npt, allow_neg, true, TWO_PI);
+                        let (m, c) = build_full_csr_1d(
+                            &cf, mask_ref, npt, allow_neg, true, TWO_PI, pos0_range,
+                        );
                         csr_integrate1d(&m, &prep, c, em, 0.0)
                     }
                     Algo::Lut => {
-                        let (m, c) = build_full_lut_1d(&cf, mask_ref, npt, allow_neg, true, TWO_PI);
+                        let (m, c) = build_full_lut_1d(
+                            &cf, mask_ref, npt, allow_neg, true, TWO_PI, pos0_range,
+                        );
                         lut_integrate1d(&m, &prep, c, em, 0.0)
                     }
                     Algo::Csc => {
-                        let (m, c) = build_full_csc_1d(&cf, mask_ref, npt, allow_neg, true, TWO_PI);
+                        let (m, c) = build_full_csc_1d(
+                            &cf, mask_ref, npt, allow_neg, true, TWO_PI, pos0_range,
+                        );
                         csc_integrate1d(&m, &prep, c, em, 0.0)
                     }
                 }
@@ -442,18 +456,23 @@ impl AzimuthalIntegrator {
                     Algo::Histogram => {
                         // No-split-histogram returns above; this is bbox-histogram.
                         let d = dpos0.expect("bbox split has a radial delta");
-                        histogram1d_bbox(&radial, d, &prep, mask_ref, npt, em, 0.0, allow_neg)
+                        histogram1d_bbox(
+                            &radial, d, &prep, mask_ref, npt, em, 0.0, allow_neg, pos0_range,
+                        )
                     }
                     Algo::Csr => {
-                        let (m, c) = build_bbox_csr_1d(&radial, dpos0, mask_ref, npt, allow_neg);
+                        let (m, c) =
+                            build_bbox_csr_1d(&radial, dpos0, mask_ref, npt, allow_neg, pos0_range);
                         csr_integrate1d(&m, &prep, c, em, 0.0)
                     }
                     Algo::Lut => {
-                        let (m, c) = build_bbox_lut_1d(&radial, dpos0, mask_ref, npt, allow_neg);
+                        let (m, c) =
+                            build_bbox_lut_1d(&radial, dpos0, mask_ref, npt, allow_neg, pos0_range);
                         lut_integrate1d(&m, &prep, c, em, 0.0)
                     }
                     Algo::Csc => {
-                        let (m, c) = build_bbox_csc_1d(&radial, dpos0, mask_ref, npt, allow_neg);
+                        let (m, c) =
+                            build_bbox_csc_1d(&radial, dpos0, mask_ref, npt, allow_neg, pos0_range);
                         csc_integrate1d(&m, &prep, c, em, 0.0)
                     }
                 }
@@ -493,13 +512,18 @@ impl AzimuthalIntegrator {
         let prep = self.preproc_rows(image, &pos, mask.as_deref(), opts);
         let em = opts.error_model;
         let bins = (npt_rad, npt_azim);
+        // `radial_range` is the scaled-unit radial; binning is on the unscaled
+        // radial, so divide by `unit.scale` (pyFAI's `_normalize_range`).
+        let radial_range = opts
+            .radial_range
+            .map(|(lo, hi)| (lo / unit.scale, hi / unit.scale));
 
         // No-split histogram: bins every pixel (masked pixels are zeroed by
         // preproc but still set the range), so no mask is forwarded.
         if opts.method.split == Split::No && opts.method.algo == Algo::Histogram {
             let hopts = Hist2dOptions {
                 bins,
-                radial_range: None,
+                radial_range,
                 azimuth_range: None,
                 error_model: em,
                 // Standard radial units (q/2θ/r) are non-negative.
@@ -521,6 +545,8 @@ impl AzimuthalIntegrator {
             allow_pos0_neg: false,
             chi_disc_at_pi: true,
             pos1_period: AZIMUTH_PERIOD_DEG,
+            radial_range,
+            azimuth_range: None,
         };
         let h = match opts.method.split {
             Split::Full => {
@@ -533,18 +559,15 @@ impl AzimuthalIntegrator {
                         histogram2d_full(&cf, &prep, mask_ref, bins, &bounds, em, 0.0)
                     }
                     Algo::Csr => {
-                        let (m, c0, c1) =
-                            build_full_csr_2d(&cf, mask_ref, bins, false, true, AZIMUTH_PERIOD_DEG);
+                        let (m, c0, c1) = build_full_csr_2d(&cf, mask_ref, bins, &bounds);
                         csr_integrate2d(&m, &prep, c0, c1, em, 0.0)
                     }
                     Algo::Lut => {
-                        let (m, c0, c1) =
-                            build_full_lut_2d(&cf, mask_ref, bins, false, true, AZIMUTH_PERIOD_DEG);
+                        let (m, c0, c1) = build_full_lut_2d(&cf, mask_ref, bins, &bounds);
                         lut_integrate2d(&m, &prep, c0, c1, em, 0.0)
                     }
                     Algo::Csc => {
-                        let (m, c0, c1) =
-                            build_full_csc_2d(&cf, mask_ref, bins, false, true, AZIMUTH_PERIOD_DEG);
+                        let (m, c0, c1) = build_full_csc_2d(&cf, mask_ref, bins, &bounds);
                         csc_integrate2d(&m, &prep, c0, c1, em, 0.0)
                     }
                 }

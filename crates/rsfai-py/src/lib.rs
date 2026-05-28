@@ -48,10 +48,9 @@ use rsfai_integrate::{
     histogram1d as rs_histogram1d, histogram1d_bbox as rs_histogram1d_bbox,
     histogram1d_full as rs_histogram1d_full, histogram2d as rs_histogram2d,
     histogram2d_bbox as rs_histogram2d_bbox, histogram2d_full as rs_histogram2d_full,
-    histogram2d_pseudo as rs_histogram2d_pseudo,
-    histogram_preproc as rs_histogram_preproc, lut_integrate1d as rs_lut_integrate1d,
-    lut_integrate2d as rs_lut_integrate2d, Bbox2dBounds, Csc, Csr, CsrIntegrate1d, Hist2dOptions,
-    Integrate1d, Integrate2d, Lut,
+    histogram2d_pseudo as rs_histogram2d_pseudo, histogram_preproc as rs_histogram_preproc,
+    lut_integrate1d as rs_lut_integrate1d, lut_integrate2d as rs_lut_integrate2d, Bbox2dBounds,
+    Csc, Csr, CsrIntegrate1d, Hist2dOptions, Integrate1d, Integrate2d, Lut,
 };
 use rsfai_preproc::{preproc4 as rs_preproc4, PreprocOptions};
 
@@ -367,6 +366,7 @@ fn histogram1d_bbox<'py>(
         em,
         empty,
         allow_pos0_neg,
+        None,
     );
     csr_integrate1d_to_dict(py, &r)
 }
@@ -407,6 +407,10 @@ fn histogram2d_bbox<'py>(
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
+        // Ranges are a high-level orchestration concern; the raw-kernel wrappers
+        // expose the full data extent (no override).
+        radial_range: None,
+        azimuth_range: None,
     };
     let r = rs_histogram2d_bbox(
         pos0_s,
@@ -458,6 +462,7 @@ fn histogram1d_full<'py>(
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
+        None,
     );
     csr_integrate1d_to_dict(py, &r)
 }
@@ -491,8 +496,20 @@ fn histogram2d_full<'py>(
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
+        // Ranges are a high-level orchestration concern; the raw-kernel wrappers
+        // expose the full data extent (no override).
+        radial_range: None,
+        azimuth_range: None,
     };
-    let r = rs_histogram2d_full(corners_s, prep_s, mask_slice(&mask)?, bins, &bounds, em, empty);
+    let r = rs_histogram2d_full(
+        corners_s,
+        prep_s,
+        mask_slice(&mask)?,
+        bins,
+        &bounds,
+        em,
+        empty,
+    );
     integrate2d_to_dict(py, &r)
 }
 
@@ -556,8 +573,14 @@ fn build_bbox_csr_1d<'py>(
         Some(d) => Some(as_slice_1d(d)?),
         None => None,
     };
-    let (csr, centers) =
-        rs_build_bbox_csr_1d(pos0_s, delta_s, mask_slice(&mask)?, bins, allow_pos0_neg);
+    let (csr, centers) = rs_build_bbox_csr_1d(
+        pos0_s,
+        delta_s,
+        mask_slice(&mask)?,
+        bins,
+        allow_pos0_neg,
+        None,
+    );
     Ok(csr_1d_tuple(py, csr, centers))
 }
 
@@ -599,6 +622,10 @@ fn build_bbox_csr_2d<'py>(
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
+        // Ranges are a high-level orchestration concern; the raw-kernel wrappers
+        // expose the full data extent (no override).
+        radial_range: None,
+        azimuth_range: None,
     };
     let (csr, bc0, bc1) = rs_build_bbox_csr_2d(
         as_slice_1d(&pos0)?,
@@ -632,6 +659,7 @@ fn build_full_csr_1d<'py>(
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
+        None,
     );
     Ok(csr_1d_tuple(py, csr, centers))
 }
@@ -649,14 +677,17 @@ fn build_full_csr_2d<'py>(
     chi_disc_at_pi: bool,
     pos1_period: f64,
 ) -> PyResult<Csr2dPy<'py>> {
-    let (csr, bc0, bc1) = rs_build_full_csr_2d(
-        as_slice_1d(&corners)?,
-        mask_slice(&mask)?,
-        bins,
+    let bounds = Bbox2dBounds {
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
-    );
+        // Ranges are a high-level orchestration concern; the raw-kernel wrappers
+        // expose the full data extent (no override).
+        radial_range: None,
+        azimuth_range: None,
+    };
+    let (csr, bc0, bc1) =
+        rs_build_full_csr_2d(as_slice_1d(&corners)?, mask_slice(&mask)?, bins, &bounds);
     Ok(csr_2d_tuple(py, csr, bc0, bc1))
 }
 
@@ -751,8 +782,14 @@ fn build_bbox_csc_1d<'py>(
         Some(d) => Some(as_slice_1d(d)?),
         None => None,
     };
-    let (csc, centers) =
-        rs_build_bbox_csc_1d(pos0_s, delta_s, mask_slice(&mask)?, bins, allow_pos0_neg);
+    let (csc, centers) = rs_build_bbox_csc_1d(
+        pos0_s,
+        delta_s,
+        mask_slice(&mask)?,
+        bins,
+        allow_pos0_neg,
+        None,
+    );
     Ok(csc_1d_tuple(py, csc, centers))
 }
 
@@ -793,6 +830,10 @@ fn build_bbox_csc_2d<'py>(
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
+        // Ranges are a high-level orchestration concern; the raw-kernel wrappers
+        // expose the full data extent (no override).
+        radial_range: None,
+        azimuth_range: None,
     };
     let (csc, bc0, bc1) = rs_build_bbox_csc_2d(
         as_slice_1d(&pos0)?,
@@ -826,6 +867,7 @@ fn build_full_csc_1d<'py>(
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
+        None,
     );
     Ok(csc_1d_tuple(py, csc, centers))
 }
@@ -843,14 +885,17 @@ fn build_full_csc_2d<'py>(
     chi_disc_at_pi: bool,
     pos1_period: f64,
 ) -> PyResult<Csr2dPy<'py>> {
-    let (csc, bc0, bc1) = rs_build_full_csc_2d(
-        as_slice_1d(&corners)?,
-        mask_slice(&mask)?,
-        bins,
+    let bounds = Bbox2dBounds {
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
-    );
+        // Ranges are a high-level orchestration concern; the raw-kernel wrappers
+        // expose the full data extent (no override).
+        radial_range: None,
+        azimuth_range: None,
+    };
+    let (csc, bc0, bc1) =
+        rs_build_full_csc_2d(as_slice_1d(&corners)?, mask_slice(&mask)?, bins, &bounds);
     Ok(csc_2d_tuple(py, csc, bc0, bc1))
 }
 
@@ -941,8 +986,14 @@ fn build_bbox_lut_1d<'py>(
         Some(d) => Some(as_slice_1d(d)?),
         None => None,
     };
-    let (lut, centers) =
-        rs_build_bbox_lut_1d(pos0_s, delta_s, mask_slice(&mask)?, bins, allow_pos0_neg);
+    let (lut, centers) = rs_build_bbox_lut_1d(
+        pos0_s,
+        delta_s,
+        mask_slice(&mask)?,
+        bins,
+        allow_pos0_neg,
+        None,
+    );
     Ok(lut_1d_tuple(py, lut, centers))
 }
 
@@ -983,6 +1034,10 @@ fn build_bbox_lut_2d<'py>(
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
+        // Ranges are a high-level orchestration concern; the raw-kernel wrappers
+        // expose the full data extent (no override).
+        radial_range: None,
+        azimuth_range: None,
     };
     let (lut, bc0, bc1) = rs_build_bbox_lut_2d(
         as_slice_1d(&pos0)?,
@@ -1016,6 +1071,7 @@ fn build_full_lut_1d<'py>(
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
+        None,
     );
     Ok(lut_1d_tuple(py, lut, centers))
 }
@@ -1033,14 +1089,17 @@ fn build_full_lut_2d<'py>(
     chi_disc_at_pi: bool,
     pos1_period: f64,
 ) -> PyResult<Lut2dPy<'py>> {
-    let (lut, bc0, bc1) = rs_build_full_lut_2d(
-        as_slice_1d(&corners)?,
-        mask_slice(&mask)?,
-        bins,
+    let bounds = Bbox2dBounds {
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
-    );
+        // Ranges are a high-level orchestration concern; the raw-kernel wrappers
+        // expose the full data extent (no override).
+        radial_range: None,
+        azimuth_range: None,
+    };
+    let (lut, bc0, bc1) =
+        rs_build_full_lut_2d(as_slice_1d(&corners)?, mask_slice(&mask)?, bins, &bounds);
     Ok(lut_2d_tuple(py, lut, bc0, bc1))
 }
 
@@ -1146,6 +1205,7 @@ impl PyAzimuthalIntegrator {
     #[pyo3(signature = (
         image, npt, unit, *, method=None, correct_solid_angle=true,
         polarization_factor=None, normalization_factor=1.0, error_model=0,
+        radial_range=None,
     ))]
     fn integrate1d<'py>(
         &self,
@@ -1158,6 +1218,7 @@ impl PyAzimuthalIntegrator {
         polarization_factor: Option<f64>,
         normalization_factor: f32,
         error_model: i32,
+        radial_range: Option<(f64, f64)>,
     ) -> PyResult<Bound<'py, PyDict>> {
         let data = self.image_slice(&image)?;
         let m = parse_method(method.as_deref())?;
@@ -1167,6 +1228,7 @@ impl PyAzimuthalIntegrator {
             normalization_factor,
             error_model,
             m,
+            radial_range,
         )?;
         let r = self.inner.integrate1d(data, npt, radial_unit(unit)?, &opts);
         // No-split histogram is the only 1D engine whose pyFAI accumulators are
@@ -1183,6 +1245,7 @@ impl PyAzimuthalIntegrator {
     #[pyo3(signature = (
         image, npt_rad, npt_azim, unit, *, method=None, correct_solid_angle=true,
         polarization_factor=None, normalization_factor=1.0, error_model=0,
+        radial_range=None,
     ))]
     fn integrate2d<'py>(
         &self,
@@ -1196,6 +1259,7 @@ impl PyAzimuthalIntegrator {
         polarization_factor: Option<f64>,
         normalization_factor: f32,
         error_model: i32,
+        radial_range: Option<(f64, f64)>,
     ) -> PyResult<Bound<'py, PyDict>> {
         let data = self.image_slice(&image)?;
         let m = parse_method(method.as_deref())?;
@@ -1205,6 +1269,7 @@ impl PyAzimuthalIntegrator {
             normalization_factor,
             error_model,
             m,
+            radial_range,
         )?;
         let r = self
             .inner
@@ -1241,6 +1306,7 @@ impl PyAzimuthalIntegrator {
         normalization_factor: f32,
         error_model_code: i32,
         method: Method,
+        radial_range: Option<(f64, f64)>,
     ) -> PyResult<IntegrationOptions> {
         Ok(IntegrationOptions {
             correct_solid_angle,
@@ -1248,6 +1314,7 @@ impl PyAzimuthalIntegrator {
             normalization_factor,
             error_model: error_model(error_model_code)?,
             method,
+            radial_range,
         })
     }
 }

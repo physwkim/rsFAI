@@ -28,10 +28,21 @@ fn dataset_dirs() -> Vec<PathBuf> {
             // Cython golden datasets only: skip the Phase-2 OpenCL datasets,
             // which carry an `opencl_params.json` and a reduced manifest with no
             // cython intermediates. `rsfai-opencl`'s own golden test owns those.
-            if e.path().join("manifest.json").exists()
-                && !e.path().join("opencl_params.json").exists()
-            {
-                dirs.push(e.path());
+            let dir = e.path();
+            if dir.join("manifest.json").exists() && !dir.join("opencl_params.json").exists() {
+                // A user radial_range/azimuth_range overrides the binning
+                // boundaries, but these per-kernel tests drive the raw build/
+                // histogram kernels on the full data extent (no override), so a
+                // range-built golden cannot match. The range path is validated
+                // end-to-end by `dropin_golden.rs`.
+                let ranged = load_manifest(dir.join("manifest.json"))
+                    .map(|m| {
+                        !m.config["radial_range"].is_null() || !m.config["azimuth_range"].is_null()
+                    })
+                    .unwrap_or(false);
+                if !ranged {
+                    dirs.push(dir);
+                }
             }
         }
     }
@@ -272,6 +283,7 @@ fn nosplit_csc_build_and_apply_bit_exact() {
             Some(&mask(&dir)),
             npt,
             false,
+            None,
         );
         validate_csc_1d(&dir, &manifest.dataset, cfg, built, bin_centers);
         checked += 1;
@@ -295,7 +307,7 @@ fn bbox_csc_build_and_apply_bit_exact() {
         let pos0 = vec_f64(&dir, "pos0_center_unscaled.npy");
         let dpos0 = vec_f64(&dir, "pos0_delta.npy");
         let (built, bin_centers) =
-            build_bbox_csc_1d(&pos0, Some(&dpos0), Some(&mask(&dir)), npt, false);
+            build_bbox_csc_1d(&pos0, Some(&dpos0), Some(&mask(&dir)), npt, false, None);
         validate_csc_1d(&dir, &manifest.dataset, cfg, built, bin_centers);
         checked += 1;
     }
@@ -323,6 +335,7 @@ fn full_csc_build_and_apply_bit_exact() {
             false,
             true,
             2.0 * std::f64::consts::PI,
+            None,
         );
         validate_csc_1d(&dir, &manifest.dataset, cfg, built, bin_centers);
         checked += 1;
@@ -348,6 +361,8 @@ fn nosplit_csc_2d_build_and_apply_bit_exact() {
             allow_pos0_neg: false,
             chi_disc_at_pi: cfg["chi_disc_at_pi"].as_bool().unwrap_or(true),
             pos1_period: cfg["pos1_period"].as_f64().expect("pos1_period"),
+            radial_range: None,
+            azimuth_range: None,
         };
         let (built, c0, c1) = build_bbox_csc_2d(
             &vec_f64(&dir, "pos0_center_unscaled.npy"),
@@ -382,6 +397,8 @@ fn bbox_csc_2d_build_and_apply_bit_exact() {
             allow_pos0_neg: false,
             chi_disc_at_pi: cfg["chi_disc_at_pi"].as_bool().unwrap_or(true),
             pos1_period: cfg["pos1_period"].as_f64().expect("pos1_period"),
+            radial_range: None,
+            azimuth_range: None,
         };
         let (built, c0, c1) = build_bbox_csc_2d(
             &vec_f64(&dir, "pos0_center_unscaled.npy"),
@@ -413,13 +430,18 @@ fn full_csc_2d_build_and_apply_bit_exact() {
         let npt_rad = cfg["npt_rad"].as_u64().expect("npt_rad") as usize;
         let npt_azim = cfg["npt_azim"].as_u64().expect("npt_azim") as usize;
         // 2D full forwards chiDiscAtPi and pos1_period = unit1.period (360).
+        let bounds = Bbox2dBounds {
+            allow_pos0_neg: false,
+            chi_disc_at_pi: cfg["chi_disc_at_pi"].as_bool().unwrap_or(true),
+            pos1_period: cfg["pos1_period"].as_f64().expect("pos1_period"),
+            radial_range: None,
+            azimuth_range: None,
+        };
         let (built, c0, c1) = build_full_csc_2d(
             &corners_f64(&dir),
             Some(&mask(&dir)),
             (npt_rad, npt_azim),
-            false,
-            cfg["chi_disc_at_pi"].as_bool().unwrap_or(true),
-            cfg["pos1_period"].as_f64().expect("pos1_period"),
+            &bounds,
         );
         validate_csc_2d(&dir, &manifest.dataset, cfg, built, c0, c1);
         checked += 1;

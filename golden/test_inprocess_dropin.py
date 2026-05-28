@@ -181,6 +181,13 @@ def run_rsfai_dropin(d, cfg):
         normalization_factor=cfg["normalization_factor"],
         error_model=em,
     )
+    # A user radial_range (scaled unit) overrides the radial axis; pass it to the
+    # drop-in exactly as run_live passes it to pyFAI, so a range dataset compares
+    # range-vs-range. The manifest stores it as a [lo, hi] list or null; the PyO3
+    # signature takes an Option<(f64, f64)>, which accepts a 2-list or None.
+    # (azimuth_range is not yet wired into the drop-in, so it is not forwarded.)
+    if cfg.get("radial_range") is not None:
+        common["radial_range"] = tuple(cfg["radial_range"])
 
     if cfg.get("dim", 1) == 2:
         out = ai.integrate2d(img, cfg["npt_rad"], cfg["npt_azim"], unit, **common)

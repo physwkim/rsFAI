@@ -32,10 +32,21 @@ fn dataset_dirs() -> Vec<PathBuf> {
             // Cython golden datasets only: skip the Phase-2 OpenCL datasets,
             // which carry an `opencl_params.json` and a reduced manifest with no
             // cython intermediates. `rsfai-opencl`'s own golden test owns those.
-            if e.path().join("manifest.json").exists()
-                && !e.path().join("opencl_params.json").exists()
-            {
-                dirs.push(e.path());
+            let dir = e.path();
+            if dir.join("manifest.json").exists() && !dir.join("opencl_params.json").exists() {
+                // A user radial_range/azimuth_range overrides the binning
+                // boundaries, but these per-kernel tests drive the raw build/
+                // histogram kernels on the full data extent (no override), so a
+                // range-built golden cannot match. The range path is validated
+                // end-to-end by `dropin_golden.rs`.
+                let ranged = load_manifest(dir.join("manifest.json"))
+                    .map(|m| {
+                        !m.config["radial_range"].is_null() || !m.config["azimuth_range"].is_null()
+                    })
+                    .unwrap_or(false);
+                if !ranged {
+                    dirs.push(dir);
+                }
             }
         }
     }
@@ -110,7 +121,7 @@ fn bbox_csr_build_and_apply_bit_exact() {
             .to_vec();
 
         let (built, bin_centers) =
-            build_bbox_csr_1d(&pos0, Some(&dpos0), Some(&mask), npt, allow_pos0_neg);
+            build_bbox_csr_1d(&pos0, Some(&dpos0), Some(&mask), npt, allow_pos0_neg, None);
 
         let g_data = vec_f32(&dir, "csr_data.npy");
         let g_indices = vec_i32(&dir, "csr_indices.npy");
@@ -239,7 +250,8 @@ fn nosplit_csr_build_and_apply_bit_exact() {
             .expect("contiguous")
             .to_vec();
 
-        let (built, bin_centers) = build_bbox_csr_1d(&pos0, None, Some(&mask), npt, allow_pos0_neg);
+        let (built, bin_centers) =
+            build_bbox_csr_1d(&pos0, None, Some(&mask), npt, allow_pos0_neg, None);
 
         let g_data = vec_f32(&dir, "csr_data.npy");
         let g_indices = vec_i32(&dir, "csr_indices.npy");
@@ -377,8 +389,15 @@ fn full_split_csr_build_and_apply_bit_exact() {
             .expect("contiguous")
             .to_vec();
 
-        let (built, bin_centers) =
-            build_full_csr_1d(&corners, Some(&mask), npt, allow_pos0_neg, true, 2.0 * PI);
+        let (built, bin_centers) = build_full_csr_1d(
+            &corners,
+            Some(&mask),
+            npt,
+            allow_pos0_neg,
+            true,
+            2.0 * PI,
+            None,
+        );
 
         let g_data = vec_f32(&dir, "csr_data.npy");
         let g_indices = vec_i32(&dir, "csr_indices.npy");
@@ -503,6 +522,8 @@ fn bbox_csr_2d_build_and_apply_bit_exact() {
             allow_pos0_neg: false,
             chi_disc_at_pi,
             pos1_period,
+            radial_range: None,
+            azimuth_range: None,
         };
 
         // --- Build: the per-pixel arrays HistoBBox2d received ---
@@ -695,6 +716,8 @@ fn nosplit_csr_2d_build_and_apply_bit_exact() {
             allow_pos0_neg: false,
             chi_disc_at_pi,
             pos1_period,
+            radial_range: None,
+            azimuth_range: None,
         };
 
         // --- Build: center arrays only, no half-widths (do_split=False) ---
@@ -891,14 +914,15 @@ fn full_csr_2d_build_and_apply_bit_exact() {
             .expect("contiguous")
             .to_vec();
 
-        let (built, bin_centers0, bin_centers1) = build_full_csr_2d(
-            &corners,
-            Some(&mask),
-            (npt_rad, npt_azim),
+        let bounds = Bbox2dBounds {
             allow_pos0_neg,
             chi_disc_at_pi,
             pos1_period,
-        );
+            radial_range: None,
+            azimuth_range: None,
+        };
+        let (built, bin_centers0, bin_centers1) =
+            build_full_csr_2d(&corners, Some(&mask), (npt_rad, npt_azim), &bounds);
 
         let g_data = vec_f32(&dir, "csr_data.npy");
         let g_indices = vec_i32(&dir, "csr_indices.npy");

@@ -40,10 +40,21 @@ fn dataset_dirs() -> Vec<PathBuf> {
             // Cython golden datasets only: skip the Phase-2 OpenCL datasets,
             // which carry an `opencl_params.json` and a reduced manifest with no
             // cython intermediates. `rsfai-opencl`'s own golden test owns those.
-            if e.path().join("manifest.json").exists()
-                && !e.path().join("opencl_params.json").exists()
-            {
-                dirs.push(e.path());
+            let dir = e.path();
+            if dir.join("manifest.json").exists() && !dir.join("opencl_params.json").exists() {
+                // A user radial_range/azimuth_range overrides the binning
+                // boundaries, but these per-kernel tests drive the raw build/
+                // histogram kernels on the full data extent (no override), so a
+                // range-built golden cannot match. The range path is validated
+                // end-to-end by `dropin_golden.rs`.
+                let ranged = load_manifest(dir.join("manifest.json"))
+                    .map(|m| {
+                        !m.config["radial_range"].is_null() || !m.config["azimuth_range"].is_null()
+                    })
+                    .unwrap_or(false);
+                if !ranged {
+                    dirs.push(dir);
+                }
             }
         }
     }

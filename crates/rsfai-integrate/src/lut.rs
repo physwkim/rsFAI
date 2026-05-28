@@ -210,8 +210,10 @@ pub fn build_bbox_lut_1d(
     mask: Option<&[i8]>,
     bins: usize,
     allow_pos0_neg: bool,
+    pos0_range: Option<(PositionT, PositionT)>,
 ) -> (Lut, Vec<PositionT>) {
-    let (csr, centers) = build_bbox_csr_1d(pos0, delta_pos0, mask, bins, allow_pos0_neg);
+    let (csr, centers) =
+        build_bbox_csr_1d(pos0, delta_pos0, mask, bins, allow_pos0_neg, pos0_range);
     (csr_to_lut(&csr, bins), centers)
 }
 
@@ -234,6 +236,7 @@ pub fn build_bbox_lut_2d(
 /// Build the 1D full pixel-splitting LUT and the unscaled bin centers — the
 /// `("full", "lut", "cython")` build (`splitPixelFullLUT.HistoLUT1dFullSplit`).
 /// `corners` is the `(npix, 4, 2)` array flattened to f64.
+#[allow(clippy::too_many_arguments)]
 pub fn build_full_lut_1d(
     corners: &[PositionT],
     mask: Option<&[i8]>,
@@ -241,6 +244,7 @@ pub fn build_full_lut_1d(
     allow_pos0_neg: bool,
     chi_disc_at_pi: bool,
     pos1_period: PositionT,
+    pos0_range: Option<(PositionT, PositionT)>,
 ) -> (Lut, Vec<PositionT>) {
     let (csr, centers) = build_full_csr_1d(
         corners,
@@ -249,6 +253,7 @@ pub fn build_full_lut_1d(
         allow_pos0_neg,
         chi_disc_at_pi,
         pos1_period,
+        pos0_range,
     );
     (csr_to_lut(&csr, bins), centers)
 }
@@ -260,17 +265,8 @@ pub fn build_full_lut_2d(
     corners: &[PositionT],
     mask: Option<&[i8]>,
     bins: (usize, usize),
-    allow_pos0_neg: bool,
-    chi_disc_at_pi: bool,
-    pos1_period: PositionT,
+    bounds: &Bbox2dBounds,
 ) -> (Lut, Vec<PositionT>, Vec<PositionT>) {
-    let (csr, c0, c1) = build_full_csr_2d(
-        corners,
-        mask,
-        bins,
-        allow_pos0_neg,
-        chi_disc_at_pi,
-        pos1_period,
-    );
+    let (csr, c0, c1) = build_full_csr_2d(corners, mask, bins, bounds);
     (csr_to_lut(&csr, bins.0 * bins.1), c0, c1)
 }

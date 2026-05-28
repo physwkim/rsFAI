@@ -176,6 +176,13 @@ def generate(detector_name, poni_image, configs):
         # names (committed, referenced by the Rust tests) stay unchanged.
         if target_orient != base_orientation:
             slugs.append(f"orient{target_orient}")
+        # A user range overrides one axis' boundaries; range configs share the
+        # detector/method/unit/npt/err of a full-extent config, so they need a
+        # slug to claim their own directory instead of overwriting it.
+        if radial_range is not None:
+            slugs.append(f"rrad{radial_range[0]:g}-{radial_range[1]:g}")
+        if azimuth_range is not None:
+            slugs.append(f"razim{azimuth_range[0]:g}-{azimuth_range[1]:g}")
         key = "__".join(slugs)
         out_dir = DATASETS / key
         if out_dir.exists():
@@ -535,6 +542,76 @@ def main():
                 "error_model": "poisson",
                 "correct_solid_angle": True,
                 "polarization_factor": None,
+            },
+            # ---- radial_range override --------------------------------------
+            # A user radial_range (given in the SCALED unit, here 2th_deg) is
+            # divided by unit.scale and overrides the radial axis min/max AFTER
+            # the data fold (calc_boundaries); pixels outside the window are
+            # dropped by the existing per-bin skip/clip. 2th_deg (scale ≈ 57.3)
+            # exercises the scaled→unscaled division, not the q_nm^-1 identity
+            # (scale = 1). One config per DISTINCT radial-boundary path: no-split
+            # histogram bin_range, bbox calc_boundaries_1d/2d, full
+            # calc_boundaries_full_1d/2d. (lut/csc forward to the csr boundary,
+            # already covered for the full-extent case.)
+            {
+                "npt": 1000,
+                "unit": "2th_deg",
+                "method": ("no", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": None,
+                "radial_range": (1.0, 5.0),
+            },
+            {
+                "npt": 1000,
+                "unit": "2th_deg",
+                "method": ("bbox", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "radial_range": (1.0, 5.0),
+            },
+            {
+                "npt": 1000,
+                "unit": "2th_deg",
+                "method": ("full", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "radial_range": (1.0, 5.0),
+            },
+            {
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "2th_deg",
+                "method": ("no", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "radial_range": (1.0, 5.0),
+            },
+            {
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "2th_deg",
+                "method": ("bbox", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "radial_range": (1.0, 5.0),
+            },
+            {
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "2th_deg",
+                "method": ("full", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "radial_range": (1.0, 5.0),
             },
             {
                 # 2D histogram (no split): bins each pixel centre into a

@@ -50,10 +50,21 @@ fn dataset_dirs() -> Vec<PathBuf> {
             // Cython golden datasets only: skip the Phase-2 OpenCL datasets,
             // which carry an `opencl_params.json` and a reduced manifest with no
             // cython intermediates. `rsfai-opencl`'s own golden test owns those.
-            if e.path().join("manifest.json").exists()
-                && !e.path().join("opencl_params.json").exists()
-            {
-                dirs.push(e.path());
+            let dir = e.path();
+            if dir.join("manifest.json").exists() && !dir.join("opencl_params.json").exists() {
+                // A user radial_range/azimuth_range overrides the binning
+                // boundaries, but these per-kernel tests drive the raw build/
+                // histogram kernels on the full data extent (no override), so a
+                // range-built golden cannot match. The range path is validated
+                // end-to-end by `dropin_golden.rs`.
+                let ranged = load_manifest(dir.join("manifest.json"))
+                    .map(|m| {
+                        !m.config["radial_range"].is_null() || !m.config["azimuth_range"].is_null()
+                    })
+                    .unwrap_or(false);
+                if !ranged {
+                    dirs.push(dir);
+                }
             }
         }
     }
@@ -144,6 +155,7 @@ fn histogram1d_bbox_bit_exact() {
             error_model,
             0.0,
             false,
+            None,
         );
 
         // Radial bin centers (f64) -> bit-exact after scaling.
@@ -268,6 +280,8 @@ fn histogram2d_bbox_bit_exact() {
             allow_pos0_neg: false,
             chi_disc_at_pi,
             pos1_period,
+            radial_range: None,
+            azimuth_range: None,
         };
 
         let out = histogram2d_bbox(
@@ -414,6 +428,7 @@ fn histogram1d_full_bit_exact() {
             false,
             true,
             2.0 * PI,
+            None,
         );
 
         let scaled_rad: Vec<f64> = out.position.iter().map(|&p| p * unit_scale).collect();
@@ -530,6 +545,8 @@ fn histogram2d_full_bit_exact() {
             allow_pos0_neg: false,
             chi_disc_at_pi,
             pos1_period,
+            radial_range: None,
+            azimuth_range: None,
         };
 
         let out = histogram2d_full(

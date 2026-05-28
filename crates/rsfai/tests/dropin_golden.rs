@@ -178,6 +178,10 @@ fn dropin_matches_golden() {
             normalization_factor: cfg["normalization_factor"].as_f64().unwrap_or(1.0) as f32,
             error_model: error_model_from_code(cfg["error_model_code"].as_i64().unwrap_or(0)),
             method: Method { split, algo },
+            // `radial_range` is recorded as `[lo, hi]` (or null) in the scaled unit.
+            radial_range: cfg["radial_range"]
+                .as_array()
+                .map(|a| (a[0].as_f64().unwrap(), a[1].as_f64().unwrap())),
         };
 
         let ai =

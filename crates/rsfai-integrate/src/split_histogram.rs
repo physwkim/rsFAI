@@ -140,6 +140,7 @@ pub fn histogram1d_bbox(
     error_model: ErrorModel,
     empty: DataT,
     allow_pos0_neg: bool,
+    pos0_range: Option<(PositionT, PositionT)>,
 ) -> CsrIntegrate1d {
     assert!(npt > 1, "bins must be > 1");
     let size = pos0.len();
@@ -149,7 +150,8 @@ pub fn histogram1d_bbox(
         assert_eq!(m.len(), size, "mask length mismatch");
     }
 
-    let (pos0_min, pos0_maxin) = calc_boundaries_1d(pos0, Some(delta_pos0), mask, allow_pos0_neg);
+    let (pos0_min, pos0_maxin) =
+        calc_boundaries_1d(pos0, Some(delta_pos0), mask, allow_pos0_neg, pos0_range);
     let pos0_max = calc_upper_bound(pos0_maxin);
     let delta = (pos0_max - pos0_min) / (npt as PositionT);
 
@@ -508,6 +510,7 @@ pub fn histogram1d_full(
     allow_pos0_neg: bool,
     chi_disc_at_pi: bool,
     pos1_period: PositionT,
+    pos0_range: Option<(PositionT, PositionT)>,
 ) -> CsrIntegrate1d {
     assert!(npt > 1, "bins must be > 1");
     assert_eq!(
@@ -521,7 +524,7 @@ pub fn histogram1d_full(
         assert_eq!(m.len(), size, "mask length mismatch");
     }
 
-    let (pos0_min, pos0_maxin) = calc_boundaries_full_1d(corners, mask, allow_pos0_neg);
+    let (pos0_min, pos0_maxin) = calc_boundaries_full_1d(corners, mask, allow_pos0_neg, pos0_range);
     let pos0_max = calc_upper_bound(pos0_maxin);
     let delta = (pos0_max - pos0_min) / (npt as PositionT);
     let bins_i = npt as i64;
@@ -634,13 +637,8 @@ pub fn histogram2d_full(
         assert_eq!(m.len(), size, "mask length mismatch");
     }
 
-    let (pos0_min, pos0_maxin, pos1_min, pos1_maxin) = calc_boundaries_full_2d(
-        corners,
-        mask,
-        bounds.allow_pos0_neg,
-        bounds.chi_disc_at_pi,
-        bounds.pos1_period,
-    );
+    let (pos0_min, pos0_maxin, pos1_min, pos1_maxin) =
+        calc_boundaries_full_2d(corners, mask, bounds);
     let pos0_max = calc_upper_bound(pos0_maxin);
     let pos1_max = calc_upper_bound(pos1_maxin);
     let delta0 = (pos0_max - pos0_min) / (bins0 as PositionT);
@@ -814,9 +812,17 @@ pub fn histogram2d_pseudo(
     }
 
     // `calc_boundaries(..., clip_pos1=False)`: raw corner fold + pos0>=0 clamp, no
-    // azimuthal clip (pos1_period = 0 disables the clip block).
+    // azimuthal clip (pos1_period = 0 disables the clip block). Pseudo split is not
+    // an orchestrator-reachable drop-in method, so it takes no explicit range.
+    let bounds = Bbox2dBounds {
+        allow_pos0_neg,
+        chi_disc_at_pi,
+        pos1_period: 0.0,
+        radial_range: None,
+        azimuth_range: None,
+    };
     let (pos0_min, pos0_maxin, pos1_min, pos1_maxin) =
-        calc_boundaries_full_2d(corners, mask, allow_pos0_neg, chi_disc_at_pi, 0.0);
+        calc_boundaries_full_2d(corners, mask, &bounds);
     let pos0_max = calc_upper_bound(pos0_maxin);
     let pos1_max = calc_upper_bound(pos1_maxin);
     let delta0 = (pos0_max - pos0_min) / (bins0 as PositionT);

@@ -449,6 +449,15 @@ def main():
 
     for d in dataset_dirs():
         cfg = json.load(open(DATASETS / d / "manifest.json"))["config"]
+        # A user radial_range/azimuth_range overrides the kernel boundaries, but
+        # the raw-kernel wrappers this harness drives expose the full data extent
+        # (no override — range is a high-level orchestration concern). So a
+        # range-built golden CSR/LUT cannot match a full-extent rsfai build here.
+        # The range path is validated end-to-end by test_inprocess_dropin.py and
+        # dropin_golden.rs, where the orchestrator applies the override.
+        if cfg.get("radial_range") is not None or cfg.get("azimuth_range") is not None:
+            print(f"=== {d} ===\n  SKIP: range dataset (validated by the drop-in harness)\n")
+            continue
         print(f"=== {d} ===")
 
         rsfai_fields, built = run_rsfai(d, cfg)
