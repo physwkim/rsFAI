@@ -760,6 +760,122 @@ def main():
                 "correct_solid_angle": True,
                 "polarization_factor": 0.99,
             },
+            # ---- Azimuthal error model (error_model=3) ----------------------
+            # pyFAI's "azimuthal" model does not propagate a per-pixel variance
+            # (preproc leaves variance=0); instead each output bin estimates the
+            # variance of the pixel intensities signal/norm falling in it, via a
+            # weighted Welford update accumulated during the reduction. These
+            # configs exercise every reduce/accumulate path that carries the
+            # Welford: histogram_preproc (no-split 1D), {CSR,CSC,LUT}_common
+            # integrate_ng (1D + 2D per-bin), and update_1d_accumulator
+            # (direct-split histogram 1D). The no-split/direct-split 2D paths use
+            # update_2d_accumulator, which has NO azimuthal branch, so they
+            # propagate the zero per-pixel variance -> std/sem = 0; those configs
+            # pin that behavior.
+            {
+                # histogram_preproc Welford (no-split 1D).
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("no", "histogram", "cython"),
+                "error_model": "azimuthal",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # No-split 2D histogram: update_2d_accumulator, no Welford -> the
+                # zero per-pixel variance gives std/sem = 0.
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("no", "histogram", "cython"),
+                "error_model": "azimuthal",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # CSR integrate_ng Welford (1D per-bin gather).
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "csr", "cython"),
+                "error_model": "azimuthal",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # CSR integrate_ng Welford (2D per-bin gather).
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "csr", "cython"),
+                "error_model": "azimuthal",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # LUT integrate_ng Welford (1D per-bin gather; no zero-norm guard).
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "lut", "cython"),
+                "error_model": "azimuthal",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # LUT integrate_ng Welford (2D per-bin gather).
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "lut", "cython"),
+                "error_model": "azimuthal",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # CSC integrate_ng Welford (1D pixel-major scatter; b is the f32
+                # value.signal/value.norm promoted, unlike CSR/LUT).
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "csc", "cython"),
+                "error_model": "azimuthal",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # CSC integrate_ng Welford (2D pixel-major scatter).
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "csc", "cython"),
+                "error_model": "azimuthal",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # update_1d_accumulator Welford (direct-split bbox histogram 1D;
+                # b is the f32 value.signal/value.norm promoted).
+                "npt": 1000,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "histogram", "cython"),
+                "error_model": "azimuthal",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
+            {
+                # Direct-split bbox 2D histogram: update_2d_accumulator, no
+                # Welford -> std/sem = 0.
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "histogram", "cython"),
+                "error_model": "azimuthal",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+            },
         ],
     )
     print("done.")

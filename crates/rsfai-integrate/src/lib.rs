@@ -55,7 +55,17 @@
 //! order-dependent, so serial accumulation reproduces the single-threaded pyFAI
 //! golden bit-for-bit.
 //! Golden generation is single-threaded.
+//!
+//! The `"azimuthal"` error model estimates each bin's variance from the spread
+//! of the pixel intensities `signal/norm` falling in it, via a weighted Welford
+//! update (the crate-internal `azimuthal` module) shared by every engine.
+//! Because that update is
+//! order-dependent and not additively mergeable, the no-split histogram runs it
+//! **serially** (the parallel path is non-azimuthal only). The 2D no-split and
+//! direct-split histograms have no Welford branch (pyFAI's `update_2d_accumulator`
+//! does not), so they propagate the zero per-pixel variance and report std/sem 0.
 
+mod azimuthal;
 pub mod csc;
 pub mod csr;
 pub mod histogram;

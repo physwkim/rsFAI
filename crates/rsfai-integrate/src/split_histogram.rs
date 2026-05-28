@@ -47,12 +47,20 @@ use crate::csr::{
 };
 use crate::histogram::{numpy_linspace, reduce_2d, Integrate2d};
 
-/// Port of `update_1d_accumulator` (`regrid_common.pxi`), non-azimuthal branch:
-/// add the preproc tuple weighted by `weight` into one bin row. `s/v/n/c` are
-/// f32 (`preproc_t = data_t`); `weight` is f64. Matches C promotion exactly:
-/// `sig += signal·weight`, `var += variance·weight²`, `nrm += weight·norm`,
-/// `nrm2 += (weight·norm)²`, `cnt += count·weight`, all accumulated in f64. The
-/// Azimuthal (Welford) error model is not yet ported (no golden exercises it).
+/// Port of `update_1d_accumulator` (`regrid_common.pxi`): add the preproc tuple
+/// weighted by `weight` into one bin row. `s/v/n/c` are f32 (`preproc_t =
+/// data_t`); `weight` is f64.
+///
+/// Non-azimuthal branch — matches C promotion exactly: `sig += signal·weight`,
+/// `var += variance·weight²`, `nrm += weight·norm`, `nrm2 += (weight·norm)²`,
+/// `cnt += count·weight`, all accumulated in f64.
+///
+/// Azimuthal (error_model==3) branch — the weighted Welford update
+/// ([`crate::azimuthal::azimuthal_step`]): `omega_b = weight·norm`,
+/// `sig_inc = weight·signal`, and `b = value.signal/value.norm` is the **f32**
+/// division promoted (pyFAI divides the `preproc_t`/`data_t` fields). A zero-norm
+/// contribution that is not the bin's first is skipped (pyFAI's `if value.norm`).
+/// The direct-split histograms accumulate serially, so this is bit-exact.
 #[inline]
 fn accumulate_1d(
     row: &mut [AccT; 5],
@@ -64,7 +72,23 @@ fn accumulate_1d(
     error_model: ErrorModel,
 ) {
     if error_model == ErrorModel::Azimuthal {
-        unimplemented!("azimuthal (Welford) split histogram variance not yet ported");
+        if row[4] <= 0.0 || n != 0.0 {
+            let omega_b = weight * n as AccT;
+            let sig_inc = weight * s as AccT;
+            let b = (s / n) as AccT; // f32 division, promoted (value.signal/value.norm)
+            let [sum_sig, sum_var, sum_norm, _cnt, sum_norm_sq] = &mut *row;
+            crate::azimuthal::azimuthal_step(
+                sum_sig,
+                sum_var,
+                sum_norm,
+                sum_norm_sq,
+                omega_b,
+                sig_inc,
+                b,
+            );
+        }
+        row[3] += (c as AccT) * weight;
+        return;
     }
     let w = weight * n as AccT;
     let w2 = w * w;

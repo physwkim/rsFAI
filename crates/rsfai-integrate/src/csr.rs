@@ -1229,8 +1229,22 @@ fn csr_reduce(csr: &Csr, prep: &[DataT], error_model: ErrorModel, empty: DataT) 
 
                 acc_count += coef * cnt;
                 match error_model {
+                    // pyFAI CSR_common.pxi `do_azimuthal_variance`: per-bin
+                    // Welford. `b = sig/norm` in f64 (sig/norm are acc_t). A
+                    // zero-norm contribution that is not the bin's first is
+                    // skipped (pyFAI's `elif norm != 0.0`).
                     ErrorModel::Azimuthal => {
-                        unimplemented!("azimuthal (Welford) CSR variance not yet ported")
+                        if acc_norm_sq <= 0.0 || norm != 0.0 {
+                            crate::azimuthal::azimuthal_step(
+                                &mut acc_sig,
+                                &mut acc_var,
+                                &mut acc_norm,
+                                &mut acc_norm_sq,
+                                coef * norm,
+                                coef * sig,
+                                sig / norm,
+                            );
+                        }
                     }
                     _ => {
                         acc_sig += coef * sig;

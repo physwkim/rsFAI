@@ -19,7 +19,9 @@
 //! apply for the non-azimuthal error models, and the final per-bin reduction
 //! ([`crate::csr::finalize_reduction`]) and packaging
 //! ([`crate::csr::reduction_to_1d`] / [`crate::csr::reduction_to_2d`]) are shared.
-//! The azimuthal (Welford) error model is order-dependent and not yet ported.
+//! The azimuthal (Welford) error model accumulates per bin via
+//! [`crate::azimuthal::azimuthal_step`] (`b = sig/norm` in f64, no zero-norm
+//! guard — pyFAI's bare `else`).
 
 use crate::csr::{
     build_bbox_csr_1d, build_bbox_csr_2d, build_full_csr_1d, build_full_csr_2d, finalize_reduction,
@@ -125,8 +127,21 @@ fn lut_reduce(
             let cnt = prep[4 * p + 3] as AccT;
             acc_count[bin] += coef * cnt;
             match error_model {
+                // pyFAI LUT_common.pxi `do_azimuthal_variance`: per-bin Welford.
+                // `b = sig/norm` in f64 (sig/norm are acc_t). Unlike CSR, the
+                // update branch has no `norm != 0` guard (pyFAI's bare `else`),
+                // so a zero-norm contribution still runs (b becomes inf/NaN,
+                // matching pyFAI).
                 ErrorModel::Azimuthal => {
-                    unimplemented!("azimuthal (Welford) LUT variance not yet ported")
+                    crate::azimuthal::azimuthal_step(
+                        &mut acc_sig[bin],
+                        &mut acc_var[bin],
+                        &mut acc_norm[bin],
+                        &mut acc_norm_sq[bin],
+                        coef * norm,
+                        coef * sig,
+                        sig / norm,
+                    );
                 }
                 _ => {
                     acc_sig[bin] += coef * sig;

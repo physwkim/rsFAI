@@ -170,9 +170,26 @@ pub fn histogram_preproc(
                 row[4] += (n * n) as AccT; // f32 multiply, then promote
                 row[3] += c as AccT;
             }
-            // Welford online variance — deferred until a golden exercises it.
+            // pyFAI histogram_preproc error_model==3: serial Welford (all f64).
+            // No-split, so coef = 1: omega_b = nrm, sig_inc = signal,
+            // b = signal/nrm in f64. Skip a zero-norm non-first contribution
+            // (pyFAI's `if nrm`). The count is added after, like pyFAI.
             ErrorModel::Azimuthal => {
-                unimplemented!("azimuthal (Welford) histogram variance not yet ported")
+                let nrm = n as AccT;
+                if row[4] <= 0.0 || nrm != 0.0 {
+                    let sig = s as AccT;
+                    let [sum_sig, sum_var, sum_norm, _cnt, sum_norm_sq] = &mut *row;
+                    crate::azimuthal::azimuthal_step(
+                        sum_sig,
+                        sum_var,
+                        sum_norm,
+                        sum_norm_sq,
+                        nrm,
+                        sig,
+                        sig / nrm,
+                    );
+                }
+                row[3] += c as AccT;
             }
             // Variance / Poisson: norm² via `nrm*nrm` with nrm an f64 (acc_t).
             ErrorModel::Variance | ErrorModel::Poisson => {
@@ -189,16 +206,28 @@ pub fn histogram_preproc(
         }
     };
 
-    let out_prop = (0..size)
-        .into_par_iter()
-        .fold(
-            || vec![[0.0f64; 5]; npt],
-            |mut acc, i| {
-                accumulate(&mut acc, i);
-                acc
-            },
-        )
-        .reduce(|| vec![[0.0f64; 5]; npt], merge_bins);
+    let out_prop = if error_model == ErrorModel::Azimuthal {
+        // The azimuthal Welford variance is order-dependent and NOT additively
+        // mergeable (you cannot sum two partial in-bin variances), so it must
+        // accumulate serially — matching pyFAI's serial `histogram_preproc`
+        // `for i in range(size)`.
+        let mut acc = vec![[0.0f64; 5]; npt];
+        for i in 0..size {
+            accumulate(&mut acc, i);
+        }
+        acc
+    } else {
+        (0..size)
+            .into_par_iter()
+            .fold(
+                || vec![[0.0f64; 5]; npt],
+                |mut acc, i| {
+                    accumulate(&mut acc, i);
+                    acc
+                },
+            )
+            .reduce(|| vec![[0.0f64; 5]; npt], merge_bins)
+    };
 
     let position = numpy_linspace(min0 + 0.5 * delta, max0 - 0.5 * delta, npt);
     (out_prop, position)

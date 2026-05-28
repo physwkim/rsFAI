@@ -18,7 +18,10 @@
 //! for the non-azimuthal error models, and the final per-bin reduction
 //! ([`crate::csr::finalize_reduction`]) and packaging
 //! ([`crate::csr::reduction_to_1d`] / [`crate::csr::reduction_to_2d`]) are shared.
-//! The azimuthal (Welford) error model is order-dependent and not yet ported.
+//! The azimuthal (Welford) error model accumulates per bin via
+//! [`crate::azimuthal::azimuthal_step`]; CSC computes `b` from the f32
+//! `value.signal/value.norm` and skips invalid (count-0) pixels, matching
+//! pyFAI's `if not is_valid: continue`.
 
 use crate::csr::{
     build_bbox_csr_1d, build_bbox_csr_2d, build_full_csr_1d, build_full_csr_2d, finalize_reduction,
@@ -126,13 +129,36 @@ fn csc_reduce(
         let var = prep[4 * idx + 1] as AccT;
         let norm = prep[4 * idx + 2] as AccT;
         let cnt = prep[4 * idx + 3] as AccT;
+        // pyFAI CSC_common.pxi integrate_ng computes preproc per pixel and skips
+        // invalid ones before scattering (`if not is_valid: continue`); an
+        // invalid pixel has an all-zero preproc row (count 0). For the linear
+        // error models this skip is a no-op (scattering zeros adds nothing), but
+        // the azimuthal Welford divides by norm, so a zero-norm pixel would
+        // inject b = 0/0 = NaN into the bin. Skip it, exactly as pyFAI does.
+        if cnt == 0.0 {
+            continue;
+        }
         for j in lo..hi {
             let coef = csc.data[j] as AccT; // data_t -> acc_t
             let bin = csc.indices[j] as usize;
             acc_count[bin] += coef * cnt;
             match error_model {
+                // pyFAI CSC_common.pxi `do_azimuthal_variance`: per-bin Welford,
+                // no `norm != 0` guard (like LUT). Unlike CSR/LUT, `b` is the
+                // f32 `value.signal / value.norm` promoted to f64 — CSC reads the
+                // preproc into the f32 `preproc_t value`, so the division rounds
+                // to f32 first.
                 ErrorModel::Azimuthal => {
-                    unimplemented!("azimuthal (Welford) CSC variance not yet ported")
+                    let b = (prep[4 * idx] / prep[4 * idx + 2]) as AccT;
+                    crate::azimuthal::azimuthal_step(
+                        &mut acc_sig[bin],
+                        &mut acc_var[bin],
+                        &mut acc_norm[bin],
+                        &mut acc_norm_sq[bin],
+                        coef * norm,
+                        coef * sig,
+                        b,
+                    );
                 }
                 _ => {
                     acc_sig[bin] += coef * sig;
