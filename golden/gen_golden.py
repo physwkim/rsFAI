@@ -613,6 +613,51 @@ def main():
                 "polarization_factor": 0.99,
                 "radial_range": (1.0, 5.0),
             },
+            # ---- azimuth_range override (2D only) ---------------------------
+            # A user azimuth_range (degrees) restricts the azimuthal sector; the
+            # orchestrator converts deg->rad via normalize_azimuth_range (deg2rad
+            # in the chiDiscAtPi frame + 2pi wrap), then the 2D engines apply it
+            # as the pos1 boundary override (splitBBox_common.pyx calc_boundaries
+            # min/max(pos1_range)). (-90, 90) does NOT cross the pi discontinuity
+            # (lo<hi after deg2rad, no wrap) — the bounded first cut; disc-crossing
+            # windows are not yet covered. q_nm^-1: the azimuth conversion is
+            # independent of the radial unit. One per DISTINCT azimuthal-boundary
+            # path: no-split histogram2d, bbox calc_boundaries_2d, full
+            # calc_boundaries_full_2d. 1D azimuth_range is not yet ported (the 1D
+            # builders take no per-pixel chi).
+            {
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("no", "histogram", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "azimuth_range": (-90.0, 90.0),
+            },
+            {
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("bbox", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "azimuth_range": (-90.0, 90.0),
+            },
+            {
+                "dim": 2,
+                "npt_rad": 100,
+                "npt_azim": 36,
+                "unit": "q_nm^-1",
+                "method": ("full", "csr", "cython"),
+                "error_model": "poisson",
+                "correct_solid_angle": True,
+                "polarization_factor": 0.99,
+                "azimuth_range": (-90.0, 90.0),
+            },
             {
                 # 2D histogram (no split): bins each pixel centre into a
                 # (radial, azimuthal) cell via histogram2d_engine. errnone exercises

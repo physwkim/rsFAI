@@ -135,6 +135,13 @@ pub struct IntegrationOptions {
     /// divides by `unit.scale` to the unscaled radial the engines bin in. Pixels
     /// outside the range are dropped (boundary clip / per-pixel skip).
     pub radial_range: Option<(f64, f64)>,
+    /// Azimuthal `(min, max)` in **degrees** (pyFAI's `azimuth_range`), or `None`
+    /// for the full azimuthal range. The orchestrator converts to the radian chi
+    /// frame via [`normalize_azimuth_range`] (pyFAI's `normalize_azimuth_range`).
+    /// **Only honored by [`AzimuthalIntegrator::integrate2d`]** — 1D azimuthal
+    /// sector restriction is not yet ported (the 1D builders take no per-pixel
+    /// chi), so `integrate1d` rejects a non-`None` value.
+    pub azimuth_range: Option<(f64, f64)>,
 }
 
 impl Default for IntegrationOptions {
@@ -148,8 +155,35 @@ impl Default for IntegrationOptions {
             error_model: ErrorModel::No,
             method: Method::default(),
             radial_range: None,
+            azimuth_range: None,
         }
     }
+}
+
+/// Port of `Geometry.normalize_azimuth_range` (`geometry/core.py`): convert a
+/// `(lo, hi)` azimuth range from **degrees** to radians in the `chiDiscAtPi`
+/// (discontinuity at π — pyFAI's default) frame, wrapping the upper bound by
+/// `2π` when the range crosses the discontinuity so `hi > lo` always holds. The
+/// engines override the azimuthal `pos1_min/max` with `min/max` of this range
+/// (`splitBBox_common.pyx` calc_boundaries), so the wrap order is what keeps a
+/// disc-crossing window contiguous. `None` ⇒ full azimuthal range.
+fn normalize_azimuth_range(range: Option<(f64, f64)>) -> Option<(f64, f64)> {
+    let (lo, hi) = range?;
+    // `deg2rad(dd, disc=true)`: rp = (dd/180) mod 2 (Python floor-mod, i.e.
+    // `rem_euclid`), shifted into [-1, 1) when ≥ 1, scaled by π → [-π, π).
+    let deg2rad = |dd: f64| {
+        let mut rp = (dd / 180.0).rem_euclid(2.0);
+        if rp >= 1.0 {
+            rp -= 2.0;
+        }
+        rp * PI
+    };
+    let lo_r = deg2rad(lo);
+    let mut hi_r = deg2rad(hi);
+    if hi_r <= lo_r {
+        hi_r += TWO_PI;
+    }
+    Some((lo_r, hi_r))
 }
 
 /// The 1D integration result, field-for-field the subset of pyFAI's
@@ -387,6 +421,12 @@ impl AzimuthalIntegrator {
             image.len(),
             self.detector.size()
         );
+        // 1D azimuthal sector restriction is not yet ported (the 1D builders take
+        // no per-pixel chi); reject rather than silently bin the full ring.
+        assert!(
+            opts.azimuth_range.is_none(),
+            "azimuth_range is not yet supported for integrate1d (integrate2d only)"
+        );
         let pos = self.pixel_positions();
         let radial = unscaled_center_array(unit.space, &pos.x, &pos.y, &pos.z, self.wavelength);
         let mask = self.build_mask();
@@ -517,6 +557,11 @@ impl AzimuthalIntegrator {
         let radial_range = opts
             .radial_range
             .map(|(lo, hi)| (lo / unit.scale, hi / unit.scale));
+        // `azimuth_range` is given in degrees; the engines bin the unscaled chi
+        // in radians, so convert via pyFAI's `normalize_azimuth_range` (deg→rad,
+        // chiDiscAtPi, 2π wrap). The engine applies it as the pos1 boundary
+        // override exactly like `radial_range` for pos0.
+        let azimuth_range = normalize_azimuth_range(opts.azimuth_range);
 
         // No-split histogram: bins every pixel (masked pixels are zeroed by
         // preproc but still set the range), so no mask is forwarded.
@@ -524,7 +569,7 @@ impl AzimuthalIntegrator {
             let hopts = Hist2dOptions {
                 bins,
                 radial_range,
-                azimuth_range: None,
+                azimuth_range,
                 error_model: em,
                 // Standard radial units (q/2θ/r) are non-negative.
                 allow_radial_neg: false,
@@ -546,7 +591,7 @@ impl AzimuthalIntegrator {
             chi_disc_at_pi: true,
             pos1_period: AZIMUTH_PERIOD_DEG,
             radial_range,
-            azimuth_range: None,
+            azimuth_range,
         };
         let h = match opts.method.split {
             Split::Full => {
