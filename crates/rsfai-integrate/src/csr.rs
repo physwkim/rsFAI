@@ -1229,6 +1229,28 @@ pub(crate) struct CsrReduction {
     sem: Vec<DataT>,
 }
 
+/// Caller-provided output columns for the fused 2D apply, written in place by
+/// [`fill_reduction_into`] (and through it [`csr_integrate2d_into`] /
+/// `lut_integrate2d_into`). Each slice is one flat output column of length
+/// `bins0 * bins1` in the final **(azimuthal, radial)** order — the same layout
+/// [`pack_2d`] produces, since the `reshape(bins0, bins1).T` transpose is folded
+/// into the gather index. This lets a streaming caller reuse one set of buffers
+/// across frames instead of allocating — and first-touch page-faulting — a fresh
+/// result every frame; the values written are **bit-identical** to the owned
+/// [`csr_integrate2d`] path. f64 accumulators (`signal`/`variance`/
+/// `normalization`/`norm_sq`/`count`) + f32 finalized columns (`intensity`/`std`/
+/// `sem`); `sigma` is a copy of `sem`, so it is not a separate column.
+pub struct ReductionOut<'a> {
+    pub signal: &'a mut [AccT],
+    pub variance: &'a mut [AccT],
+    pub normalization: &'a mut [AccT],
+    pub norm_sq: &'a mut [AccT],
+    pub count: &'a mut [AccT],
+    pub intensity: &'a mut [DataT],
+    pub std: &'a mut [DataT],
+    pub sem: &'a mut [DataT],
+}
+
 /// One output bin's reduction outputs, produced independently per bin and then
 /// scattered into the flat [`CsrReduction`] arrays.
 pub(crate) struct BinReduction {
@@ -1379,7 +1401,6 @@ pub(crate) fn fill_reduction(
     n_cells: usize,
     gather: impl Fn(usize) -> BinReduction + Sync,
 ) -> CsrReduction {
-    use rayon::prelude::*;
     let mut sum_signal: Vec<AccT> = vec![0.0; n_cells];
     let mut sum_variance: Vec<AccT> = vec![0.0; n_cells];
     let mut sum_normalization: Vec<AccT> = vec![0.0; n_cells];
@@ -1388,15 +1409,65 @@ pub(crate) fn fill_reduction(
     let mut intensity: Vec<DataT> = vec![0.0; n_cells];
     let mut std: Vec<DataT> = vec![0.0; n_cells];
     let mut sem: Vec<DataT> = vec![0.0; n_cells];
-    sum_signal
+    fill_reduction_into(
+        ReductionOut {
+            signal: &mut sum_signal,
+            variance: &mut sum_variance,
+            normalization: &mut sum_normalization,
+            norm_sq: &mut sum_norm_sq,
+            count: &mut count,
+            intensity: &mut intensity,
+            std: &mut std,
+            sem: &mut sem,
+        },
+        gather,
+    );
+    CsrReduction {
+        sum_signal,
+        sum_variance,
+        sum_normalization,
+        sum_norm_sq,
+        count,
+        intensity,
+        std,
+        sem,
+    }
+}
+
+/// The parallel core of [`fill_reduction`]: for each output cell `t` it calls
+/// `gather(t)` and writes the eight finalized columns straight into the
+/// caller-provided [`ReductionOut`] slices. [`fill_reduction`] calls this with
+/// freshly allocated vecs (the owned path); [`csr_integrate2d_into`] /
+/// `lut_integrate2d_into` call it with the caller's reusable buffers (the `out=`
+/// streaming path). Same parallel-over-cells, write-own-slot pass either way, so
+/// the result is **bit-exact** and independent of thread count. All eight columns
+/// must have the same length (the cell count) — asserted, since a `par_iter` zip
+/// would otherwise silently truncate to the shortest and leave cells unwritten.
+pub(crate) fn fill_reduction_into(
+    out: ReductionOut<'_>,
+    gather: impl Fn(usize) -> BinReduction + Sync,
+) {
+    use rayon::prelude::*;
+    let n = out.signal.len();
+    assert!(
+        out.variance.len() == n
+            && out.normalization.len() == n
+            && out.norm_sq.len() == n
+            && out.count.len() == n
+            && out.intensity.len() == n
+            && out.std.len() == n
+            && out.sem.len() == n,
+        "all ReductionOut columns must have the same length"
+    );
+    out.signal
         .par_iter_mut()
-        .zip(sum_variance.par_iter_mut())
-        .zip(sum_normalization.par_iter_mut())
-        .zip(sum_norm_sq.par_iter_mut())
-        .zip(count.par_iter_mut())
-        .zip(intensity.par_iter_mut())
-        .zip(std.par_iter_mut())
-        .zip(sem.par_iter_mut())
+        .zip(out.variance.par_iter_mut())
+        .zip(out.normalization.par_iter_mut())
+        .zip(out.norm_sq.par_iter_mut())
+        .zip(out.count.par_iter_mut())
+        .zip(out.intensity.par_iter_mut())
+        .zip(out.std.par_iter_mut())
+        .zip(out.sem.par_iter_mut())
         .enumerate()
         .for_each(|(t, (((((((s, v), nm), nsq), c), i), st), se))| {
             let b = gather(t);
@@ -1409,16 +1480,6 @@ pub(crate) fn fill_reduction(
             *st = b.std;
             *se = b.sem;
         });
-    CsrReduction {
-        sum_signal,
-        sum_variance,
-        sum_normalization,
-        sum_norm_sq,
-        count,
-        intensity,
-        std,
-        sem,
-    }
 }
 
 /// Run the per-bin weighted-mean tail over already-scattered accumulators — the
@@ -1633,9 +1694,115 @@ pub fn csr_integrate2d(
     pack_2d(r, bins0, bins1, bin_centers0, bin_centers1)
 }
 
+/// Fused 2D CSR apply that writes into caller-provided output columns instead of
+/// allocating a fresh [`Integrate2d`] — the streaming `out=` path. Same gather,
+/// same transpose-fold, same parallel fill as [`csr_integrate2d`], so the columns
+/// receive **bit-identical** values; only the result buffers differ (reused across
+/// frames, which avoids the per-frame allocate + first-touch page-fault of the
+/// result arrays). Bin centers are the caller's concern (constant across frames),
+/// so this writes only the per-cell columns. `bins0`/`bins1` are the radial /
+/// azimuthal bin counts; every [`ReductionOut`] column must have length
+/// `bins0 * bins1`.
+pub fn csr_integrate2d_into(
+    csr: &Csr,
+    prep: &[DataT],
+    bins0: usize,
+    bins1: usize,
+    error_model: ErrorModel,
+    empty: DataT,
+    out: ReductionOut<'_>,
+) {
+    assert_eq!(
+        csr.indptr.len(),
+        bins0 * bins1 + 1,
+        "indptr length must be bins0 * bins1 + 1"
+    );
+    assert_eq!(
+        out.signal.len(),
+        bins0 * bins1,
+        "out columns must have length bins0 * bins1"
+    );
+    let do_variance = error_model != ErrorModel::No;
+    fill_reduction_into(out, |t| {
+        let bin = (t % bins0) * bins1 + (t / bins0);
+        csr_gather_bin(csr, prep, error_model, do_variance, empty, bin)
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The streaming `out=` path ([`csr_integrate2d_into`]) must write columns
+    /// bit-for-bit identical to the owned [`csr_integrate2d`] — same gather, same
+    /// transpose-fold, same parallel fill, only the result buffers differ.
+    #[test]
+    fn integrate2d_into_is_bit_identical_to_owned() {
+        // 2 radial x 3 azimuthal = 6 cells (bin = i*bins1 + j, radial-major), a
+        // hand-built CSR over 4 pixels; one empty row exercises the `empty` fill.
+        let (bins0, bins1) = (2usize, 3usize);
+        let csr = Csr {
+            data: vec![1.0, 0.5, 0.5, 1.0, 0.3, 1.0],
+            indices: vec![0, 1, 2, 3, 0, 2],
+            indptr: vec![0, 1, 3, 3, 4, 5, 6],
+        };
+        // 4 pixels x [signal, variance, norm, count]
+        let prep: Vec<DataT> = vec![
+            10.0, 1.0, 2.0, 1.0, // p0
+            20.0, 4.0, 1.0, 1.0, // p1
+            5.0, 0.5, 0.5, 1.0, // p2
+            8.0, 2.0, 4.0, 1.0, // p3
+        ];
+        let em = ErrorModel::Poisson;
+        let empty = 0.0f32;
+
+        let owned = csr_integrate2d(&csr, &prep, vec![0.0, 1.0], vec![0.0, 1.0, 2.0], em, empty);
+
+        let n = bins0 * bins1;
+        let mut signal = vec![0.0f64; n];
+        let mut variance = vec![0.0f64; n];
+        let mut normalization = vec![0.0f64; n];
+        let mut norm_sq = vec![0.0f64; n];
+        let mut count = vec![0.0f64; n];
+        let mut intensity = vec![0.0f32; n];
+        let mut std = vec![0.0f32; n];
+        let mut sem = vec![0.0f32; n];
+        csr_integrate2d_into(
+            &csr,
+            &prep,
+            bins0,
+            bins1,
+            em,
+            empty,
+            ReductionOut {
+                signal: &mut signal,
+                variance: &mut variance,
+                normalization: &mut normalization,
+                norm_sq: &mut norm_sq,
+                count: &mut count,
+                intensity: &mut intensity,
+                std: &mut std,
+                sem: &mut sem,
+            },
+        );
+
+        let bits64 = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        let bits32 = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits64(&signal), bits64(&owned.signal), "signal");
+        assert_eq!(bits64(&variance), bits64(&owned.variance), "variance");
+        assert_eq!(
+            bits64(&normalization),
+            bits64(&owned.normalization),
+            "normalization"
+        );
+        assert_eq!(bits64(&norm_sq), bits64(&owned.norm_sq), "norm_sq");
+        assert_eq!(bits64(&count), bits64(&owned.count), "count");
+        assert_eq!(bits32(&intensity), bits32(&owned.intensity), "intensity");
+        assert_eq!(bits32(&std), bits32(&owned.std), "std");
+        assert_eq!(bits32(&sem), bits32(&owned.sem), "sem");
+        // sigma aliases sem in the owned packer.
+        assert_eq!(bits32(&sem), bits32(&owned.sigma), "sigma == sem");
+    }
 
     #[test]
     fn single_bin_no_split_has_unit_coef() {

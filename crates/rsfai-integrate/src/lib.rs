@@ -78,14 +78,15 @@ pub use csc::{
 };
 pub use csr::{
     build_bbox_csr_1d, build_bbox_csr_2d, build_full_csr_1d, build_full_csr_2d, csr_integrate1d,
-    csr_integrate2d, Bbox2dBounds, BboxAzim1d, Csr, CsrIntegrate1d,
+    csr_integrate2d, csr_integrate2d_into, Bbox2dBounds, BboxAzim1d, Csr, CsrIntegrate1d,
+    ReductionOut,
 };
 pub use histogram::{
     histogram1d, histogram2d, histogram_preproc, Hist2dOptions, Integrate1d, Integrate2d,
 };
 pub use lut::{
     build_bbox_lut_1d, build_bbox_lut_2d, build_full_lut_1d, build_full_lut_2d, lut_integrate1d,
-    lut_integrate2d, Lut,
+    lut_integrate2d, lut_integrate2d_into, Lut,
 };
 pub use split_histogram::{
     histogram1d_bbox, histogram1d_full, histogram2d_bbox, histogram2d_full, histogram2d_pseudo,

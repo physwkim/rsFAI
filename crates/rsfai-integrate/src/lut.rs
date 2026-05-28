@@ -25,8 +25,8 @@
 
 use crate::csr::{
     build_bbox_csr_1d, build_bbox_csr_2d, build_full_csr_1d, build_full_csr_2d, fill_reduction,
-    finalize_bin, pack_2d, reduction_to_1d, Bbox2dBounds, BboxAzim1d, BinReduction, Csr,
-    CsrIntegrate1d,
+    fill_reduction_into, finalize_bin, pack_2d, reduction_to_1d, Bbox2dBounds, BboxAzim1d,
+    BinReduction, Csr, CsrIntegrate1d, ReductionOut,
 };
 use crate::histogram::Integrate2d;
 use rsfai_core::dtype::{AccT, DataT, ErrorModel, IndexT, PositionT};
@@ -214,6 +214,40 @@ pub fn lut_integrate2d(
         lut_gather_bin(lut, prep, error_model, do_variance, empty, bin)
     });
     pack_2d(r, bins0, bins1, bin_centers0, bin_centers1)
+}
+
+/// Fused 2D LUT apply that writes into caller-provided output columns instead of
+/// allocating a fresh [`Integrate2d`] — the LUT counterpart of
+/// [`crate::csr::csr_integrate2d_into`] (the streaming `out=` path). Same gather,
+/// transpose-fold, and parallel fill as [`lut_integrate2d`], so the columns get
+/// **bit-identical** values; only the result buffers differ (reused across frames,
+/// avoiding the per-frame allocate + first-touch fault). `bins0`/`bins1` are the
+/// radial / azimuthal bin counts; every [`ReductionOut`] column must have length
+/// `bins0 * bins1`.
+pub fn lut_integrate2d_into(
+    lut: &Lut,
+    prep: &[DataT],
+    bins0: usize,
+    bins1: usize,
+    error_model: ErrorModel,
+    empty: DataT,
+    out: ReductionOut<'_>,
+) {
+    assert_eq!(
+        lut.coef.len(),
+        bins0 * bins1 * lut.lut_size,
+        "lut.coef length must be n_bins * lut_size"
+    );
+    assert_eq!(
+        out.signal.len(),
+        bins0 * bins1,
+        "out columns must have length bins0 * bins1"
+    );
+    let do_variance = error_model != ErrorModel::No;
+    fill_reduction_into(out, |t| {
+        let bin = (t % bins0) * bins1 + (t / bins0);
+        lut_gather_bin(lut, prep, error_model, do_variance, empty, bin)
+    });
 }
 
 /// Build the 1D bbox LUT and the unscaled bin centers — the `("no"|"bbox", "lut",
