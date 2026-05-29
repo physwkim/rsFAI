@@ -29,7 +29,7 @@ use std::io;
 use std::path::Path;
 
 pub use calibrant::{Calibrant, PeakUnit, CONST_HC};
-pub use cell::{Cell, Lattice};
+pub use cell::{Cell, Lattice, LatticeParams};
 pub use config::{CalibrantConfig, Miller, Reflection};
 pub use space_groups::Centering;
 

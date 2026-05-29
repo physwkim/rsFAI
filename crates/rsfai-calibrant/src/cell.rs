@@ -42,6 +42,19 @@ impl Lattice {
     }
 }
 
+/// The six geometric scalars of a unit cell: lengths `a`/`b`/`c` (Angstrom) and
+/// angles `alpha`/`beta`/`gamma` (degrees). Bundled because they always travel
+/// together through `Cell::new`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LatticeParams {
+    pub a: f64,
+    pub b: f64,
+    pub c: f64,
+    pub alpha: f64,
+    pub beta: f64,
+    pub gamma: f64,
+}
+
 /// A crystallographic unit cell, `pyFAI.crystallography.cell.Cell`.
 ///
 /// Lengths `a`/`b`/`c` in Angstrom; angles `alpha`/`beta`/`gamma` in degrees.
@@ -75,23 +88,14 @@ struct SMatrix {
 
 impl Cell {
     /// Full constructor, `Cell.__init__`.
-    pub fn new(
-        a: f64,
-        b: f64,
-        c: f64,
-        alpha: f64,
-        beta: f64,
-        gamma: f64,
-        lattice: Lattice,
-        centering: Centering,
-    ) -> Cell {
+    pub fn new(params: LatticeParams, lattice: Lattice, centering: Centering) -> Cell {
         Cell {
-            a,
-            b,
-            c,
-            alpha,
-            beta,
-            gamma,
+            a: params.a,
+            b: params.b,
+            c: params.c,
+            alpha: params.alpha,
+            beta: params.beta,
+            gamma: params.gamma,
             lattice,
             centering,
             extra_rules: Vec::new(),
@@ -102,33 +106,79 @@ impl Cell {
 
     /// `Cell.cubic`.
     pub fn cubic(a: f64, centering: Centering) -> Cell {
-        Cell::new(a, a, a, 90.0, 90.0, 90.0, Lattice::Cubic, centering)
+        Cell::new(
+            LatticeParams {
+                a,
+                b: a,
+                c: a,
+                alpha: 90.0,
+                beta: 90.0,
+                gamma: 90.0,
+            },
+            Lattice::Cubic,
+            centering,
+        )
     }
 
     /// `Cell.tetragonal`.
     pub fn tetragonal(a: f64, c: f64, centering: Centering) -> Cell {
-        Cell::new(a, a, c, 90.0, 90.0, 90.0, Lattice::Tetragonal, centering)
+        Cell::new(
+            LatticeParams {
+                a,
+                b: a,
+                c,
+                alpha: 90.0,
+                beta: 90.0,
+                gamma: 90.0,
+            },
+            Lattice::Tetragonal,
+            centering,
+        )
     }
 
     /// `Cell.orthorhombic`.
     pub fn orthorhombic(a: f64, b: f64, c: f64, centering: Centering) -> Cell {
-        Cell::new(a, b, c, 90.0, 90.0, 90.0, Lattice::Orthorhombic, centering)
+        Cell::new(
+            LatticeParams {
+                a,
+                b,
+                c,
+                alpha: 90.0,
+                beta: 90.0,
+                gamma: 90.0,
+            },
+            Lattice::Orthorhombic,
+            centering,
+        )
     }
 
     /// `Cell.hexagonal` (gamma = 120°).
     pub fn hexagonal(a: f64, c: f64, centering: Centering) -> Cell {
-        Cell::new(a, a, c, 90.0, 90.0, 120.0, Lattice::Hexagonal, centering)
+        Cell::new(
+            LatticeParams {
+                a,
+                b: a,
+                c,
+                alpha: 90.0,
+                beta: 90.0,
+                gamma: 120.0,
+            },
+            Lattice::Hexagonal,
+            centering,
+        )
     }
 
     /// `Cell.rhombohedral`.
     pub fn rhombohedral(a: f64, alpha: f64, centering: Centering) -> Cell {
         Cell::new(
-            a,
-            a,
-            a,
-            alpha,
-            alpha,
-            alpha,
+            LatticeParams {
+                a,
+                b: a,
+                c: a,
+                alpha,
+                beta: alpha,
+                gamma: alpha,
+            },
             Lattice::Rhombohedral,
             centering,
         )

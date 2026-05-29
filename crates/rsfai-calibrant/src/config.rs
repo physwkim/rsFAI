@@ -36,9 +36,9 @@ impl Miller {
             if stripped.is_empty() {
                 continue;
             }
-            match stripped.parse::<i64>() {
-                Ok(v) => ints.push(v),
-                Err(_) => {} // pyFAI logs a warning and skips
+            // pyFAI logs a warning and skips non-integer tokens.
+            if let Ok(v) = stripped.parse::<i64>() {
+                ints.push(v);
             }
         }
         if ints.len() == 3 {
@@ -81,6 +81,17 @@ pub struct CalibrantConfig {
     pub reflections: Vec<Reflection>,
 }
 
+/// The text after the first `:`, trimmed — pyFAI's `line.split(":", 1)[1].strip()`.
+/// Returns `""` if there is no colon (the call sites only reach here after a
+/// `contains(":")` check, so the colon is always present).
+fn after_colon(line: &str) -> String {
+    line.split_once(':')
+        .map(|(_, rest)| rest)
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
 impl CalibrantConfig {
     /// Port of `CalibrantConfig.from_dspacing`: parse a `.D` file's text.
     ///
@@ -102,7 +113,7 @@ impl CalibrantConfig {
             if begining && line.starts_with('#') {
                 let line = line.trim_matches(|c| c == '#' || c == ' ' || c == '\t');
                 if line.contains("Calibrant:") {
-                    let name = line.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
+                    let name = after_colon(line);
                     if let Some(idx) = name.find('(') {
                         config.description = name[..idx].trim().to_string();
                         // Balance nested parentheses, e.g. `Vanadinite (Pb5(BO4)3Cl)`.
@@ -134,10 +145,10 @@ impl CalibrantConfig {
                     }
                     continue;
                 } else if line.contains("Ref:") {
-                    config.reference = line.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
+                    config.reference = after_colon(line);
                     continue;
                 } else if line.contains("Cell:") {
-                    let cell = line.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
+                    let cell = after_colon(line);
                     if cell.contains('(') && cell.contains(')') {
                         let idx = cell.find('(').unwrap();
                         let close = cell.find(')').unwrap();
