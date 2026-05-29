@@ -10,6 +10,7 @@ members = [
     "crates/rsfai",
     "crates/rsfai-multigeometry",
     "crates/rsfai-fiber",
+    "crates/rsfai-distortion",
     # rsfai-py (the PyO3 drop-in) is intentionally excluded from the default
     # cargo build/test: it is a cdylib needing extension-module linkage, built
     # standalone with maturin. See crates/rsfai-py/README.md.
@@ -34,6 +35,7 @@ rsfai-opencl = { path = "crates/rsfai-opencl" }
 rsfai = { path = "crates/rsfai" }
 rsfai-multigeometry = { path = "crates/rsfai-multigeometry" }
 rsfai-fiber = { path = "crates/rsfai-fiber" }
+rsfai-distortion = { path = "crates/rsfai-distortion" }
 
 # External
 ndarray = "0.16"
