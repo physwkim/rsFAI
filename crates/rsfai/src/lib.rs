@@ -361,6 +361,33 @@ pub struct Integrate2dResult {
     pub sem: Vec<f32>,
 }
 
+/// Binning spec for [`AzimuthalIntegrator::integrate2d_positions`]. Mirrors the
+/// two-fiber-unit configuration pyFAI's `integrate2d_fiber` derives: bin counts
+/// `(npt0, npt1)`, each axis's `(min, max)` range in the **scaled** unit
+/// (`None` ⇒ data range), the reported per-axis scale, and the two flags pyFAI
+/// reads off the axis unit — `allow_pos0_neg` (`not unit.positive`; fiber units
+/// are all signed) and `pos1_period` (`unit.period or 0`; fiber units have no
+/// period ⇒ `0`, no azimuthal wrap).
+#[derive(Debug, Clone, Copy)]
+pub struct Positions2dBinning {
+    /// Number of bins along `pos0` (pyFAI `npt_ip`).
+    pub npt0: usize,
+    /// Number of bins along `pos1` (pyFAI `npt_oop`).
+    pub npt1: usize,
+    /// `pos0` `(min, max)` in the scaled unit (pyFAI `ip_range`), or `None`.
+    pub pos0_range: Option<(f64, f64)>,
+    /// `pos1` `(min, max)` in the scaled unit (pyFAI `oop_range`), or `None`.
+    pub pos1_range: Option<(f64, f64)>,
+    /// Reported `pos0` bin-center scale (the `unit_ip.scale`).
+    pub pos0_scale: f64,
+    /// Reported `pos1` bin-center scale (the `unit_oop.scale`).
+    pub pos1_scale: f64,
+    /// Allow `pos0` below 0 (`not unit_ip.positive`; `true` for fiber q/angle).
+    pub allow_pos0_neg: bool,
+    /// `pos1` period (`unit_oop.period or 0`; `0` for fiber ⇒ no wrap).
+    pub pos1_period: f64,
+}
+
 /// A pure-Rust drop-in for `pyFAI.integrator.AzimuthalIntegrator`: holds the
 /// PONI geometry plus the detector model, and integrates a detector image into
 /// a 1D or 2D curve.
@@ -416,7 +443,11 @@ impl AzimuthalIntegrator {
     /// Lab coordinates `(z, y, x)` for every pixel centre: `detector.centers_f64`
     /// fed through the PONI rotation `calc_pos_zyx`. The flat detectors in scope
     /// are contiguous (`p3 = None` ⇒ `L3 = dist`).
-    fn pixel_positions(&self) -> PosZyx {
+    ///
+    /// Public so fiber/GI integration can build the `qip`/`qoop` position arrays
+    /// (`rsfai_geometry::fiber_center_array`) it feeds to
+    /// [`integrate2d_positions`](Self::integrate2d_positions).
+    pub fn pixel_positions(&self) -> PosZyx {
         let (p1, p2) = self.detector.centers_f64();
         calc_pos_zyx(
             self.dist,
@@ -904,6 +935,95 @@ impl AzimuthalIntegrator {
         };
         integrate2d_to_result(h, unit.scale)
     }
+
+    /// 2D **no-split histogram** over two caller-supplied per-pixel position
+    /// arrays `pos0`/`pos1` (each unscaled, length `detector.size()`) — the
+    /// building block fiber/GI integration drives. pyFAI's
+    /// `FiberIntegrator.integrate2d_fiber` runs the ordinary `integrate2d_ng`
+    /// with `unit=(unit_ip, unit_oop)` and method `("no","histogram","cython")`:
+    /// an ordinary 2D histogram where *both* axes are fiber position arrays
+    /// (qip, qoop) rather than (radial, chi).
+    ///
+    /// Preprocessing (solid angle, polarization, dark/flat/mask/variance,
+    /// normalization) is identical to [`integrate2d_with`](Self::integrate2d_with)
+    /// and uses the **true scattering geometry** ([`pixel_positions`](Self::pixel_positions)),
+    /// *not* the binning axes — exactly as pyFAI computes `solidAngleArray` from
+    /// the geometry regardless of the histogram axes.
+    ///
+    /// This primitive is fixed to the no-split histogram engine — fiber's only
+    /// sanctioned method (pyFAI warns against pixel-splitting for GI, and the
+    /// fiber units carry no corner/delta functions). `opts.method` is not
+    /// consulted for split/algo; `opts.error_model`, `correct_solid_angle`,
+    /// `polarization_factor`, and `normalization_factor` are honored.
+    pub fn integrate2d_positions(
+        &self,
+        image: &[f32],
+        pos0: &[f64],
+        pos1: &[f64],
+        binning: &Positions2dBinning,
+        opts: &IntegrationOptions,
+        corr: &Corrections,
+    ) -> Integrate2dResult {
+        let size = self.detector.size();
+        assert_eq!(
+            image.len(),
+            size,
+            "image length {} != detector size {size}",
+            image.len()
+        );
+        assert_eq!(
+            pos0.len(),
+            size,
+            "pos0 length {} != detector size {size}",
+            pos0.len()
+        );
+        assert_eq!(
+            pos1.len(),
+            size,
+            "pos1 length {} != detector size {size}",
+            pos1.len()
+        );
+
+        let pos = self.pixel_positions();
+        // pyFAI `create_mask`: a supplied user mask *replaces* the detector mask;
+        // `None` falls back to the detector gap mask.
+        let base_mask_storage: Option<Vec<i8>> = match corr.mask {
+            Some(user) => Some(user.to_vec()),
+            None => self.build_mask(),
+        };
+        let base_mask: Option<&[i8]> = base_mask_storage.as_deref();
+
+        let em = opts.error_model;
+        // The no-split histogram engine manages the error model itself (poisson
+        // stays poisson; preproc emits `max(data,1)`), so resolve the variance
+        // route with `manage_variance = true` regardless of `opts.method`.
+        let rv = resolve_variance(image, corr.dark, corr.variance, em, true);
+        let prep = self.preproc_rows_with(image, &pos, base_mask, opts, corr, &rv);
+
+        // pyFAI fiber range normalization (the generic `elif` branch, no chi
+        // deg→rad wrap): the scaled-unit range divided by the axis scale to the
+        // unscaled binning space (`i / pos*_scale`).
+        let radial_range = binning
+            .pos0_range
+            .map(|(lo, hi)| (lo / binning.pos0_scale, hi / binning.pos0_scale));
+        let azimuth_range = binning
+            .pos1_range
+            .map(|(lo, hi)| (lo / binning.pos1_scale, hi / binning.pos1_scale));
+
+        let hopts = Hist2dOptions {
+            bins: (binning.npt0, binning.npt1),
+            radial_range,
+            azimuth_range,
+            error_model: em,
+            allow_radial_neg: binning.allow_pos0_neg,
+            // Unused when `pos1_period == 0` (every fiber unit); fiber axes never wrap.
+            chi_disc_at_pi: false,
+            pos1_period: binning.pos1_period,
+            empty: 0.0,
+        };
+        let h = histogram2d(pos0, pos1, &prep, base_mask, &hopts);
+        integrate2d_to_result_scaled(h, binning.pos0_scale, binning.pos1_scale)
+    }
 }
 
 /// Map the no-split histogram engine's `Integrate1d` (f32 accumulators) to the
@@ -926,16 +1046,17 @@ fn histogram_to_result(h: Integrate1d, scale: f64) -> Integrate1dResult {
 }
 
 /// Map a 2D engine's `Integrate2d` (f64 accumulators in every 2D engine) to the
-/// public result, scaling the bin-center axes once: radial × `scale`, azimuth ×
-/// `CHI_DEG.scale` (radians → degrees).
-fn integrate2d_to_result(h: Integrate2d, scale: f64) -> Integrate2dResult {
+/// public result, scaling each bin-center axis independently: `pos0 × pos0_scale`,
+/// `pos1 × pos1_scale`. The standard (radial, chi) path uses `pos1_scale =
+/// CHI_DEG.scale`; the fiber path supplies the two fiber units' scales.
+fn integrate2d_to_result_scaled(
+    h: Integrate2d,
+    pos0_scale: f64,
+    pos1_scale: f64,
+) -> Integrate2dResult {
     Integrate2dResult {
-        radial: h.radial.iter().map(|&r| r * scale).collect(),
-        azimuthal: h
-            .azimuthal
-            .iter()
-            .map(|&a| a * Unit::CHI_DEG.scale)
-            .collect(),
+        radial: h.radial.iter().map(|&r| r * pos0_scale).collect(),
+        azimuthal: h.azimuthal.iter().map(|&a| a * pos1_scale).collect(),
         bins: h.bins,
         intensity: h.intensity,
         sigma: h.sigma,
@@ -947,6 +1068,12 @@ fn integrate2d_to_result(h: Integrate2d, scale: f64) -> Integrate2dResult {
         std: h.std,
         sem: h.sem,
     }
+}
+
+/// Standard 2D mapper: radial × `scale`, azimuth × `CHI_DEG.scale` (radians →
+/// degrees).
+fn integrate2d_to_result(h: Integrate2d, scale: f64) -> Integrate2dResult {
+    integrate2d_to_result_scaled(h, scale, Unit::CHI_DEG.scale)
 }
 
 /// Map a sparse / split engine's `CsrIntegrate1d` (f64 accumulators) to the
