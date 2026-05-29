@@ -1,0 +1,39 @@
+{
+  "h5py_version": "3.16.0",
+  "hdf5_version": "2.0.0",
+  "numpy_version": "2.4.3",
+  "file": "frame.h5",
+  "datasets": {
+    "entry/data/data": {
+      "shape": [
+        32,
+        32
+      ],
+      "dtype": "float32",
+      "layout": "contiguous"
+    },
+    "entry/data/data_gzip": {
+      "shape": [
+        32,
+        32
+      ],
+      "dtype": "float32",
+      "layout": "gzip/chunked"
+    },
+    "entry/data/counts": {
+      "shape": [
+        32,
+        32
+      ],
+      "dtype": "int32",
+      "layout": "contiguous"
+    },
+    "entry/instrument/detector/positions": {
+      "shape": [
+        64
+      ],
+      "dtype": "float64",
+      "layout": "contiguous"
+    }
+  }
+}

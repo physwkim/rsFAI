@@ -56,6 +56,13 @@ golden/datasets_calibrant/**/*.h5
 golden/datasets_calcfrom/**/*.edf
 golden/datasets_calcfrom/**/*.cbf
 golden/datasets_calcfrom/**/*.h5
+# rsfai-io golden (HDF5 / NeXus read): the test INPUT is a small (~24 KB)
+# h5py-written frame.h5 plus the .npy of each dataset, all offline-required, so
+# we COMMIT them — including the .h5, which is the fixture here (unlike the dirs
+# above, where .h5 is an ignored detector-image blob). Ignore only foreign
+# image formats so a large detector frame can't sneak in.
+golden/datasets_io/**/*.edf
+golden/datasets_io/**/*.cbf
 # Distortion/spline golden (M11): regenerate the large per-pixel arrays — the
 # `pos`/corner inputs, the CSR matrix (dist_csr_*), the raw image, and the
 # full-grid spline2array maps — via golden/gen_golden_distortion.py. Commit only
