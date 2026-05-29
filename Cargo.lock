@@ -481,6 +481,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsfai-calibrant"
+version = "0.0.0"
+dependencies = [
+ "rsfai-core",
+ "serde_json",
+]
+
+[[package]]
 name = "rsfai-core"
 version = "0.0.0"
 dependencies = [
