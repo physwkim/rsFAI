@@ -14,6 +14,11 @@
 //!   * [`GoniometerRefinement`] — refines the parameter vector against a set of
 //!     [`SingleGeometry`] control-point fits, reusing the bit-exact residual/chi²
 //!     machinery of [`rsfai_calib::GeometryRefinement`].
+//!   * [`MultiGeometryFiber`] — combines several [`rsfai_fiber::FiberIntegrator`]
+//!     frames by direct per-bin accumulator summation (the exact arithmetic
+//!     pyFAI's `MultiGeometryFiber` uses — *not* the `Integrate1dResult.union`
+//!     fold the azimuthal `MultiGeometry` uses). Bit-exact; fiber has no error
+//!     model, so there is no variance path.
 //!
 //! Two parity tiers, kept structurally separate (see `doc/bit-exact-ladder.md`):
 //!
@@ -27,9 +32,11 @@
 //!     at a recorded relative tolerance with `cost_rust <= cost_pyfai`.
 
 pub mod expr;
+pub mod multifiber;
 mod optimizer;
 pub mod refinement;
 pub mod transform;
 
+pub use multifiber::{MultiFiber1dResult, MultiFiber2dResult, MultiGeometryFiber};
 pub use refinement::{Goniometer, GoniometerRefinement, SingleGeometry};
 pub use transform::{GeometryTransformation, PoniParam, TransformError};

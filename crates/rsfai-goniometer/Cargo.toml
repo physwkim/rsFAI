@@ -10,6 +10,7 @@ rust-version.workspace = true
 rsfai.workspace = true
 rsfai-geometry.workspace = true
 rsfai-detectors.workspace = true
+rsfai-fiber.workspace = true
 rsfai-calib.workspace = true
 # Iterative optimizer for `GoniometerRefinement::refine`. ISOLATED to this crate
 # (only `optimizer.rs` touches it): the bit-exact formula evaluator, the
