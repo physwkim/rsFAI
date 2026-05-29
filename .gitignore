@@ -48,3 +48,10 @@ golden/datasets_fiber_integrator/data.npy
 golden/datasets_calibrant/**/*.edf
 golden/datasets_calibrant/**/*.cbf
 golden/datasets_calibrant/**/*.h5
+# Distortion/spline golden (M11): regenerate the large per-pixel arrays — the
+# `pos`/corner inputs, the CSR matrix (dist_csr_*), the raw image, and the
+# full-grid spline2array maps — via golden/gen_golden_distortion.py. Commit only
+# the out_*.npy fixtures (bisplev surfaces, parsed knots/coeffs, the small
+# corrected image), the manifest, and the committed halfccd.spline (not .npy).
+golden/datasets_distortion/**/*.npy
+!golden/datasets_distortion/**/out_*.npy

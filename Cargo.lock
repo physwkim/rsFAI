@@ -510,6 +510,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsfai-distortion"
+version = "0.0.0"
+dependencies = [
+ "ndarray",
+ "rsfai-core",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "rsfai-fiber"
 version = "0.0.0"
 dependencies = [
