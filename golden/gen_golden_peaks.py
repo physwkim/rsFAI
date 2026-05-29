@@ -160,18 +160,37 @@ def main():
     mask_all = np.ones(ws_img.shape, np.uint8)
     ws_cases = []
     configs = [
-        ("imin10_keep10_refine", dict(Imin=10.0, keep=10, refine=True, dmin=0.0)),
-        ("imin10_keep10_norefine", dict(Imin=10.0, keep=10, refine=False, dmin=0.0)),
-        ("imin0_keep3_refine_dmin5", dict(Imin=1.0, keep=3, refine=True, dmin=5.0)),
+        ("imin10_keep10_refine", ws_img, "ws_image.npy", dict(Imin=10.0, keep=10, refine=True, dmin=0.0)),
+        ("imin10_keep10_norefine", ws_img, "ws_image.npy", dict(Imin=10.0, keep=10, refine=False, dmin=0.0)),
+        ("imin0_keep3_refine_dmin5", ws_img, "ws_image.npy", dict(Imin=1.0, keep=3, refine=True, dmin=5.0)),
     ]
-    for tag, kw in configs:
+    # Dense grid of equal-ish-intensity peaks: exercises the many-region path
+    # and tied intensities, where the coordinate SET must still match pyFAI
+    # even though the returned list order follows CPython set-hash iteration.
+    dense_img = gaussian_image(
+        (96, 96),
+        [
+            (yc, xc, 3.0, 50.0 + float((yc * 7 + xc * 3) % 80))
+            for yc in range(10, 90, 16)
+            for xc in range(10, 90, 16)
+        ],
+    )
+    save("ws_dense_image.npy", dense_img.astype(np.float32))
+    configs.append(
+        ("dense_imin5_keep100_refine", dense_img, "ws_dense_image.npy",
+         dict(Imin=5.0, keep=100, refine=True, dmin=0.0))
+    )
+    for tag, img_for_case, img_file, kw in configs:
         # fresh object per case (peaks_from_area is read-only, but be safe)
-        wi = watershed.InverseWatershed(data=ws_img)
+        wi = watershed.InverseWatershed(data=img_for_case)
         wi.init()
-        pts = wi.peaks_from_area(mask_all, **kw)
+        mask_for_case = np.ones(img_for_case.shape, np.uint8)
+        pts = wi.peaks_from_area(mask_for_case, **kw)
         arr = np.array(pts, dtype=np.float64).reshape(-1, 2) if pts else np.zeros((0, 2), np.float64)
         m = save(f"ws_peaks_{tag}.npy", arr)
         m["tag"] = tag
+        m["image"] = img_file
+        m["shape"] = list(img_for_case.shape)
         m["config"] = {k: (float(v) if isinstance(v, float) else v) for k, v in kw.items()}
         ws_cases.append(m)
     ws_meta["peaks"] = ws_cases

@@ -101,11 +101,12 @@
       {
         "file": "ws_peaks_imin10_keep10_refine.npy",
         "shape": [
-          5,
-          2
+          64,
+          64
         ],
         "dtype": "float64",
         "tag": "imin10_keep10_refine",
+        "image": "ws_image.npy",
         "config": {
           "Imin": 10.0,
           "keep": 10,
@@ -116,11 +117,12 @@
       {
         "file": "ws_peaks_imin10_keep10_norefine.npy",
         "shape": [
-          5,
-          2
+          64,
+          64
         ],
         "dtype": "float64",
         "tag": "imin10_keep10_norefine",
+        "image": "ws_image.npy",
         "config": {
           "Imin": 10.0,
           "keep": 10,
@@ -131,16 +133,33 @@
       {
         "file": "ws_peaks_imin0_keep3_refine_dmin5.npy",
         "shape": [
-          3,
-          2
+          64,
+          64
         ],
         "dtype": "float64",
         "tag": "imin0_keep3_refine_dmin5",
+        "image": "ws_image.npy",
         "config": {
           "Imin": 1.0,
           "keep": 3,
           "refine": true,
           "dmin": 5.0
+        }
+      },
+      {
+        "file": "ws_peaks_dense_imin5_keep100_refine.npy",
+        "shape": [
+          96,
+          96
+        ],
+        "dtype": "float64",
+        "tag": "dense_imin5_keep100_refine",
+        "image": "ws_dense_image.npy",
+        "config": {
+          "Imin": 5.0,
+          "keep": 100,
+          "refine": true,
+          "dmin": 0.0
         }
       }
     ]

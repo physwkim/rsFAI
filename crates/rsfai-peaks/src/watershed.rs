@@ -255,6 +255,16 @@ impl InverseWatershed {
     ///
     /// Returns peaks as `(y, x)` `f32` pairs (refined) or integer-valued `f32`
     /// pairs (`refine == false`).
+    ///
+    /// **Ordering caveat.** The peak *coordinates* are bit-exact vs pyFAI, but
+    /// the returned *list order* is not a portable contract: pyFAI gathers peaks
+    /// region-by-region in the iteration order of a CPython `set` of (large)
+    /// region flat-indices, whose hash-table slot order this `BTreeSet`
+    /// (ascending) does not reproduce. When every kept peak has a distinct
+    /// intensity the final stable intensity sort makes the order total and
+    /// identical to pyFAI; only when intensities tie can the order differ while
+    /// the coordinate set stays bit-exact. Callers that need the exact pyFAI
+    /// order for tied intensities must treat the result as a set.
     pub fn peaks_from_area(
         &self,
         mask: &[bool],
@@ -265,11 +275,12 @@ impl InverseWatershed {
     ) -> Vec<(f32, f32)> {
         assert_eq!(mask.len(), self.height * self.width, "mask shape");
         let width = self.width;
-        // Regions touched by any valid pixel, in raster order of the valid
-        // pixels (matches `numpy.where(mask)` + set insertion; the set is then
-        // iterated — CPython sets are unordered, but pyFAI's small-int set
-        // iterates in ascending value. We iterate ascending region.index, which
-        // is the documented stable order.)
+        // Regions touched by any valid pixel. pyFAI builds a CPython `set`
+        // (`keep_regions`) from `numpy.where(mask)` and later iterates it in
+        // hash-table slot order; we collect the same membership into a
+        // `BTreeSet` (ascending region index). This changes only the gather
+        // order for tied-intensity peaks — see the ordering caveat on
+        // `peaks_from_area` — not the set of coordinates produced.
         let mut keep_regions: std::collections::BTreeSet<i32> = std::collections::BTreeSet::new();
         for (i, &m) in mask.iter().enumerate() {
             if m {

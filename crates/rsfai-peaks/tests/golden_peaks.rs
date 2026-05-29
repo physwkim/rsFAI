@@ -176,7 +176,6 @@ fn watershed_matches_pyfai() {
         if brd_ok { "BIT-EXACT" } else { "FAIL" }
     );
 
-    let mask = vec![true; rows * cols];
     let mut fails = 0;
     if !lbl_ok {
         fails += 1;
@@ -192,32 +191,54 @@ fn watershed_matches_pyfai() {
         let refine = cfg["refine"].as_bool().unwrap();
         let dmin = cfg["dmin"].as_f64().unwrap() as f32;
 
+        // each case names its own image (some use a denser many-region image to
+        // exercise the tied-intensity / set-order path).
+        let img_file = case["image"].as_str().unwrap();
+        let cshape = case["shape"].as_array().unwrap();
+        let crows = cshape[0].as_u64().unwrap() as usize;
+        let ccols = cshape[1].as_u64().unwrap() as usize;
+        let cimg = f32v(img_file);
+        let cmask = vec![true; crows * ccols];
+
         // fresh segmenter per case (init is idempotent; matches the generator).
-        let mut iwc = InverseWatershed::new(image.clone(), rows, cols);
+        let mut iwc = InverseWatershed::new(cimg, crows, ccols);
         iwc.init();
-        let pts = iwc.peaks_from_area(&mask, imin, keep, refine, dmin);
-        let got: Vec<f32> = pts.iter().flat_map(|&(y, x)| [y, x]).collect();
+        let pts = iwc.peaks_from_area(&cmask, imin, keep, refine, dmin);
         // pyFAI's peaks_from_area produces f32 coordinates (the bilinear refine
         // returns f32; the no-refine path returns integer-valued coords). The
         // generator stored them as a float64 array, so narrow it back to f32 —
-        // every stored value is exactly f32-representable — and compare in f32.
-        let golden: Vec<f32> = f64v(case["file"].as_str().unwrap())
+        // every stored value is exactly f32-representable.
+        //
+        // The peak COORDINATES are gated bit-exact, but the returned LIST ORDER
+        // is not: pyFAI gathers peaks region-by-region in the iteration order of
+        // a CPython `set` of (large) region flat-indices, whose hash-table slot
+        // order is not a portable numerical contract (and is not reproduced by
+        // the Rust BTreeSet). With distinct per-peak intensities the final
+        // stable intensity sort makes the order total and identical (the case
+        // here); with tied intensities the order can differ while the coordinate
+        // set stays bit-exact. So compare as a SORTED multiset of (y, x) pairs:
+        // membership/values bit-exact, order-independent.
+        let mut got_pairs: Vec<(u32, u32)> = pts
             .iter()
-            .map(|&v| v as f32)
+            .map(|&(y, x)| (y.to_bits(), x.to_bits()))
             .collect();
+        let golden_f64 = f64v(case["file"].as_str().unwrap());
+        let mut golden_pairs: Vec<(u32, u32)> = golden_f64
+            .chunks_exact(2)
+            .map(|c| ((c[0] as f32).to_bits(), (c[1] as f32).to_bits()))
+            .collect();
+        got_pairs.sort_unstable();
+        golden_pairs.sort_unstable();
 
-        let ok = got.len() == golden.len() && {
-            let r = compare_f32(&got, &golden);
-            r.is_bit_exact()
-        };
+        let ok = got_pairs == golden_pairs;
         if !ok {
             fails += 1;
         }
         eprintln!(
-            "watershed peaks[{tag}]  {}  n={} (golden {})",
+            "watershed peaks[{tag}]  {}  n={} (golden {})  [coords bit-exact as a set]",
             if ok { "BIT-EXACT" } else { "FAIL" },
-            got.len() / 2,
-            golden.len() / 2
+            got_pairs.len(),
+            golden_pairs.len()
         );
     }
     assert_eq!(fails, 0, "{fails} watershed field(s) failed bit-exactness");
