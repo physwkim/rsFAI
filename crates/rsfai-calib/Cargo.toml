@@ -10,3 +10,13 @@ rust-version.workspace = true
 rsfai-geometry.workspace = true
 rsfai-detectors.workspace = true
 rsfai-calibrant.workspace = true
+# Iterative optimizer for `refine()`. ISOLATED to this crate: the bit-exact
+# residual/chi2 core never touches argmin; only the converged-parameter search
+# does, and it is gated at a recorded tolerance (not bit-exact) because the
+# Nelder-Mead trajectory differs from scipy's SLSQP by construction.
+argmin = { workspace = true }
+argmin-math = { workspace = true }
+
+[dev-dependencies]
+rsfai-core.workspace = true
+serde_json.workspace = true
