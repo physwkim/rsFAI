@@ -1,0 +1,191 @@
+{
+  "dataset": "goniometer",
+  "source": "gen_golden_goniometer.py",
+  "versions": {
+    "pyFAI": "2026.5.0",
+    "numpy": "2.4.3",
+    "scipy": "1.17.1",
+    "numexpr": "2.14.1",
+    "python": "3.14.3"
+  },
+  "omp_num_threads": "1",
+  "transformation": {
+    "param_names": [
+      "dist",
+      "poni1",
+      "poni2",
+      "rot1",
+      "rot2",
+      "rot3"
+    ],
+    "pos_names": [
+      "pos"
+    ],
+    "dist_expr": "dist",
+    "poni1_expr": "poni1",
+    "poni2_expr": "poni2",
+    "rot1_expr": "rot1",
+    "rot2_expr": "rot2 + 0.0 * pos",
+    "rot3_expr": "rot3"
+  },
+  "config": {
+    "pixel1": 1.5e-05,
+    "pixel2": 1.5e-05,
+    "wavelength": 1.54e-10,
+    "orientation": 3,
+    "geom_meta": [
+      [
+        0.0
+      ],
+      [
+        0.0
+      ]
+    ],
+    "residu2_fixed": 0.012490357000996962,
+    "cost_converged": 0.0007350807225583798,
+    "n_control_points": [
+      13,
+      12
+    ]
+  },
+  "fiber": {
+    "detector": "Pilatus1M",
+    "geometries": [
+      {
+        "dist": 0.2,
+        "poni1": 0.1,
+        "poni2": 0.1,
+        "rot1": 0.01,
+        "rot2": 0.02,
+        "rot3": 0.0,
+        "wavelength": 1e-10
+      },
+      {
+        "dist": 0.22,
+        "poni1": 0.11,
+        "poni2": 0.09,
+        "rot1": 0.0,
+        "rot2": 0.05,
+        "rot3": 0.0,
+        "wavelength": 1e-10
+      }
+    ],
+    "shared_gi": {
+      "sample_orientation": 1,
+      "incident_angle": 0.2,
+      "tilt_angle": 0.0
+    },
+    "npt_ip": 200,
+    "npt_oop": 200,
+    "unit_ip": "qip_nm^-1",
+    "unit_oop": "qoop_nm^-1",
+    "result1d": {
+      "v": {
+        "axis": [
+          [
+            200
+          ],
+          "float64"
+        ],
+        "intensity": [
+          [
+            200
+          ],
+          "float64"
+        ],
+        "sum_signal": [
+          [
+            200
+          ],
+          "float64"
+        ],
+        "sum_normalization": [
+          [
+            200
+          ],
+          "float64"
+        ],
+        "count": [
+          [
+            200
+          ],
+          "float64"
+        ]
+      },
+      "h": {
+        "axis": [
+          [
+            200
+          ],
+          "float64"
+        ],
+        "intensity": [
+          [
+            200
+          ],
+          "float64"
+        ],
+        "sum_signal": [
+          [
+            200
+          ],
+          "float64"
+        ],
+        "sum_normalization": [
+          [
+            200
+          ],
+          "float64"
+        ],
+        "count": [
+          [
+            200
+          ],
+          "float64"
+        ]
+      }
+    },
+    "result2d": {
+      "inplane": [
+        [
+          200
+        ],
+        "float64"
+      ],
+      "outofplane": [
+        [
+          200
+        ],
+        "float64"
+      ],
+      "intensity": [
+        [
+          200,
+          200
+        ],
+        "float64"
+      ],
+      "sum_signal": [
+        [
+          200,
+          200
+        ],
+        "float64"
+      ],
+      "sum_normalization": [
+        [
+          200,
+          200
+        ],
+        "float64"
+      ],
+      "count": [
+        [
+          200,
+          200
+        ],
+        "float64"
+      ]
+    }
+  }
+}
