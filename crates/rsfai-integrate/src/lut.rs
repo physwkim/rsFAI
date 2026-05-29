@@ -298,6 +298,33 @@ pub fn lut_integrate2d_into(
     });
 }
 
+/// Fused 1D LUT apply that writes into caller-provided output columns instead of
+/// allocating a fresh [`CsrIntegrate1d`] — the LUT counterpart of
+/// [`crate::csr::csr_integrate1d_into`] (the streaming `out=` path). The gather is
+/// the identity cell→bin map (1D output cell `t` is source bin `t`), exactly the
+/// gather [`lut_integrate1d`] uses; only the result buffers differ (reused across
+/// frames, avoiding the per-frame allocate + first-touch fault). Every
+/// [`ReductionOut`] column must have length `bins`.
+pub fn lut_integrate1d_into(
+    lut: &Lut,
+    prep: &[DataT],
+    bins: usize,
+    error_model: ErrorModel,
+    empty: DataT,
+    out: ReductionOut<'_>,
+) {
+    assert_eq!(
+        lut.coef.len(),
+        bins * lut.lut_size,
+        "lut.coef length must be n_bins * lut_size"
+    );
+    assert_eq!(out.signal.len(), bins, "out columns must have length bins");
+    let do_variance = error_model != ErrorModel::No;
+    fill_reduction_into(out, |t| {
+        lut_gather_bin(lut, prep, error_model, do_variance, empty, t)
+    });
+}
+
 /// Build the 1D bbox LUT and the unscaled bin centers — the `("no"|"bbox", "lut",
 /// "cython")` build (`splitBBoxLUT.HistoBBox1d`). Mirrors pyFAI: build the bbox
 /// CSR LUT then densify with [`csr_to_lut`]. `delta_pos0 = None` is the no-split

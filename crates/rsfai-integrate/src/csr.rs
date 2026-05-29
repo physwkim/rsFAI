@@ -1729,6 +1729,30 @@ pub fn csr_integrate2d_into(
     });
 }
 
+/// Fused 1D CSR apply that writes into caller-provided output columns instead of
+/// allocating a fresh [`CsrIntegrate1d`] — the streaming `out=` path, the 1D
+/// counterpart of [`csr_integrate2d_into`]. The gather is the identity cell→bin
+/// map (no transpose; 1D output cell `t` is source bin `t`), so it is exactly the
+/// gather [`csr_integrate1d`] uses; only the result buffers differ (reused across
+/// frames, avoiding the per-frame allocate + first-touch fault). Bin centers are
+/// the caller's concern (constant across frames), so this writes only the per-bin
+/// columns. Every [`ReductionOut`] column must have length `bins`.
+pub fn csr_integrate1d_into(
+    csr: &Csr,
+    prep: &[DataT],
+    bins: usize,
+    error_model: ErrorModel,
+    empty: DataT,
+    out: ReductionOut<'_>,
+) {
+    assert_eq!(csr.indptr.len(), bins + 1, "indptr length must be bins + 1");
+    assert_eq!(out.signal.len(), bins, "out columns must have length bins");
+    let do_variance = error_model != ErrorModel::No;
+    fill_reduction_into(out, |t| {
+        csr_gather_bin(csr, prep, error_model, do_variance, empty, t)
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1796,6 +1820,75 @@ mod tests {
             "normalization"
         );
         assert_eq!(bits64(&norm_sq), bits64(&owned.norm_sq), "norm_sq");
+        assert_eq!(bits64(&count), bits64(&owned.count), "count");
+        assert_eq!(bits32(&intensity), bits32(&owned.intensity), "intensity");
+        assert_eq!(bits32(&std), bits32(&owned.std), "std");
+        assert_eq!(bits32(&sem), bits32(&owned.sem), "sem");
+        // sigma aliases sem in the owned packer.
+        assert_eq!(bits32(&sem), bits32(&owned.sigma), "sigma == sem");
+    }
+
+    /// The streaming `out=` path ([`csr_integrate1d_into`]) must write columns
+    /// bit-for-bit identical to the owned [`csr_integrate1d`] — same identity
+    /// gather, same parallel fill, only the result buffers differ.
+    #[test]
+    fn integrate1d_into_is_bit_identical_to_owned() {
+        // 4 bins over 4 pixels (indptr length bins+1); bin 2 is empty, exercising
+        // the `empty` fill on the streaming path.
+        let bins = 4usize;
+        let csr = Csr {
+            data: vec![1.0, 0.5, 0.5, 0.3, 1.0],
+            indices: vec![0, 1, 2, 3, 0],
+            indptr: vec![0, 1, 3, 3, 5],
+        };
+        // 4 pixels x [signal, variance, norm, count]
+        let prep: Vec<DataT> = vec![
+            10.0, 1.0, 2.0, 1.0, // p0
+            20.0, 4.0, 1.0, 1.0, // p1
+            5.0, 0.5, 0.5, 1.0, // p2
+            8.0, 2.0, 4.0, 1.0, // p3
+        ];
+        let em = ErrorModel::Poisson;
+        let empty = 0.0f32;
+
+        let owned = csr_integrate1d(&csr, &prep, vec![0.0, 1.0, 2.0, 3.0], em, empty);
+
+        let mut signal = vec![0.0f64; bins];
+        let mut variance = vec![0.0f64; bins];
+        let mut normalization = vec![0.0f64; bins];
+        let mut norm_sq = vec![0.0f64; bins];
+        let mut count = vec![0.0f64; bins];
+        let mut intensity = vec![0.0f32; bins];
+        let mut std = vec![0.0f32; bins];
+        let mut sem = vec![0.0f32; bins];
+        csr_integrate1d_into(
+            &csr,
+            &prep,
+            bins,
+            em,
+            empty,
+            ReductionOut {
+                signal: &mut signal,
+                variance: &mut variance,
+                normalization: &mut normalization,
+                norm_sq: &mut norm_sq,
+                count: &mut count,
+                intensity: &mut intensity,
+                std: &mut std,
+                sem: &mut sem,
+            },
+        );
+
+        let bits64 = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        let bits32 = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits64(&signal), bits64(&owned.sum_signal), "signal");
+        assert_eq!(bits64(&variance), bits64(&owned.sum_variance), "variance");
+        assert_eq!(
+            bits64(&normalization),
+            bits64(&owned.sum_normalization),
+            "normalization"
+        );
+        assert_eq!(bits64(&norm_sq), bits64(&owned.sum_norm_sq), "norm_sq");
         assert_eq!(bits64(&count), bits64(&owned.count), "count");
         assert_eq!(bits32(&intensity), bits32(&owned.intensity), "intensity");
         assert_eq!(bits32(&std), bits32(&owned.std), "std");

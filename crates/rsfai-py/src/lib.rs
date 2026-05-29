@@ -47,12 +47,13 @@ use rsfai_integrate::{
     build_full_csr_1d as rs_build_full_csr_1d, build_full_csr_2d as rs_build_full_csr_2d,
     build_full_lut_1d as rs_build_full_lut_1d, build_full_lut_2d as rs_build_full_lut_2d,
     csc_integrate1d as rs_csc_integrate1d, csc_integrate2d as rs_csc_integrate2d,
-    csr_integrate1d as rs_csr_integrate1d, csr_integrate2d as rs_csr_integrate2d,
-    csr_integrate2d_into as rs_csr_integrate2d_into, histogram1d as rs_histogram1d,
-    histogram1d_bbox as rs_histogram1d_bbox, histogram1d_full as rs_histogram1d_full,
-    histogram2d as rs_histogram2d, histogram2d_bbox as rs_histogram2d_bbox,
-    histogram2d_full as rs_histogram2d_full, histogram2d_pseudo as rs_histogram2d_pseudo,
-    histogram_preproc as rs_histogram_preproc, lut_integrate1d as rs_lut_integrate1d,
+    csr_integrate1d as rs_csr_integrate1d, csr_integrate1d_into as rs_csr_integrate1d_into,
+    csr_integrate2d as rs_csr_integrate2d, csr_integrate2d_into as rs_csr_integrate2d_into,
+    histogram1d as rs_histogram1d, histogram1d_bbox as rs_histogram1d_bbox,
+    histogram1d_full as rs_histogram1d_full, histogram2d as rs_histogram2d,
+    histogram2d_bbox as rs_histogram2d_bbox, histogram2d_full as rs_histogram2d_full,
+    histogram2d_pseudo as rs_histogram2d_pseudo, histogram_preproc as rs_histogram_preproc,
+    lut_integrate1d as rs_lut_integrate1d, lut_integrate1d_into as rs_lut_integrate1d_into,
     lut_integrate2d as rs_lut_integrate2d, lut_integrate2d_into as rs_lut_integrate2d_into,
     Bbox2dBounds, Csc, Csr, CsrIntegrate1d, Hist2dOptions, Integrate1d, Integrate2d, Lut,
     ReductionOut,
@@ -1204,6 +1205,34 @@ impl EngineMatrix {
         }
     }
 
+    /// 1D apply that writes the per-bin columns into the caller's reusable
+    /// [`ReductionOut`] buffers (the `out=` streaming path), the 1D counterpart of
+    /// [`apply2d_into`](EngineMatrix::apply2d_into). CSR/LUT only — CSC's
+    /// pixel-major scatter does not go through the fused `fill_reduction`, so
+    /// `out=` is rejected there.
+    fn apply1d_into(
+        &self,
+        prep: &[f32],
+        bins: usize,
+        em: ErrorModel,
+        empty: f32,
+        out: ReductionOut<'_>,
+    ) -> PyResult<()> {
+        match self {
+            EngineMatrix::Csr(c) => {
+                rs_csr_integrate1d_into(c, prep, bins, em, empty, out);
+                Ok(())
+            }
+            EngineMatrix::Lut(l) => {
+                rs_lut_integrate1d_into(l, prep, bins, em, empty, out);
+                Ok(())
+            }
+            EngineMatrix::Csc(_) => Err(PyValueError::new_err(
+                "out= is not supported for CSC engines; use a CSR or LUT engine for streaming 1D",
+            )),
+        }
+    }
+
     fn apply2d(
         &self,
         prep: &[f32],
@@ -1372,23 +1401,38 @@ impl Engine {
     /// Integrate a preprocessed `(npix, 4)` f32 frame into the 1D bins, reusing
     /// the cached matrix. Returns the `Integrate1dtpl` field dict (as
     /// `csr_integrate1d`). Raises `ValueError` on a 2D engine.
-    #[pyo3(signature = (prep, *, error_model=0, empty=0.0))]
+    ///
+    /// Pass `out=` (a dict of reusable numpy buffers from
+    /// [`new_output_1d`](Engine::new_output_1d)) to write the per-bin result
+    /// columns in place instead of allocating fresh arrays each call — the
+    /// streaming fast path that reuses one set of buffers (and their faulted
+    /// pages) across frames. The values written are bit-identical to the
+    /// allocating path. `out=` requires a CSR or LUT engine (not CSC).
+    #[pyo3(signature = (prep, *, error_model=0, empty=0.0, out=None))]
     fn integrate1d<'py>(
         &self,
         py: Python<'py>,
         prep: PyReadonlyArray2<'py, f32>,
         error_model: i32,
         empty: f32,
+        out: Option<Bound<'py, PyDict>>,
     ) -> PyResult<Bound<'py, PyDict>> {
         if self.centers1.is_some() {
             return Err(PyValueError::new_err("2D engine: call integrate2d"));
         }
         let prep_s = as_slice_2d(&prep)?;
         let em = self::error_model(error_model)?;
-        let r = self
-            .matrix
-            .apply1d(prep_s, self.centers0.clone(), em, empty);
-        csr_integrate1d_to_dict(py, r)
+        match out {
+            None => {
+                let r = self
+                    .matrix
+                    .apply1d(prep_s, self.centers0.clone(), em, empty);
+                csr_integrate1d_to_dict(py, r)
+            }
+            Some(out) => {
+                integrate1d_into_dict(py, &self.matrix, prep_s, &self.centers0, em, empty, out)
+            }
+        }
     }
 
     /// Integrate a preprocessed `(npix, 4)` f32 frame into the 2D bins, reusing
@@ -1453,6 +1497,37 @@ impl Engine {
         let n = self.centers0.len() * c1.len();
         let d = PyDict::new(py);
         for k in ["signal", "variance", "normalization", "norm_sq", "count"] {
+            d.set_item(k, PyArray1::<f64>::zeros(py, n, false))?;
+        }
+        for k in ["intensity", "std", "sem"] {
+            d.set_item(k, PyArray1::<f32>::zeros(py, n, false))?;
+        }
+        Ok(d)
+    }
+
+    /// Allocate a reusable `out=` dict for [`integrate1d`](Engine::integrate1d):
+    /// the eight per-bin result columns as numpy arrays of length `bins` with the
+    /// engine's result dtypes — f64 `sum_signal`, `sum_variance`,
+    /// `sum_normalization`, `sum_norm_sq`, `count`; f32 `intensity`, `std`, `sem`.
+    /// Allocate ONCE and pass it back as `out=` every frame so the buffers (and
+    /// their faulted pages) are reused instead of re-allocated per call. `sigma` is
+    /// not a separate buffer — it aliases `sem` in the returned result. The keys
+    /// differ from [`new_output_2d`](Engine::new_output_2d) (`sum_signal`/… vs
+    /// `signal`/…), so a 1D `out=` dict cannot be passed to `integrate2d` or vice
+    /// versa. Raises `ValueError` on a 2D engine.
+    fn new_output_1d<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        if self.centers1.is_some() {
+            return Err(PyValueError::new_err("2D engine: use new_output_2d"));
+        }
+        let n = self.centers0.len();
+        let d = PyDict::new(py);
+        for k in [
+            "sum_signal",
+            "sum_variance",
+            "sum_normalization",
+            "sum_norm_sq",
+            "count",
+        ] {
             d.set_item(k, PyArray1::<f64>::zeros(py, n, false))?;
         }
         for k in ["intensity", "std", "sem"] {
@@ -1716,7 +1791,7 @@ fn out_col<'py, T: numpy::Element>(
     })?;
     if arr.len() != n {
         return Err(PyValueError::new_err(format!(
-            "out['{key}'] has length {} but bins0*bins1 = {n}",
+            "out['{key}'] has length {} but expected length {n}",
             arr.len()
         )));
     }
@@ -1793,6 +1868,75 @@ fn integrate2d_into_dict<'py>(
     d.set_item("std", &a_std)?;
     d.set_item("sem", &a_sem)?;
     d.set_item("norm_sq", &a_norm_sq)?;
+    Ok(d)
+}
+
+/// 1D apply that writes into caller-provided `out=` buffers (see
+/// [`Engine::integrate1d`]). Extracts and validates the eight per-bin columns,
+/// fills them in place via [`EngineMatrix::apply1d_into`] (CSR/LUT only), and
+/// returns the full `Integrate1dtpl`-shaped dict referencing those same buffers
+/// plus a freshly built (tiny, constant) `position` axis. `sigma` aliases the
+/// `sem` buffer, matching the allocating path. Buffer keys are the 1D result keys
+/// (`sum_signal`/`sum_variance`/`sum_normalization`/`sum_norm_sq`), not the 2D
+/// `signal`/… keys, so an `out=` dict is dimension-specific.
+fn integrate1d_into_dict<'py>(
+    py: Python<'py>,
+    matrix: &EngineMatrix,
+    prep: &[f32],
+    centers: &[f64],
+    em: ErrorModel,
+    empty: f32,
+    out: Bound<'py, PyDict>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let n = centers.len();
+
+    let a_signal = out_col::<f64>(&out, "sum_signal", n, "float64")?;
+    let a_variance = out_col::<f64>(&out, "sum_variance", n, "float64")?;
+    let a_normalization = out_col::<f64>(&out, "sum_normalization", n, "float64")?;
+    let a_norm_sq = out_col::<f64>(&out, "sum_norm_sq", n, "float64")?;
+    let a_count = out_col::<f64>(&out, "count", n, "float64")?;
+    let a_intensity = out_col::<f32>(&out, "intensity", n, "float32")?;
+    let a_std = out_col::<f32>(&out, "std", n, "float32")?;
+    let a_sem = out_col::<f32>(&out, "sem", n, "float32")?;
+
+    {
+        let mut g_signal = a_signal.try_readwrite()?;
+        let mut g_variance = a_variance.try_readwrite()?;
+        let mut g_normalization = a_normalization.try_readwrite()?;
+        let mut g_norm_sq = a_norm_sq.try_readwrite()?;
+        let mut g_count = a_count.try_readwrite()?;
+        let mut g_intensity = a_intensity.try_readwrite()?;
+        let mut g_std = a_std.try_readwrite()?;
+        let mut g_sem = a_sem.try_readwrite()?;
+        let contig = |key: &'static str| {
+            move |_| PyValueError::new_err(format!("out['{key}'] must be C-contiguous"))
+        };
+        let ro = ReductionOut {
+            signal: g_signal.as_slice_mut().map_err(contig("sum_signal"))?,
+            variance: g_variance.as_slice_mut().map_err(contig("sum_variance"))?,
+            normalization: g_normalization
+                .as_slice_mut()
+                .map_err(contig("sum_normalization"))?,
+            norm_sq: g_norm_sq.as_slice_mut().map_err(contig("sum_norm_sq"))?,
+            count: g_count.as_slice_mut().map_err(contig("count"))?,
+            intensity: g_intensity.as_slice_mut().map_err(contig("intensity"))?,
+            std: g_std.as_slice_mut().map_err(contig("std"))?,
+            sem: g_sem.as_slice_mut().map_err(contig("sem"))?,
+        };
+        matrix.apply1d_into(prep, n, em, empty, ro)?;
+    }
+
+    let d = PyDict::new(py);
+    d.set_item("position", centers.to_vec().into_pyarray(py))?;
+    d.set_item("intensity", &a_intensity)?;
+    d.set_item("sigma", &a_sem)?; // sigma == sem (Integrate1dtpl position 3 == 9)
+    d.set_item("sum_signal", &a_signal)?;
+    d.set_item("sum_variance", &a_variance)?;
+    d.set_item("sum_normalization", &a_normalization)?;
+    d.set_item("count", &a_count)?;
+    d.set_item("std", &a_std)?;
+    d.set_item("sem", &a_sem)?;
+    d.set_item("sum_norm_sq", &a_norm_sq)?;
     Ok(d)
 }
 
