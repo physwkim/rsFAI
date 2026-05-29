@@ -502,6 +502,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsfai-fiber"
+version = "0.0.0"
+dependencies = [
+ "ndarray",
+ "rsfai",
+ "rsfai-core",
+ "rsfai-geometry",
+]
+
+[[package]]
 name = "rsfai-geometry"
 version = "0.0.0"
 dependencies = [

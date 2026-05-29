@@ -1,0 +1,660 @@
+{
+  "dataset": "fiber_integrator",
+  "source": "gen_golden_fiber_integrator.py",
+  "detector": "Pilatus1M",
+  "geometry": {
+    "dist": 0.2,
+    "poni1": 0.1,
+    "poni2": 0.1,
+    "rot1": 0.01,
+    "rot2": 0.02,
+    "rot3": 0.0,
+    "wavelength": 1e-10
+  },
+  "method": [
+    "no",
+    "histogram",
+    "cython"
+  ],
+  "shape": [
+    1043,
+    981
+  ],
+  "combos": [
+    {
+      "tag": "qnm_so1_sa",
+      "incident_angle": 0.2,
+      "tilt_angle": 0.0,
+      "sample_orientation": 1,
+      "unit_ip": "qip_nm^-1",
+      "unit_oop": "qoop_nm^-1",
+      "npt_ip": 200,
+      "npt_oop": 200,
+      "correct_solid_angle": true,
+      "result2d": {
+        "intensity": [
+          [
+            200,
+            200
+          ],
+          "float32"
+        ],
+        "inplane": [
+          [
+            200
+          ],
+          "float64"
+        ],
+        "outofplane": [
+          [
+            200
+          ],
+          "float64"
+        ],
+        "sum_signal": [
+          [
+            200,
+            200
+          ],
+          "float64"
+        ],
+        "sum_normalization": [
+          [
+            200,
+            200
+          ],
+          "float64"
+        ],
+        "sum_normalization2": null,
+        "sum_variance": null,
+        "count": [
+          [
+            200,
+            200
+          ],
+          "float64"
+        ],
+        "std": null,
+        "sem": null
+      },
+      "result1d": {
+        "v": {
+          "integrated": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "intensity": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sigma": null,
+          "sum_signal": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sum_normalization": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "count": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sum_variance": null
+        },
+        "h": {
+          "integrated": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "intensity": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sigma": null,
+          "sum_signal": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sum_normalization": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "count": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sum_variance": null
+        }
+      }
+    },
+    {
+      "tag": "qnm_tilt_so1",
+      "incident_angle": 0.2,
+      "tilt_angle": 0.1,
+      "sample_orientation": 1,
+      "unit_ip": "qip_nm^-1",
+      "unit_oop": "qoop_nm^-1",
+      "npt_ip": 150,
+      "npt_oop": 180,
+      "correct_solid_angle": true,
+      "result2d": {
+        "intensity": [
+          [
+            180,
+            150
+          ],
+          "float32"
+        ],
+        "inplane": [
+          [
+            150
+          ],
+          "float64"
+        ],
+        "outofplane": [
+          [
+            180
+          ],
+          "float64"
+        ],
+        "sum_signal": [
+          [
+            180,
+            150
+          ],
+          "float64"
+        ],
+        "sum_normalization": [
+          [
+            180,
+            150
+          ],
+          "float64"
+        ],
+        "sum_normalization2": null,
+        "sum_variance": null,
+        "count": [
+          [
+            180,
+            150
+          ],
+          "float64"
+        ],
+        "std": null,
+        "sem": null
+      },
+      "result1d": {
+        "v": {
+          "integrated": [
+            [
+              180
+            ],
+            "float64"
+          ],
+          "intensity": [
+            [
+              180
+            ],
+            "float64"
+          ],
+          "sigma": null,
+          "sum_signal": [
+            [
+              180
+            ],
+            "float64"
+          ],
+          "sum_normalization": [
+            [
+              180
+            ],
+            "float64"
+          ],
+          "count": [
+            [
+              180
+            ],
+            "float64"
+          ],
+          "sum_variance": null
+        },
+        "h": {
+          "integrated": [
+            [
+              150
+            ],
+            "float64"
+          ],
+          "intensity": [
+            [
+              150
+            ],
+            "float64"
+          ],
+          "sigma": null,
+          "sum_signal": [
+            [
+              150
+            ],
+            "float64"
+          ],
+          "sum_normalization": [
+            [
+              150
+            ],
+            "float64"
+          ],
+          "count": [
+            [
+              150
+            ],
+            "float64"
+          ],
+          "sum_variance": null
+        }
+      }
+    },
+    {
+      "tag": "qA_so2",
+      "incident_angle": 0.15,
+      "tilt_angle": -0.05,
+      "sample_orientation": 2,
+      "unit_ip": "qip_A^-1",
+      "unit_oop": "qoop_A^-1",
+      "npt_ip": 200,
+      "npt_oop": 200,
+      "correct_solid_angle": true,
+      "result2d": {
+        "intensity": [
+          [
+            200,
+            200
+          ],
+          "float32"
+        ],
+        "inplane": [
+          [
+            200
+          ],
+          "float64"
+        ],
+        "outofplane": [
+          [
+            200
+          ],
+          "float64"
+        ],
+        "sum_signal": [
+          [
+            200,
+            200
+          ],
+          "float64"
+        ],
+        "sum_normalization": [
+          [
+            200,
+            200
+          ],
+          "float64"
+        ],
+        "sum_normalization2": null,
+        "sum_variance": null,
+        "count": [
+          [
+            200,
+            200
+          ],
+          "float64"
+        ],
+        "std": null,
+        "sem": null
+      },
+      "result1d": {
+        "v": {
+          "integrated": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "intensity": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sigma": null,
+          "sum_signal": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sum_normalization": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "count": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sum_variance": null
+        },
+        "h": {
+          "integrated": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "intensity": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sigma": null,
+          "sum_signal": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sum_normalization": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "count": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sum_variance": null
+        }
+      }
+    },
+    {
+      "tag": "exit_deg_so1",
+      "incident_angle": 0.2,
+      "tilt_angle": 0.0,
+      "sample_orientation": 1,
+      "unit_ip": "exit_angle_horz_deg",
+      "unit_oop": "exit_angle_vert_deg",
+      "npt_ip": 120,
+      "npt_oop": 120,
+      "correct_solid_angle": true,
+      "result2d": {
+        "intensity": [
+          [
+            120,
+            120
+          ],
+          "float32"
+        ],
+        "inplane": [
+          [
+            120
+          ],
+          "float64"
+        ],
+        "outofplane": [
+          [
+            120
+          ],
+          "float64"
+        ],
+        "sum_signal": [
+          [
+            120,
+            120
+          ],
+          "float64"
+        ],
+        "sum_normalization": [
+          [
+            120,
+            120
+          ],
+          "float64"
+        ],
+        "sum_normalization2": null,
+        "sum_variance": null,
+        "count": [
+          [
+            120,
+            120
+          ],
+          "float64"
+        ],
+        "std": null,
+        "sem": null
+      },
+      "result1d": {
+        "v": {
+          "integrated": [
+            [
+              120
+            ],
+            "float64"
+          ],
+          "intensity": [
+            [
+              120
+            ],
+            "float64"
+          ],
+          "sigma": null,
+          "sum_signal": [
+            [
+              120
+            ],
+            "float64"
+          ],
+          "sum_normalization": [
+            [
+              120
+            ],
+            "float64"
+          ],
+          "count": [
+            [
+              120
+            ],
+            "float64"
+          ],
+          "sum_variance": null
+        },
+        "h": {
+          "integrated": [
+            [
+              120
+            ],
+            "float64"
+          ],
+          "intensity": [
+            [
+              120
+            ],
+            "float64"
+          ],
+          "sigma": null,
+          "sum_signal": [
+            [
+              120
+            ],
+            "float64"
+          ],
+          "sum_normalization": [
+            [
+              120
+            ],
+            "float64"
+          ],
+          "count": [
+            [
+              120
+            ],
+            "float64"
+          ],
+          "sum_variance": null
+        }
+      }
+    },
+    {
+      "tag": "qnm_nosa",
+      "incident_angle": 0.2,
+      "tilt_angle": 0.1,
+      "sample_orientation": 1,
+      "unit_ip": "qip_nm^-1",
+      "unit_oop": "qoop_nm^-1",
+      "npt_ip": 200,
+      "npt_oop": 200,
+      "correct_solid_angle": false,
+      "result2d": {
+        "intensity": [
+          [
+            200,
+            200
+          ],
+          "float32"
+        ],
+        "inplane": [
+          [
+            200
+          ],
+          "float64"
+        ],
+        "outofplane": [
+          [
+            200
+          ],
+          "float64"
+        ],
+        "sum_signal": [
+          [
+            200,
+            200
+          ],
+          "float64"
+        ],
+        "sum_normalization": [
+          [
+            200,
+            200
+          ],
+          "float64"
+        ],
+        "sum_normalization2": null,
+        "sum_variance": null,
+        "count": [
+          [
+            200,
+            200
+          ],
+          "float64"
+        ],
+        "std": null,
+        "sem": null
+      },
+      "result1d": {
+        "v": {
+          "integrated": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "intensity": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sigma": null,
+          "sum_signal": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sum_normalization": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "count": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sum_variance": null
+        },
+        "h": {
+          "integrated": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "intensity": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sigma": null,
+          "sum_signal": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sum_normalization": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "count": [
+            [
+              200
+            ],
+            "float64"
+          ],
+          "sum_variance": null
+        }
+      }
+    }
+  ]
+}
