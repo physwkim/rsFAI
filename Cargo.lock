@@ -527,6 +527,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsfai-multigeometry"
+version = "0.0.0"
+dependencies = [
+ "rsfai",
+ "rsfai-core",
+ "rsfai-geometry",
+ "serde_json",
+]
+
+[[package]]
 name = "rsfai-opencl"
 version = "0.0.0"
 dependencies = [

@@ -1,0 +1,28 @@
+{
+  "detector": "Pilatus1M",
+  "shape": [
+    1043,
+    981
+  ],
+  "n_geometry": 3,
+  "wavelength": 1e-10,
+  "monitors": [
+    1.0,
+    2.7,
+    0.6
+  ],
+  "ponis": [
+    "geometry_0.poni",
+    "geometry_1.poni",
+    "geometry_2.poni"
+  ],
+  "images": [
+    "image_0.npy",
+    "image_1.npy",
+    "image_2.npy"
+  ],
+  "pixel1": 0.000172,
+  "pixel2": 0.000172,
+  "user_mask": "user_mask.npy",
+  "flat": "flat.npy"
+}

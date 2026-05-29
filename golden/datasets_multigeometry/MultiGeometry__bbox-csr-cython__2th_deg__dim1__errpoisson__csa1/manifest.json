@@ -1,0 +1,101 @@
+{
+  "dataset": "MultiGeometry__bbox-csr-cython__2th_deg__dim1__errpoisson__csa1",
+  "pyfai_version": "2026.5.0",
+  "numpy_version": "2.4.3",
+  "platform": "macOS-26.5-arm64-arm-64bit-Mach-O",
+  "omp_num_threads": "1",
+  "config": {
+    "dim": 1,
+    "npt": 500,
+    "unit": "2th_deg",
+    "unit_scale": 57.29577951308232,
+    "method": [
+      "bbox",
+      "csr",
+      "cython"
+    ],
+    "error_model": "poisson",
+    "error_model_code": 2,
+    "correct_solid_angle": true,
+    "polarization_factor": null,
+    "n_geometry": 3,
+    "monitors": [
+      1.0,
+      2.7,
+      0.6
+    ],
+    "has_user_mask": true,
+    "has_flat": true,
+    "empty": 0.0,
+    "radial_range_guessed": [
+      0.00197583973985305,
+      6.91653696969562
+    ],
+    "azimuth_range_guessed": [
+      -179.95457361627626,
+      179.85366424493967
+    ]
+  },
+  "arrays": {
+    "out_radial": {
+      "dtype": "float64",
+      "shape": [
+        500
+      ]
+    },
+    "out_intensity": {
+      "dtype": "float32",
+      "shape": [
+        500
+      ]
+    },
+    "out_sigma": {
+      "dtype": "float32",
+      "shape": [
+        500
+      ]
+    },
+    "out_count": {
+      "dtype": "float64",
+      "shape": [
+        500
+      ]
+    },
+    "out_sum_signal": {
+      "dtype": "float64",
+      "shape": [
+        500
+      ]
+    },
+    "out_sum_variance": {
+      "dtype": "float64",
+      "shape": [
+        500
+      ]
+    },
+    "out_sum_normalization": {
+      "dtype": "float64",
+      "shape": [
+        500
+      ]
+    },
+    "out_sum_normalization2": {
+      "dtype": "float64",
+      "shape": [
+        500
+      ]
+    },
+    "out_std": {
+      "dtype": "float32",
+      "shape": [
+        500
+      ]
+    },
+    "out_sem": {
+      "dtype": "float32",
+      "shape": [
+        500
+      ]
+    }
+  }
+}
