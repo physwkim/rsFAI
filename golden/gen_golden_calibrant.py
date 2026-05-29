@@ -20,7 +20,10 @@ Two parity surfaces, both feeding the Rust verifier in
   * Cell path: build `Cell.cubic` / `Cell.diamond` for the cubic calibrants and
     dump `calculate_dspacing` (the d-spacing list down to dmin) so the Rust
     `Cell` reproduces the same lattice -> d-spacing arithmetic that generated the
-    shipped `.D` files.
+    shipped `.D` files. Also covers the two R-centered space-group conditions the
+    tutorials append to a primitive hexagonal cell: `group167_R3bar_c` (R-3c, the
+    corundum-type Cr2O3 / eskolaite) and `group166_R3bar_m` (R-3m,
+    hydrocerussite). The Rust side mirrors them via `Cell::add_selection_rule`.
 
 Provenance (pyFAI/numpy version, CONST_hc, per-field dtype) goes in
 `manifest.json`. CONST_hc is dumped explicitly so a scipy.constants change fails
@@ -36,6 +39,7 @@ import numpy as np
 import pyFAI
 from pyFAI.calibrant import get_calibrant
 from pyFAI.crystallography.cell import Cell
+from pyFAI.crystallography.space_groups import ReflectionCondition
 from pyFAI.units import CONST_hc
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -61,11 +65,21 @@ DOT_D_CASES = [
 # (name, Cell factory thunk, dmin). These reproduce the lattice -> d-spacing
 # arithmetic the shipped .D files were generated from.
 def _cells():
+    # Cr2O3 (eskolaite), R-3c / space group 167: primitive hexagonal cell with
+    # the c-glide reflection condition appended, exactly as
+    # doc/.../Calibrant/new_calibrant.ipynb builds it.
+    cr2o3 = Cell.hexagonal(4.958979, 13.59592)
+    cr2o3.selection_rules.append(ReflectionCondition.group167_R3bar_c)
+    # Hydrocerussite, R-3m / space group 166 (Calibrant/hydrocerussite.ipynb).
+    hydroc = Cell.hexagonal(5.24656, 23.7023)
+    hydroc.selection_rules.append(ReflectionCondition.group166_R3bar_m)
     return [
         ("Al_cubic_F", Cell.cubic(4.0495, lattice_type="F"), 1.0),
         ("LaB6_cubic_P", Cell.cubic(4.1568, lattice_type="P"), 1.0),
         ("Si_diamond", Cell.diamond(5.4312), 1.0),
         ("CeO2_cubic_F", Cell.cubic(5.411651, lattice_type="F"), 1.0),
+        ("Cr2O3_R3c_167", cr2o3, 1.0),
+        ("hydrocerussite_R3m_166", hydroc, 1.0),
     ]
 
 

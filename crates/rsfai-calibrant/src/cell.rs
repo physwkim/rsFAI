@@ -216,6 +216,17 @@ impl Cell {
         v
     }
 
+    /// Append an extra selection rule, layered (AND-combined) on top of the
+    /// `default` + centering rules. Mirrors `Cell.selection_rules.append(...)`
+    /// in pyFAI: the tutorials build a primitive hexagonal cell and append a
+    /// space-group reflection condition (e.g.
+    /// [`space_groups::group167_r3bar_c`] for the corundum-type Cr2O3, or
+    /// [`space_groups::group166_r3bar_m`] for hydrocerussite). A rule returns
+    /// `true` when the reflection is allowed.
+    pub fn add_selection_rule(&mut self, rule: fn(i64, i64, i64) -> bool) {
+        self.extra_rules.push(rule);
+    }
+
     /// All registered selection rules: `default` + the centering rule (if any)
     /// + any extra rules. `Cell.selection_rules`.
     fn rules(&self) -> Vec<fn(i64, i64, i64) -> bool> {

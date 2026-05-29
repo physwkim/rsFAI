@@ -626,6 +626,44 @@
           "int32"
         ]
       }
+    },
+    {
+      "tag": "Cr2O3_R3c_167",
+      "dmin": 1.0,
+      "n_dspacing": 34,
+      "fields": {
+        "dspacing": [
+          [
+            34
+          ],
+          "float64"
+        ],
+        "multiplicity": [
+          [
+            34
+          ],
+          "int32"
+        ]
+      }
+    },
+    {
+      "tag": "hydrocerussite_R3m_166",
+      "dmin": 1.0,
+      "n_dspacing": 92,
+      "fields": {
+        "dspacing": [
+          [
+            92
+          ],
+          "float64"
+        ],
+        "multiplicity": [
+          [
+            92
+          ],
+          "int32"
+        ]
+      }
     }
   ]
 }

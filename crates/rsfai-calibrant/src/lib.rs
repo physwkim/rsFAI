@@ -31,7 +31,7 @@ use std::path::Path;
 pub use calibrant::{Calibrant, PeakUnit, CONST_HC};
 pub use cell::{Cell, Lattice, LatticeParams};
 pub use config::{CalibrantConfig, Miller, Reflection};
-pub use space_groups::Centering;
+pub use space_groups::{group166_r3bar_m, group167_r3bar_c, Centering};
 
 impl Calibrant {
     /// Load a calibrant from a `.D` file on disk (mirrors `Calibrant.load_file`

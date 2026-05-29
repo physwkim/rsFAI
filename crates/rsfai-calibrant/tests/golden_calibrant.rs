@@ -22,7 +22,9 @@
 
 use std::path::PathBuf;
 
-use rsfai_calibrant::{Calibrant, Cell, Centering, PeakUnit, CONST_HC};
+use rsfai_calibrant::{
+    group166_r3bar_m, group167_r3bar_c, Calibrant, Cell, Centering, PeakUnit, CONST_HC,
+};
 use rsfai_core::compare::compare_f64;
 use rsfai_core::golden::{load_npy_f64, load_npy_i32};
 use serde_json::Value;
@@ -244,6 +246,18 @@ fn build_cell(tag: &str) -> Cell {
         "LaB6_cubic_P" => Cell::cubic(4.1568, Centering::P),
         "Si_diamond" => Cell::diamond(5.4312),
         "CeO2_cubic_F" => Cell::cubic(5.411651, Centering::F),
+        // Corundum-type Cr2O3, R-3c: primitive hexagonal + the c-glide condition.
+        "Cr2O3_R3c_167" => {
+            let mut c = Cell::hexagonal(4.958979, 13.59592, Centering::P);
+            c.add_selection_rule(group167_r3bar_c);
+            c
+        }
+        // Hydrocerussite, R-3m: primitive hexagonal + the group-166 condition.
+        "hydrocerussite_R3m_166" => {
+            let mut c = Cell::hexagonal(5.24656, 23.7023, Centering::P);
+            c.add_selection_rule(group166_r3bar_m);
+            c
+        }
         other => panic!("unknown cell tag {other}"),
     }
 }
