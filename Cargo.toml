@@ -14,6 +14,7 @@ members = [
     "crates/rsfai-distortion",
     "crates/rsfai-peaks",
     "crates/rsfai-calib",
+    "crates/rsfai-goniometer",
     # rsfai-py (the PyO3 drop-in) is intentionally excluded from the default
     # cargo build/test: it is a cdylib needing extension-module linkage, built
     # standalone with maturin. See crates/rsfai-py/README.md.
@@ -42,6 +43,7 @@ rsfai-calibrant = { path = "crates/rsfai-calibrant" }
 rsfai-distortion = { path = "crates/rsfai-distortion" }
 rsfai-peaks = { path = "crates/rsfai-peaks" }
 rsfai-calib = { path = "crates/rsfai-calib" }
+rsfai-goniometer = { path = "crates/rsfai-goniometer" }
 
 # External
 ndarray = "0.16"
