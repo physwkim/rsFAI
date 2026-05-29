@@ -47,25 +47,25 @@ Status legend: `✅ example exists` · `▶ to port` · `⛔ out of remit`.
 
 | Notebook | pyFAI feature | rsFAI crate | Status | Target example | Note |
 |---|---|---|---|---|---|
-| `cookbook/integration_with_python.ipynb` | `integrate1d_ng` / `integrate2d_ng` on a frame, write `.dat`/`.edf` | `rsfai` | ▶ to port | `crates/rsfai/examples/integrate_basic.rs` | Synthesize a deterministic ring image (Gaussian rings) on a `Detector`, load a committed `.poni` (e.g. `golden/datasets/Pilatus1M__bbox-csr-cython__q_nmm1__npt1000__errpoisson/geometry.poni`), run `integrate1d` + `integrate2d`, print binned profile head. The `fabio` EDF read + `.dat`/`.edf` write + matplotlib are dropped. Fills the empty `crates/rsfai/examples/`. |
-| `tutorial/integrate2d.ipynb` | 2D integration in non-azimuthal `qx/qy` space + custom radial unit | `rsfai` | ▶ to port | `crates/rsfai/examples/integrate2d_positions.rs` | Use the landed `AzimuthalIntegrator::integrate2d_positions` primitive (lib.rs:958) with explicit pos0/pos1 arrays (qx,qy) on a synthesized image + committed `.poni`. The `register_radial_unit("tthx_deg",…)` numexpr custom-unit cells are `⛔` (no custom-unit registry in rsFAI) — port only the qx/qy positional 2D integration. |
-| `tutorial/Orientation.ipynb` | detector orientations 1/2/3/4, `integrate2d` per orientation | `rsfai` / `rsfai-detectors` | ▶ to port | `crates/rsfai/examples/orientation.rs` | Directly maps to rsFAI detector orientations 1-4. Synthesize one image, build the 4 flipped variants in Rust (the notebook's `flipud`/`fliplr`), build a `Pilatus1M` detector at each orientation, run `integrate2d`, print that the 4 cakes coincide. No `fabio` EDF, no matplotlib. |
-| `tutorial/PixelSplitting.ipynb` | pixel-corner layout, `splitPixel.recenter`, chi-discontinuity area sign, split effect on `integrate2d` | `rsfai-geometry` / `rsfai-integrate` / `rsfai` | ▶ to port | `crates/rsfai/examples/pixel_splitting.rs` | Fully synthetic 5×5 detector (1 mm pixels, deterministic, no data file). Compute pixel corners, show the recenter/area-sign handling at the χ discontinuity, then `integrate2d` with `no`/`bbox`/`full` split and print bin counts. matplotlib polygon plot dropped. |
+| `cookbook/integration_with_python.ipynb` | `integrate1d_ng` / `integrate2d_ng` on a frame, write `.dat`/`.edf` | `rsfai` | ✅ example exists | `crates/rsfai/examples/integrate_basic.rs` | Synthesize a deterministic ring image (Gaussian rings) on a `Detector`, load a committed `.poni` (e.g. `golden/datasets/Pilatus1M__bbox-csr-cython__q_nmm1__npt1000__errpoisson/geometry.poni`), run `integrate1d` + `integrate2d`, print binned profile head. The `fabio` EDF read + `.dat`/`.edf` write + matplotlib are dropped. Fills the empty `crates/rsfai/examples/`. |
+| `tutorial/integrate2d.ipynb` | 2D integration in non-azimuthal `qx/qy` space + custom radial unit | `rsfai` | ✅ example exists | `crates/rsfai/examples/integrate2d_positions.rs` | Use the landed `AzimuthalIntegrator::integrate2d_positions` primitive (lib.rs:958) with explicit pos0/pos1 arrays (qx,qy) on a synthesized image + committed `.poni`. The `register_radial_unit("tthx_deg",…)` numexpr custom-unit cells are `⛔` (no custom-unit registry in rsFAI) — port only the qx/qy positional 2D integration. |
+| `tutorial/Orientation.ipynb` | detector orientations 1/2/3/4, `integrate2d` per orientation | `rsfai` / `rsfai-detectors` | ✅ example exists | `crates/rsfai/examples/orientation.rs` | Directly maps to rsFAI detector orientations 1-4. Synthesize one image, build the 4 flipped variants in Rust (the notebook's `flipud`/`fliplr`), build a `Pilatus1M` detector at each orientation, run `integrate2d`, print that the 4 cakes coincide. No `fabio` EDF, no matplotlib. |
+| `tutorial/PixelSplitting.ipynb` | pixel-corner layout, `splitPixel.recenter`, chi-discontinuity area sign, split effect on `integrate2d` | `rsfai-geometry` / `rsfai-integrate` / `rsfai` | ✅ example exists | `crates/rsfai/examples/pixel_splitting.rs` | Fully synthetic 5×5 detector (1 mm pixels, deterministic, no data file). Compute pixel corners, show the recenter/area-sign handling at the χ discontinuity, then `integrate2d` with `no`/`bbox`/`full` split and print bin counts. matplotlib polygon plot dropped. |
 
 ## Cluster B — geometry (`rsfai-geometry`)
 
 | Notebook | pyFAI feature | rsFAI crate | Status | Target example | Note |
 |---|---|---|---|---|---|
-| `tutorial/Geometry/geometry.ipynb` | effect of `poni1/poni2`, `dist`, `rot1/2/3` on ring positions; custom `ShiftedDetector` | `rsfai-geometry` / `rsfai` | ▶ to port | `crates/rsfai-geometry/examples/geometry_params.rs` | Headless equivalent: sweep poni/dist/rot on an `AzimuthalIntegrator`, print how the 2θ radial map / ring radii shift; or `integrate2d` of a synthesized ring image at each setting and report ring-center bins. The notebook's image is built with `Calibrant.fake_calibration_image` (`⛔` — not in rsFAI), so the example must synthesize rings directly. matplotlib display dropped. |
+| `tutorial/Geometry/geometry.ipynb` | effect of `poni1/poni2`, `dist`, `rot1/2/3` on ring positions; custom `ShiftedDetector` | `rsfai-geometry` / `rsfai` | ✅ example exists | `crates/rsfai-geometry/examples/geometry_params.rs` | Headless equivalent: sweep poni/dist/rot on an `AzimuthalIntegrator`, print how the 2θ radial map / ring radii shift; or `integrate2d` of a synthesized ring image at each setting and report ring-center bins. The notebook's image is built with `Calibrant.fake_calibration_image` (`⛔` — not in rsFAI), so the example must synthesize rings directly. matplotlib display dropped. |
 
 ## Cluster C — calibrant / crystallography (`rsfai-calibrant`)
 
 | Notebook | pyFAI feature | rsFAI crate | Status | Target example | Note |
 |---|---|---|---|---|---|
 | `tutorial/Calibrant/Calibrant.ipynb` | `ALL_CALIBRANTS`, set wavelength, list calibrants for a setup | `rsfai-calibrant` | ✅ example exists | `crates/rsfai-calibrant/examples/calibrant_rings.rs` | Calibrant load + wavelength + ring/peak list is exactly what the existing example does. `fake_calibration_image` display is `⛔`. |
-| `tutorial/Calibrant/make_calibrant.ipynb` | `Cell.cubic/diamond/cubic(F)`, `calculate_dspacing`, `selection_rules`, `.save()` to `.D` | `rsfai-calibrant` | ▶ to port | `crates/rsfai-calibrant/examples/make_calibrant.rs` | `Cell::cubic/diamond` + `calculate_dspacing` + selection rules are landed (`cell.rs`). Build a Cell from lattice params, compute d-spacings + reflections, print them (the substance). The `.D` *write* (`Cell.save`) is not a landed method — print the d-spacing table instead. Fully offline, no data file. |
-| `tutorial/Calibrant/new_calibrant.ipynb` | custom rhombohedral/space-group Cell (Cr₂O₃, R-3c) + extinction rules | `rsfai-calibrant` | ▶ to port | `crates/rsfai-calibrant/examples/space_group.rs` | Construct a Cell with a non-cubic space group + custom selection (extinction) rules and list the allowed reflections / d-spacings. Verify which feature subset the crate's `Cell` exposes for non-cubic lattices before porting (cubic + diamond confirmed; rhombohedral path to be checked). Offline, no data file. |
-| `tutorial/Calibrant/hydrocerussite.ipynb` | another new-calibrant Cell (R-3m corundum-type) + extinction | `rsfai-calibrant` | ▶ to port | (fold into `space_group.rs`) | Same substance as `new_calibrant.ipynb` with different lattice/space group — make it a second case inside `space_group.rs` rather than a separate file (same crate `examples/` dir, avoid duplication). |
+| `tutorial/Calibrant/make_calibrant.ipynb` | `Cell.cubic/diamond/cubic(F)`, `calculate_dspacing`, `selection_rules`, `.save()` to `.D` | `rsfai-calibrant` | ✅ example exists | `crates/rsfai-calibrant/examples/make_calibrant.rs` | `Cell::cubic/diamond` + `calculate_dspacing` + selection rules are landed (`cell.rs`). Build a Cell from lattice params, compute d-spacings + reflections, print them (the substance). The `.D` *write* (`Cell.save`) is not a landed method — print the d-spacing table instead. Fully offline, no data file. |
+| `tutorial/Calibrant/new_calibrant.ipynb` | custom rhombohedral/space-group Cell (Cr₂O₃, R-3c) + extinction rules | `rsfai-calibrant` | ✅ example exists | `crates/rsfai-calibrant/examples/space_group.rs` | **Partial:** the notebooks' core mechanism — appending an arbitrary custom `reflection_condition_NNN` closure to `selection_rules` — is NOT a landed public API (`extra_rules` is private). So full R-3c (group 167, its c-glide on top of R centering) is out of scope; `space_group.rs` lists the bare R-centered Cr₂O₃ cell and says so explicitly. Offline, no data file. |
+| `tutorial/Calibrant/hydrocerussite.ipynb` | another new-calibrant Cell (R-3m corundum-type) + extinction | `rsfai-calibrant` | ✅ example exists | (in `space_group.rs`) | **Faithful:** R-3m (group 166) IS reproduced via the landed `Cell::hexagonal(a, c, Centering::R)` path — the hydrocerussite notebook itself validates that R centering equals its custom group-166 rule. `space_group.rs` shows R centering (`-h+k+l ≡ 0 mod 3`) extincting the primitive cell's reflections. |
 | `tutorial/Carbon.ipynb` | `get_calibrant(diamond/graphite/C60)`, `fake_xrpdp`, `fake_calibration_image` | `rsfai-calibrant` | ⛔ out of remit | — | The calibrant peak-list leg is already covered by `calibrant_rings.rs`. The headline (`fake_xrpdp` synthetic 1D powder pattern + `fake_calibration_image`) is not landed in rsFAI; matplotlib display out of remit. |
 
 ## Cluster D — distortion / detector spline (`rsfai-distortion`)
@@ -148,13 +148,25 @@ Status legend: `✅ example exists` · `▶ to port` · `⛔ out of remit`.
 
 ---
 
-## Porting clusters (the `▶ to port` work, split into worktree-able batches)
+## Ported (all `▶` rows landed)
 
-There are **8 `▶ to port` notebooks**, mapping to **7 new example files** across
-**3 crates** (`hydrocerussite.ipynb` folds into `space_group.rs`). Because each
-batch touches a distinct crate's `examples/` directory, the batches are
-independent and can be done in parallel worktrees without `examples/`-dir
-collisions.
+The 8 `▶ to port` notebooks were ported to **7 new example files** across 3
+crates (`hydrocerussite.ipynb` folds into `space_group.rs`); every one runs
+fully offline (`cargo run --release --example …`, exit 0):
+
+- `crates/rsfai/examples/` — `integrate_basic.rs`, `integrate2d_positions.rs`,
+  `orientation.rs`, `pixel_splitting.rs`
+- `crates/rsfai-geometry/examples/geometry_params.rs` (uses the geometry
+  primitive directly — `rsfai-geometry` cannot depend on the `rsfai` integrator
+  crate without a circular dep)
+- `crates/rsfai-calibrant/examples/` — `make_calibrant.rs`, `space_group.rs`
+  (R-3m faithful via R centering; full R-3c is partial — see its row)
+
+The original plan below proposed building these in **parallel worktrees** by
+crate. In practice the background agents did not get isolated working
+directories and collided in one tree; the commits survived (atomic, one file
+each) and were recovered into a single linear history. Lesson: serialize
+example-porting agents, or pre-create explicit `git worktree add` dirs.
 
 - **Batch 1 — `rsfai` core integration (3 files, the empty `crates/rsfai/examples/`).**
   `cookbook/integration_with_python.ipynb` → `integrate_basic.rs`;
