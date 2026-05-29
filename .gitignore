@@ -39,3 +39,12 @@ golden/datasets_corrections/**/*.npy
 golden/datasets_fiber/**/*.npy
 !golden/datasets_fiber/**/out_*.npy
 golden/datasets_fiber_integrator/data.npy
+# Calibrant golden (M12 Calibrant + crystallography): every output here is small
+# (per-calibrant d-spacing / 2theta / peak arrays are <= 59 doubles, the .D files
+# a few KB) and offline-required, so we COMMIT the .npy arrays, the copied .D
+# d-spacing files, and the manifest. Only ignore detector-image / archive blobs
+# that have no business in this tree (none are generated today; the rule is
+# defensive against an accidental large drop).
+golden/datasets_calibrant/**/*.edf
+golden/datasets_calibrant/**/*.cbf
+golden/datasets_calibrant/**/*.h5

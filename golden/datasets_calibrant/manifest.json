@@ -1,0 +1,631 @@
+{
+  "dataset": "calibrant",
+  "source": "gen_golden_calibrant.py",
+  "pyfai_version": "2026.5.0",
+  "numpy_version": "2.4.3",
+  "const_hc": 12.398419843320026,
+  "const_hc_hex": "0x1.8cbfdaf8a461fp+3",
+  "peak_units": [
+    "2th_deg",
+    "2th_rad",
+    "q_nm^-1",
+    "q_A^-1"
+  ],
+  "bragg_formula": "tth = 2 * asin(5e9 * wavelength / d)",
+  "dot_d": [
+    {
+      "name": "AgBh",
+      "file": "AgBh.D",
+      "cases": [
+        {
+          "wavelength": 1e-10,
+          "tag": "AgBh__wl1.000e-10",
+          "n_rings": 49,
+          "n_dspacing": 49,
+          "fields": {
+            "dspacing": [
+              [
+                49
+              ],
+              "float64"
+            ],
+            "two_theta": [
+              [
+                49
+              ],
+              "float64"
+            ],
+            "peaks": {
+              "2th_deg": [
+                [
+                  49
+                ],
+                "float64"
+              ],
+              "2th_rad": [
+                [
+                  49
+                ],
+                "float64"
+              ],
+              "q_nm^-1": [
+                [
+                  49
+                ],
+                "float64"
+              ],
+              "q_A^-1": [
+                [
+                  49
+                ],
+                "float64"
+              ]
+            }
+          }
+        },
+        {
+          "wavelength": 1.54e-10,
+          "tag": "AgBh__wl1.540e-10",
+          "n_rings": 49,
+          "n_dspacing": 49,
+          "fields": {
+            "dspacing": [
+              [
+                49
+              ],
+              "float64"
+            ],
+            "two_theta": [
+              [
+                49
+              ],
+              "float64"
+            ],
+            "peaks": {
+              "2th_deg": [
+                [
+                  49
+                ],
+                "float64"
+              ],
+              "2th_rad": [
+                [
+                  49
+                ],
+                "float64"
+              ],
+              "q_nm^-1": [
+                [
+                  49
+                ],
+                "float64"
+              ],
+              "q_A^-1": [
+                [
+                  49
+                ],
+                "float64"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Al",
+      "file": "Al.D",
+      "cases": [
+        {
+          "wavelength": 1e-10,
+          "tag": "Al__wl1.000e-10",
+          "n_rings": 22,
+          "n_dspacing": 22,
+          "fields": {
+            "dspacing": [
+              [
+                22
+              ],
+              "float64"
+            ],
+            "two_theta": [
+              [
+                22
+              ],
+              "float64"
+            ],
+            "peaks": {
+              "2th_deg": [
+                [
+                  22
+                ],
+                "float64"
+              ],
+              "2th_rad": [
+                [
+                  22
+                ],
+                "float64"
+              ],
+              "q_nm^-1": [
+                [
+                  22
+                ],
+                "float64"
+              ],
+              "q_A^-1": [
+                [
+                  22
+                ],
+                "float64"
+              ]
+            }
+          }
+        },
+        {
+          "wavelength": 7e-11,
+          "tag": "Al__wl7.000e-11",
+          "n_rings": 22,
+          "n_dspacing": 22,
+          "fields": {
+            "dspacing": [
+              [
+                22
+              ],
+              "float64"
+            ],
+            "two_theta": [
+              [
+                22
+              ],
+              "float64"
+            ],
+            "peaks": {
+              "2th_deg": [
+                [
+                  22
+                ],
+                "float64"
+              ],
+              "2th_rad": [
+                [
+                  22
+                ],
+                "float64"
+              ],
+              "q_nm^-1": [
+                [
+                  22
+                ],
+                "float64"
+              ],
+              "q_A^-1": [
+                [
+                  22
+                ],
+                "float64"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "LaB6",
+      "file": "LaB6.D",
+      "cases": [
+        {
+          "wavelength": 1.54e-10,
+          "tag": "LaB6__wl1.540e-10",
+          "n_rings": 25,
+          "n_dspacing": 25,
+          "fields": {
+            "dspacing": [
+              [
+                25
+              ],
+              "float64"
+            ],
+            "two_theta": [
+              [
+                25
+              ],
+              "float64"
+            ],
+            "peaks": {
+              "2th_deg": [
+                [
+                  25
+                ],
+                "float64"
+              ],
+              "2th_rad": [
+                [
+                  25
+                ],
+                "float64"
+              ],
+              "q_nm^-1": [
+                [
+                  25
+                ],
+                "float64"
+              ],
+              "q_A^-1": [
+                [
+                  25
+                ],
+                "float64"
+              ]
+            }
+          }
+        },
+        {
+          "wavelength": 1e-10,
+          "tag": "LaB6__wl1.000e-10",
+          "n_rings": 59,
+          "n_dspacing": 59,
+          "fields": {
+            "dspacing": [
+              [
+                59
+              ],
+              "float64"
+            ],
+            "two_theta": [
+              [
+                59
+              ],
+              "float64"
+            ],
+            "peaks": {
+              "2th_deg": [
+                [
+                  59
+                ],
+                "float64"
+              ],
+              "2th_rad": [
+                [
+                  59
+                ],
+                "float64"
+              ],
+              "q_nm^-1": [
+                [
+                  59
+                ],
+                "float64"
+              ],
+              "q_A^-1": [
+                [
+                  59
+                ],
+                "float64"
+              ]
+            }
+          }
+        },
+        {
+          "wavelength": 2e-10,
+          "tag": "LaB6__wl2.000e-10",
+          "n_rings": 15,
+          "n_dspacing": 15,
+          "fields": {
+            "dspacing": [
+              [
+                15
+              ],
+              "float64"
+            ],
+            "two_theta": [
+              [
+                15
+              ],
+              "float64"
+            ],
+            "peaks": {
+              "2th_deg": [
+                [
+                  15
+                ],
+                "float64"
+              ],
+              "2th_rad": [
+                [
+                  15
+                ],
+                "float64"
+              ],
+              "q_nm^-1": [
+                [
+                  15
+                ],
+                "float64"
+              ],
+              "q_A^-1": [
+                [
+                  15
+                ],
+                "float64"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Si",
+      "file": "Si.D",
+      "cases": [
+        {
+          "wavelength": 1e-10,
+          "tag": "Si__wl1.000e-10",
+          "n_rings": 28,
+          "n_dspacing": 28,
+          "fields": {
+            "dspacing": [
+              [
+                28
+              ],
+              "float64"
+            ],
+            "two_theta": [
+              [
+                28
+              ],
+              "float64"
+            ],
+            "peaks": {
+              "2th_deg": [
+                [
+                  28
+                ],
+                "float64"
+              ],
+              "2th_rad": [
+                [
+                  28
+                ],
+                "float64"
+              ],
+              "q_nm^-1": [
+                [
+                  28
+                ],
+                "float64"
+              ],
+              "q_A^-1": [
+                [
+                  28
+                ],
+                "float64"
+              ]
+            }
+          }
+        },
+        {
+          "wavelength": 1.2e-10,
+          "tag": "Si__wl1.200e-10",
+          "n_rings": 20,
+          "n_dspacing": 20,
+          "fields": {
+            "dspacing": [
+              [
+                20
+              ],
+              "float64"
+            ],
+            "two_theta": [
+              [
+                20
+              ],
+              "float64"
+            ],
+            "peaks": {
+              "2th_deg": [
+                [
+                  20
+                ],
+                "float64"
+              ],
+              "2th_rad": [
+                [
+                  20
+                ],
+                "float64"
+              ],
+              "q_nm^-1": [
+                [
+                  20
+                ],
+                "float64"
+              ],
+              "q_A^-1": [
+                [
+                  20
+                ],
+                "float64"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "CeO2",
+      "file": "CeO2.D",
+      "cases": [
+        {
+          "wavelength": 1e-10,
+          "tag": "CeO2__wl1.000e-10",
+          "n_rings": 40,
+          "n_dspacing": 40,
+          "fields": {
+            "dspacing": [
+              [
+                40
+              ],
+              "float64"
+            ],
+            "two_theta": [
+              [
+                40
+              ],
+              "float64"
+            ],
+            "peaks": {
+              "2th_deg": [
+                [
+                  40
+                ],
+                "float64"
+              ],
+              "2th_rad": [
+                [
+                  40
+                ],
+                "float64"
+              ],
+              "q_nm^-1": [
+                [
+                  40
+                ],
+                "float64"
+              ],
+              "q_A^-1": [
+                [
+                  40
+                ],
+                "float64"
+              ]
+            }
+          }
+        },
+        {
+          "wavelength": 1.54e-10,
+          "tag": "CeO2__wl1.540e-10",
+          "n_rings": 17,
+          "n_dspacing": 17,
+          "fields": {
+            "dspacing": [
+              [
+                17
+              ],
+              "float64"
+            ],
+            "two_theta": [
+              [
+                17
+              ],
+              "float64"
+            ],
+            "peaks": {
+              "2th_deg": [
+                [
+                  17
+                ],
+                "float64"
+              ],
+              "2th_rad": [
+                [
+                  17
+                ],
+                "float64"
+              ],
+              "q_nm^-1": [
+                [
+                  17
+                ],
+                "float64"
+              ],
+              "q_A^-1": [
+                [
+                  17
+                ],
+                "float64"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "cells": [
+    {
+      "tag": "Al_cubic_F",
+      "dmin": 1.0,
+      "n_dspacing": 6,
+      "fields": {
+        "dspacing": [
+          [
+            6
+          ],
+          "float64"
+        ],
+        "multiplicity": [
+          [
+            6
+          ],
+          "int32"
+        ]
+      }
+    },
+    {
+      "tag": "LaB6_cubic_P",
+      "dmin": 1.0,
+      "n_dspacing": 15,
+      "fields": {
+        "dspacing": [
+          [
+            15
+          ],
+          "float64"
+        ],
+        "multiplicity": [
+          [
+            15
+          ],
+          "int32"
+        ]
+      }
+    },
+    {
+      "tag": "Si_diamond",
+      "dmin": 1.0,
+      "n_dspacing": 7,
+      "fields": {
+        "dspacing": [
+          [
+            7
+          ],
+          "float64"
+        ],
+        "multiplicity": [
+          [
+            7
+          ],
+          "int32"
+        ]
+      }
+    },
+    {
+      "tag": "CeO2_cubic_F",
+      "dmin": 1.0,
+      "n_dspacing": 10,
+      "fields": {
+        "dspacing": [
+          [
+            10
+          ],
+          "float64"
+        ],
+        "multiplicity": [
+          [
+            10
+          ],
+          "int32"
+        ]
+      }
+    }
+  ]
+}
