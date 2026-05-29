@@ -107,11 +107,20 @@ impl<'a> Bilinear<'a> {
             // (a copy of a20, an upstream quirk at bilinear.pxi:182). Reproduce
             // it verbatim so the refinement matches bit-for-bit.
             let a22 = self.at(c0 + 1, c1 - 1);
-            let d00 = a12 - 2.0 * a11 + a10;
-            let d11 = a21 - 2.0 * a11 + a01;
-            let d01 = (a00 - a02 - a20 + a22) / 4.0;
-            let denom = 2.0 * (d00 * d11 - d01 * d01);
-            if denom.abs() >= 1e-10 {
+            // pyFAI's Cython stores these as C `float` but the RHS expressions
+            // contain `double` literals (2.0, 4.0), so each is evaluated under
+            // C's usual arithmetic conversions in `double` and rounded to `f32`
+            // only at the assignment. Pure-f32 evaluation diverges by ~1 ULP, so
+            // promote to f64 for the literal-bearing sub-expressions and round
+            // back, matching C exactly (`bilinear.pxi:183-186`).
+            let d00 = (a12 as f64 - 2.0 * a11 as f64 + a10 as f64) as f32;
+            let d11 = (a21 as f64 - 2.0 * a11 as f64 + a01 as f64) as f32;
+            // `a00 - a02 - a20 + a22` is all-float in C (no double literal), so
+            // it is computed in f32; only the final `/ 4.0` is in double.
+            let d01 = ((a00 - a02 - a20 + a22) as f64 / 4.0) as f32;
+            let denom = (2.0 * (d00 * d11 - d01 * d01) as f64) as f32;
+            if (denom as f64).abs() >= 1e-10 {
+                // No double literal here, so C evaluates these in f32 verbatim.
                 let delta0 = ((a12 - a10) * d01 + (a01 - a21) * d11) / denom;
                 let delta1 = ((a10 - a12) * d00 + (a21 - a01) * d01) / denom;
                 if delta0.abs() <= 1.0 && delta1.abs() <= 1.0 {
