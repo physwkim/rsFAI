@@ -1,0 +1,167 @@
+{
+  "dataset": "distortion",
+  "source": "gen_golden_distortion.py",
+  "spline_file": "halfccd.spline",
+  "pyfai_version": "2026.5.0",
+  "numpy_version": "2.4.3",
+  "omp_num_threads": "1",
+  "spline": {
+    "xmin": 0.0,
+    "ymin": 0.0,
+    "xmax": 2048.0,
+    "ymax": 1025.0,
+    "grid": 2500.0,
+    "pixel_size": [
+      46.84483,
+      48.42252
+    ],
+    "order": 3
+  },
+  "spline_arrays": {
+    "out_spline_x_knotsx": [
+      [
+        8
+      ],
+      "float32"
+    ],
+    "out_spline_x_knotsy": [
+      [
+        8
+      ],
+      "float32"
+    ],
+    "out_spline_x_coeff": [
+      [
+        16
+      ],
+      "float32"
+    ],
+    "out_spline_y_knotsx": [
+      [
+        8
+      ],
+      "float32"
+    ],
+    "out_spline_y_knotsy": [
+      [
+        8
+      ],
+      "float32"
+    ],
+    "out_spline_y_coeff": [
+      [
+        16
+      ],
+      "float32"
+    ]
+  },
+  "bisplev": {
+    "x": [
+      [
+        5,
+        5
+      ],
+      "float32"
+    ],
+    "y": [
+      [
+        5,
+        5
+      ],
+      "float32"
+    ]
+  },
+  "spline2array": {
+    "xDispArray": [
+      [
+        1026,
+        2049
+      ],
+      "float32"
+    ],
+    "yDispArray": [
+      [
+        1026,
+        2049
+      ],
+      "float32"
+    ]
+  },
+  "distortion": {
+    "binning": [
+      5,
+      8
+    ],
+    "shape_in": [
+      205,
+      256
+    ],
+    "shape_out": [
+      205,
+      256
+    ],
+    "delta": [
+      3,
+      3
+    ],
+    "offset": [
+      0.0,
+      0.0
+    ],
+    "pixel1": 0.00024211259999999996,
+    "pixel2": 0.00037475864,
+    "empty": 0.0,
+    "pos": [
+      [
+        205,
+        256,
+        4,
+        2
+      ],
+      "float32"
+    ],
+    "corners": [
+      [
+        205,
+        256,
+        4,
+        3
+      ],
+      "float32"
+    ],
+    "csr": {
+      "data": [
+        [
+          206692
+        ],
+        "float32"
+      ],
+      "indices": [
+        [
+          206692
+        ],
+        "int32"
+      ],
+      "indptr": [
+        [
+          52481
+        ],
+        "int32"
+      ]
+    },
+    "image": [
+      [
+        205,
+        256
+      ],
+      "float32"
+    ],
+    "corrected": [
+      [
+        205,
+        256
+      ],
+      "float32"
+    ]
+  }
+}
