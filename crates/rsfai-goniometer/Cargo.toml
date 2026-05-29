@@ -1,0 +1,27 @@
+[package]
+name = "rsfai-goniometer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rsfai.workspace = true
+rsfai-geometry.workspace = true
+rsfai-detectors.workspace = true
+rsfai-fiber.workspace = true
+rsfai-calib.workspace = true
+# Iterative optimizer for `GoniometerRefinement::refine`. ISOLATED to this crate
+# (only `optimizer.rs` touches it): the bit-exact formula evaluator, the
+# transformation outputs and the chi2 cost at a fixed parameter vector never
+# depend on argmin. Only the converged-parameter search does, and it is gated at
+# a recorded tolerance (not bit-exact) because the Nelder-Mead trajectory differs
+# from scipy's SLSQP by construction.
+argmin = { workspace = true }
+argmin-math = { workspace = true }
+
+[dev-dependencies]
+rsfai-core.workspace = true
+rsfai-calibrant.workspace = true
+serde_json.workspace = true

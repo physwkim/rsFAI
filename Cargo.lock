@@ -757,6 +757,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsfai-goniometer"
+version = "0.0.0"
+dependencies = [
+ "argmin",
+ "argmin-math",
+ "rsfai",
+ "rsfai-calib",
+ "rsfai-calibrant",
+ "rsfai-core",
+ "rsfai-detectors",
+ "rsfai-fiber",
+ "rsfai-geometry",
+ "serde_json",
+]
+
+[[package]]
 name = "rsfai-integrate"
 version = "0.0.0"
 dependencies = [

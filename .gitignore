@@ -73,3 +73,15 @@ golden/datasets_peaks/**/*.h5
 golden/datasets_calib/**/*.edf
 golden/datasets_calib/**/*.cbf
 golden/datasets_calib/**/*.h5
+# Goniometer golden (M15, rsfai-goniometer): every output is tiny and
+# offline-required (the 6-PONI transformation outputs, the fixed/converged param
+# vectors, the residu2 scalar, the MultiGeometryFiber accumulators + 200-bin
+# axes), so we COMMIT all the .npy arrays, the two frame .poni files, and
+# manifest.json — including the two seeded Pilatus1M fiber input images the
+# verifier reloads (the generator's RNG is fixed, but the verifier consumes the
+# committed bytes, not a re-rolled image). Only ignore detector-image / archive
+# blobs that have no business in this tree (none are generated today; the rule is
+# defensive against an accidental large per-pixel input drop).
+golden/datasets_goniometer/**/*.edf
+golden/datasets_goniometer/**/*.cbf
+golden/datasets_goniometer/**/*.h5
