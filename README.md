@@ -70,9 +70,9 @@ and untimed, and `preproc4` adds ~0.6 ms/frame on top:
 | no-csr   | 0.29 | 0.29 | 1.13 | **3.64** |
 | bbox-csr | 0.48 | 0.37 | 1.64 | 7.93 |
 | full-csr | 0.48 | 0.33 | 1.71 | 7.95 |
-| no-lut   | 0.33 | 0.75 | 3.19 | 8.86 |
-| bbox-lut | 0.57 | 0.79 | 6.43 | 26.32 |
-| full-lut | 0.55 | 0.95 | 6.45 | 24.49 |
+| no-lut   | 0.25 | 0.28 | 1.42 | 4.51 |
+| bbox-lut | 0.43 | 0.28 | 2.27 | 8.22 |
+| full-lut | 0.44 | 0.28 | 2.28 | 8.46 |
 
 The 2D apply is a single parallel pass over output cells — gather the source bin,
 finalize, and write the final arrays, with the `reshape(bins0,bins1).T` transpose
@@ -80,9 +80,9 @@ folded into the gather index — so it scales ~5.4–6.7× across the 12 cores
 (no-csr 5000×360: 22.4 ms single-thread → 3.6 ms multi-thread). At that fine
 caking the pure-Rust **total** (preproc + apply, ~4.1 ms for no-csr) is faster
 than pyFAI's `integrate2d_ng` on the same workload (~5.8 ms in this env, ≈1.4×);
-CSR with pixel-splitting runs ~0.8× of pyFAI. LUT trails CSR for fine 2D because
-its dense padded matrix gathers ~10× the entries of the compact CSR — prefer CSR
-for fine 2D binning.
+CSR with pixel-splitting runs ~0.8× of pyFAI. LUT now runs close to CSR for fine
+2D (within ~25% at 5000×360) — the gather reads only each row's populated head
+(`Lut.sizes`), not the dense padding — so either format works for streaming 2D.
 
 Reproduce (no `daq` env needed — pure Rust):
 
