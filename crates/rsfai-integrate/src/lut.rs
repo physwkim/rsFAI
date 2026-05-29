@@ -36,6 +36,13 @@ use rsfai_core::dtype::{AccT, DataT, ErrorModel, IndexT, PositionT};
 /// and the matching `idx[...]`. Real entries occupy the leading columns of each
 /// row (CSR-row order); trailing columns are zero-padding (`idx = 0, coef = 0.0`)
 /// and are skipped on apply. `lut_size` is the largest per-bin entry count.
+///
+/// Construct via [`Lut::new`], which also precomputes `sizes` — the per-row count
+/// of populated leading columns — so the apply iterates only each row's real head
+/// (≈ the CSR entry count) instead of all `lut_size` columns. At fine 2D binning
+/// `lut_size` is set by the densest bin while most rows hold a handful of entries,
+/// so walking the full width is mostly padding reads; the dense `coef`/`idx`
+/// matrix is unchanged (byte-identical to pyFAI's), only the scan is bounded.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lut {
     /// Overlap coefficients (`data_t`, f32), row-major `(n_bins × lut_size)`.
@@ -44,6 +51,45 @@ pub struct Lut {
     pub idx: Vec<IndexT>,
     /// Entries per bin (the dense row width); `0` for an all-empty matrix.
     pub lut_size: usize,
+    /// Per-bin populated length: `sizes[b]` columns of row `b` hold real entries,
+    /// the rest is trailing padding. Private so it is always derived by
+    /// [`Lut::new`] and stays consistent with `coef`/`idx`.
+    sizes: Vec<IndexT>,
+}
+
+impl Lut {
+    /// Build from the dense row-major `(n_bins × lut_size)` `coef`/`idx` matrix,
+    /// precomputing `sizes[b]` = the position just past row `b`'s last non-padding
+    /// slot. Padding is the trailing `(idx = 0, coef = 0)` run that `csr_to_lut` /
+    /// `numpy.zeros` leave after the front-packed real entries. Trimming the scan
+    /// to `sizes[b]` is **bit-exact**: every trimmed slot has `coef == 0` (true
+    /// padding, or an inert real zero-overlap entry indistinguishable from it),
+    /// and a zero coefficient contributes nothing to any accumulator. Interior
+    /// zero-coef entries keep their column and are skipped per-entry in the gather.
+    pub fn new(coef: Vec<DataT>, idx: Vec<IndexT>, lut_size: usize) -> Self {
+        let n_bins = if lut_size == 0 {
+            0
+        } else {
+            coef.len() / lut_size
+        };
+        let mut sizes = vec![0 as IndexT; n_bins];
+        for (b, size) in sizes.iter_mut().enumerate() {
+            let row = b * lut_size;
+            // Scan from the row end back to the last populated column.
+            for col in (0..lut_size).rev() {
+                if idx[row + col] != 0 || coef[row + col] != 0.0 {
+                    *size = (col + 1) as IndexT;
+                    break;
+                }
+            }
+        }
+        Lut {
+            coef,
+            idx,
+            lut_size,
+            sizes,
+        }
+    }
 }
 
 /// Convert a bin-major [`Csr`] into the dense [`Lut`] — port of
@@ -80,11 +126,7 @@ pub(crate) fn csr_to_lut(csr: &Csr, n_bins: usize) -> Lut {
         }
     }
 
-    Lut {
-        coef,
-        idx,
-        lut_size,
-    }
+    Lut::new(coef, idx, lut_size)
 }
 
 /// Gather one output bin's contributions from its dense LUT row and finalize —
@@ -113,12 +155,18 @@ fn lut_gather_bin(
     let mut acc_norm_sq: AccT = 0.0;
     let mut acc_count: AccT = 0.0;
 
+    // Walk only the row's populated head (`sizes[bin]` ≤ `lut_size`), not the full
+    // padded width — the trailing padding is all `coef == 0` and would be skipped
+    // anyway, so bounding the scan is bit-exact (see [`Lut::new`]). Slicing the row
+    // first lets the iterator run without per-element bounds checks.
+    let size = lut.sizes[bin] as usize;
     let row = bin * lut_size;
-    for j in 0..lut_size {
-        let idx = lut.idx[row + j];
-        let coef = lut.coef[row + j] as AccT; // data_t -> acc_t
+    let idx_row = &lut.idx[row..row + size];
+    let coef_row = &lut.coef[row..row + size];
+    for (&idx, &coef) in idx_row.iter().zip(coef_row.iter()) {
+        let coef = coef as AccT; // data_t -> acc_t
         if idx < 0 || coef == 0.0 {
-            continue; // padding / dropped entry
+            continue; // interior dropped entry
         }
         let p = idx as usize;
         let sig = prep[4 * p] as AccT;

@@ -120,11 +120,7 @@ fn golden_lut(dir: &std::path::Path, n_bins: usize) -> Lut {
         coef.len(),
         "lut matrix not (n_bins, lut_size)"
     );
-    Lut {
-        coef,
-        idx,
-        lut_size,
-    }
+    Lut::new(coef, idx, lut_size)
 }
 
 /// Compare the built dense LUT against the golden, then apply the *golden* LUT +

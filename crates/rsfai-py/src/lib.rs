@@ -1123,11 +1123,11 @@ fn lut_from_parts(
     coef: &PyReadonlyArray1<'_, f32>,
     lut_size: usize,
 ) -> PyResult<Lut> {
-    Ok(Lut {
-        coef: as_slice_1d(coef)?.to_vec(),
-        idx: as_slice_1d(idx)?.to_vec(),
+    Ok(Lut::new(
+        as_slice_1d(coef)?.to_vec(),
+        as_slice_1d(idx)?.to_vec(),
         lut_size,
-    })
+    ))
 }
 
 /// `lut_integrate1d`: apply a 1D dense LUT to a preprocessed `(npix, 4)` array.
