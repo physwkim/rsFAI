@@ -23,6 +23,10 @@ numpy = "0.28"
 rsfai-core = { path = "../rsfai-core" }
 rsfai-integrate = { path = "../rsfai-integrate" }
 rsfai-preproc = { path = "../rsfai-preproc" }
+# The OpenCL/GPU backend (Phase 2). `opencl3` is named directly so the cached
+# `GpuEngine` can own the Context/CommandQueue/Program it caches across frames.
+rsfai-opencl = { path = "../rsfai-opencl" }
+opencl3 = "0.12"
 # The high-level orchestrator (`AzimuthalIntegrator`). Renamed because its own
 # crate name (`rsfai`) collides with this extension module's lib name (also
 # `rsfai`, for the Python import); `rsfai_engine` disambiguates the path here.

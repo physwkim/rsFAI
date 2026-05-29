@@ -34,6 +34,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+mod gpu;
+
 use rsfai_core::dtype::ErrorModel;
 use rsfai_engine::{
     Algo, AzimuthalIntegrator as RsAzimuthalIntegrator, Integrate1dResult, Integrate2dResult,
@@ -2107,5 +2109,8 @@ fn rsfai(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lut_integrate2d, m)?)?;
     m.add_class::<Engine>()?;
     m.add_class::<PyAzimuthalIntegrator>()?;
+    // GPU (OpenCL) backend, Phase 2: device discovery + the cached GpuEngine.
+    m.add_function(wrap_pyfunction!(gpu::list_gpu_devices, m)?)?;
+    m.add_class::<gpu::GpuEngine>()?;
     Ok(())
 }
