@@ -34,6 +34,7 @@
 
 use std::f64::consts::PI;
 
+use rsfai_calibrant::Calibrant;
 use rsfai_core::dtype::ErrorModel;
 use rsfai_detectors::Detector;
 use rsfai_geometry::{
@@ -1024,6 +1025,194 @@ impl AzimuthalIntegrator {
         let h = histogram2d(pos0, pos1, &prep, base_mask, &hopts);
         integrate2d_to_result_scaled(h, binning.pos0_scale, binning.pos1_scale)
     }
+
+    /// Reconstruct a 2D detector image from a 1D integrated profile — pyFAI's
+    /// `Geometry.calcfrom1d`. The inverse of `integrate1d`: given a radial
+    /// profile `(tth, intensity)` it linearly interpolates an intensity onto
+    /// every pixel's radial position, then applies the solid-angle correction
+    /// and optional flat/dark/mask. Used to synthesize calibration / SAXS test
+    /// images offline.
+    ///
+    /// `tth` is in the scaled `unit` (e.g. `2th_deg`) and must be ascending;
+    /// `intensity` is the matching profile. Both are f64 and the whole pipeline
+    /// stays f64 — pyFAI's `calcfrom1d` never casts to f32 — so the result is
+    /// bit-exact vs pyFAI: the internally-computed `ttha` (per-pixel 2θ from
+    /// [`unscaled_center_array`]) matches pyFAI's `center_array` bitwise, the
+    /// [`numpy_interp`] step reproduces `numpy.interp`'s FMA-contracted formula
+    /// bitwise (see its docs), and the solid-angle / flat / dark / mask steps are
+    /// plain f64 array ops numpy does not fuse. `numpy.interp` clamps outside
+    /// `[tth[0], tth[last]]` to the endpoint values (no extrapolation).
+    ///
+    /// Polarization (an optional `calcimage *= polarization` step in pyFAI) is
+    /// not applied here: rsFAI's `polarization_array` is f32, which would break
+    /// the f64 bit-exactness, and the calibration-image path does not use it.
+    pub fn calcfrom1d(
+        &self,
+        tth: &[f64],
+        intensity: &[f64],
+        unit: Unit,
+        opts: Calcfrom1dOptions,
+    ) -> Vec<f64> {
+        let Calcfrom1dOptions {
+            correct_solid_angle,
+            dummy,
+            flat,
+            dark,
+            mask,
+        } = opts;
+        assert_eq!(
+            tth.len(),
+            intensity.len(),
+            "tth ({}) and intensity ({}) length mismatch",
+            tth.len(),
+            intensity.len()
+        );
+        let size = self.detector.size();
+        // pyFAI: `tth = tth / dim1_unit.scale` (scaled user unit → internal),
+        // and `ttha = center_array(scale=False)` (the internal radial). Both end
+        // up in the unscaled space the interpolation is done in.
+        let tth_internal: Vec<f64> = tth.iter().map(|&t| t / unit.scale).collect();
+        let pos = self.pixel_positions();
+        let ttha = unscaled_center_array(unit.space, &pos.x, &pos.y, &pos.z, self.wavelength);
+
+        let mut calcimage: Vec<f64> = ttha
+            .iter()
+            .map(|&q| numpy_interp(q, &tth_internal, intensity))
+            .collect();
+
+        if correct_solid_angle {
+            let sa = solid_angle_array(
+                &self.detector,
+                self.dist,
+                self.poni1,
+                self.poni2,
+                SOLID_ANGLE_ORDER,
+            );
+            for (c, s) in calcimage.iter_mut().zip(&sa) {
+                *c *= s;
+            }
+        }
+        if let Some(flat) = flat {
+            assert_eq!(flat.len(), size, "flat length != detector size");
+            for (c, f) in calcimage.iter_mut().zip(flat) {
+                *c *= f;
+            }
+        }
+        if let Some(dark) = dark {
+            assert_eq!(dark.len(), size, "dark length != detector size");
+            for (c, d) in calcimage.iter_mut().zip(dark) {
+                *c += d;
+            }
+        }
+        if let Some(mask) = mask {
+            assert_eq!(mask.len(), size, "mask length != detector size");
+            for (c, &m) in calcimage.iter_mut().zip(mask) {
+                if m != 0 {
+                    *c = dummy;
+                }
+            }
+        }
+        calcimage
+    }
+}
+
+/// Optional corrections for [`AzimuthalIntegrator::calcfrom1d`], mirroring
+/// pyFAI's `calcfrom1d` keyword arguments. [`Default`] is "no correction"
+/// (`correct_solid_angle = false`); note pyFAI's own default is
+/// `correctSolidAngle=True`, so set it explicitly, e.g.
+/// `Calcfrom1dOptions { correct_solid_angle: true, ..Default::default() }`.
+#[derive(Clone, Copy, Default)]
+pub struct Calcfrom1dOptions<'a> {
+    /// Multiply the reconstructed image by the solid-angle correction.
+    pub correct_solid_angle: bool,
+    /// Value written to masked pixels (`mask` entries `!= 0`).
+    pub dummy: f64,
+    /// Flatfield response: `image *= flat` (detector-sized).
+    pub flat: Option<&'a [f64]>,
+    /// Dark current: `image += dark` (detector-sized).
+    pub dark: Option<&'a [f64]>,
+    /// Mask: pixels with `mask != 0` are overwritten with `dummy` (detector-sized).
+    pub mask: Option<&'a [i8]>,
+}
+
+/// Bit-exact port of `numpy.interp(x, xp, fp)` for ascending `xp`, with
+/// numpy's default endpoint clamping (`left = fp[0]`, `right = fp[last]`) and
+/// no period. `slope = (fp[j+1] - fp[j]) / (xp[j+1] - xp[j])`; numpy's choice to
+/// precompute the slopes once vs per point is bitwise-irrelevant (same division).
+///
+/// The interpolation value `slope*(x - xp[j]) + fp[j]` must be a **fused**
+/// multiply-add: numpy's compiled `compiled_base.c` contracts this expression to
+/// a single hardware FMA (verified against numpy 2.4.3 on aarch64 — separate
+/// rounded mul+add diverges by 1 ULP on ~2% of interior points, `f64::mul_add`
+/// matches bitwise on all). Rust does not auto-contract `a*b+c`, so the FMA is
+/// requested explicitly via [`f64::mul_add`].
+///
+/// Public so the golden suite can drive it on pyFAI's own `ttha` array and
+/// confirm the interpolation alone is bitwise-exact. `xp` must be ascending.
+pub fn numpy_interp(x: f64, xp: &[f64], fp: &[f64]) -> f64 {
+    let n = xp.len();
+    if x <= xp[0] {
+        return fp[0];
+    }
+    if x >= xp[n - 1] {
+        return fp[n - 1];
+    }
+    // Largest j with xp[j] <= x. x is strictly inside (xp[0], xp[n-1]) here, so
+    // j ∈ [0, n-2] and j+1 is valid. For an exact knot mul_add yields
+    // `fma(slope, 0, fp[j]) == fp[j]`, matching numpy's `dx[j] == x` short-circuit.
+    let j = match xp.binary_search_by(|v| v.partial_cmp(&x).expect("xp has NaN")) {
+        Ok(idx) => idx,
+        Err(idx) => idx - 1,
+    };
+    let slope = (fp[j + 1] - fp[j]) / (xp[j + 1] - xp[j]);
+    let mut res = slope.mul_add(x - xp[j], fp[j]);
+    if res.is_nan() {
+        res = slope.mul_add(x - xp[j + 1], fp[j + 1]);
+        if res.is_nan() && fp[j] == fp[j + 1] {
+            res = fp[j];
+        }
+    }
+    res
+}
+
+/// pyFAI `Calibrant.fake_calibration_image`: synthesize a 2D calibration image
+/// for `ai` from `calibrant`'s rings. Builds the 1D powder pattern over the
+/// detector's 2θ range with [`Calibrant::fake_xrpdp`], then back-projects it
+/// onto every pixel with [`AzimuthalIntegrator::calcfrom1d`] (solid-angle
+/// corrected, the detector mask set to the dummy value). `imax` scales the
+/// strongest ring, `imin` is the flat background, `resolution_deg` the peak
+/// FWHM in degrees.
+///
+/// Tier-B: it inherits `fake_xrpdp`'s Gaussian `exp`/`sqrt`; the `calcfrom1d`
+/// back-projection step itself is bit-exact.
+pub fn fake_calibration_image(
+    calibrant: &Calibrant,
+    ai: &AzimuthalIntegrator,
+    imax: f64,
+    imin: f64,
+    resolution_deg: f64,
+) -> Vec<f64> {
+    // Scaled (degrees) 2θ over the detector; its min/max set the pattern range.
+    let tth = ai.array_from_unit(Unit::TTH_DEG);
+    let tth_min = tth.iter().copied().fold(f64::INFINITY, f64::min);
+    let tth_max = tth.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let (ny, nx) = ai.detector.shape;
+    // pyFAI: dim = int(sqrt(ny² + nx²)) — the detector diagonal in pixels.
+    let dim = ((ny * ny + nx * nx) as f64).sqrt() as usize;
+    let (radial, intensity) =
+        calibrant.fake_xrpdp(dim, (tth_min, tth_max), imin, imax, resolution_deg);
+    let mask = ai.build_mask();
+    ai.calcfrom1d(
+        &radial,
+        &intensity,
+        Unit::TTH_DEG,
+        Calcfrom1dOptions {
+            correct_solid_angle: true,
+            dummy: 0.0, // masked pixels
+            mask: mask.as_deref(),
+            ..Default::default()
+        },
+    )
 }
 
 /// Map the no-split histogram engine's `Integrate1d` (f32 accumulators) to the

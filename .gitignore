@@ -48,6 +48,14 @@ golden/datasets_fiber_integrator/data.npy
 golden/datasets_calibrant/**/*.edf
 golden/datasets_calibrant/**/*.cbf
 golden/datasets_calibrant/**/*.h5
+# calcfrom golden (calcfrom1d / fake_xrpdp / fake_calibration_image): the
+# reconstructed images are a compact 128x128 f64 (128 KB each) and the pyFAI
+# OUTPUT cannot be regenerated without pyFAI, so this set is offline-required —
+# we COMMIT all the .npy arrays, the copied LaB6.D, and the manifest. Only ignore
+# detector-image / archive blobs (none generated today; defensive).
+golden/datasets_calcfrom/**/*.edf
+golden/datasets_calcfrom/**/*.cbf
+golden/datasets_calcfrom/**/*.h5
 # Distortion/spline golden (M11): regenerate the large per-pixel arrays — the
 # `pos`/corner inputs, the CSR matrix (dist_csr_*), the raw image, and the
 # full-grid spline2array maps — via golden/gen_golden_distortion.py. Commit only

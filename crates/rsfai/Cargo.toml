@@ -12,4 +12,5 @@ rsfai-geometry.workspace = true
 rsfai-detectors.workspace = true
 rsfai-preproc.workspace = true
 rsfai-integrate.workspace = true
+rsfai-calibrant.workspace = true
 thiserror.workspace = true

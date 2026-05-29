@@ -20,22 +20,22 @@ against what the rsFAI workspace implements on `main`. Mapping policy:
   image-format IO + `matplotlib` display, `silx`/network download, dask/
   multi-GPU, bitshuffle-LZ4 GPU decompression, ThickDetector parallax/
   raytracing/deconvolution, inpainting, the `sigma_clip`/`medfilt`/`separate`/
-  `peakfinder8`/`sparsify` filters, or the `calcfrom1d`/`calcfrom2d`/
-  `fake_calibration_image`/`register_radial_unit` helpers that rsFAI does not
-  implement).
+  `peakfinder8`/`sparsify` filters, or the `calcfrom2d`/`register_radial_unit`
+  helpers that rsFAI does not implement).
 
-Three recurring out-of-remit *primitives* gate many notebooks (verified absent
-from `crates/` by `rg`):
+Recurring *primitives* that gate notebooks (verified by `rg` against `crates/`):
 
-- **`calcfrom1d` / `calcfrom2d`** — the inverse of integration (rebuild a 2D
-  detector image from a 1D/2D profile). Used by most variance/statistics
-  notebooks to *synthesize their input*. Their `integrate1d` + error-model leg
-  is in remit, but the input-synthesis leg cannot run offline in rsFAI, so they
-  are `⛔`.
-- **`Calibrant.fake_calibration_image` / `fake_xrpdp`** — synthetic powder-ring
-  images / fake 1D patterns. The calibrant *peak list* (d-spacing / q / 2θ) is
-  landed (`rsfai-calibrant`, demoed by `calibrant_rings.rs`); the image
-  synthesis is not.
+- **`calcfrom1d`** (the inverse of 1D integration — rebuild a 2D image from a 1D
+  profile) and **`Calibrant.fake_xrpdp` / `fake_calibration_image`** (synthetic
+  1D powder pattern / powder-ring image) are now **landed** and bit-exact vs
+  pyFAI (`AzimuthalIntegrator::calcfrom1d`, `rsfai::fake_calibration_image`,
+  `Calibrant::fake_xrpdp`; demoed by `crates/rsfai/examples/calcfrom_image.rs`,
+  gated by `golden_calcfrom.rs`). The Gaussian `exp`/Bragg-`asin` of `fake_xrpdp`
+  is Tier-B (measured 0 ULP); `calcfrom1d` itself is bit-exact (the interp uses
+  an FMA to match numpy's contracted `compiled_base.c`). So notebooks that only
+  needed offline input-synthesis are no longer gated by these.
+- **`calcfrom2d`** — the 2D inverse (`polar_interpolate` from `ext.inpainting`)
+  is *not* yet ported, so notebooks needing the 2D image rebuild stay `⛔`.
 - **`register_radial_unit` + numexpr custom units** — rsFAI units are a fixed
   enum, so custom log/arcsinh/qx-qy units are `⛔`; plain integration is covered.
 
@@ -56,17 +56,17 @@ Status legend: `✅ example exists` · `▶ to port` · `⛔ out of remit`.
 
 | Notebook | pyFAI feature | rsFAI crate | Status | Target example | Note |
 |---|---|---|---|---|---|
-| `tutorial/Geometry/geometry.ipynb` | effect of `poni1/poni2`, `dist`, `rot1/2/3` on ring positions; custom `ShiftedDetector` | `rsfai-geometry` / `rsfai` | ✅ example exists | `crates/rsfai-geometry/examples/geometry_params.rs` | Headless equivalent: sweep poni/dist/rot on an `AzimuthalIntegrator`, print how the 2θ radial map / ring radii shift; or `integrate2d` of a synthesized ring image at each setting and report ring-center bins. The notebook's image is built with `Calibrant.fake_calibration_image` (`⛔` — not in rsFAI), so the example must synthesize rings directly. matplotlib display dropped. |
+| `tutorial/Geometry/geometry.ipynb` | effect of `poni1/poni2`, `dist`, `rot1/2/3` on ring positions; custom `ShiftedDetector` | `rsfai-geometry` / `rsfai` | ✅ example exists | `crates/rsfai-geometry/examples/geometry_params.rs` | Headless equivalent: sweep poni/dist/rot on an `AzimuthalIntegrator`, print how the 2θ radial map / ring radii shift; or `integrate2d` of a synthesized ring image at each setting and report ring-center bins. The notebook's image is built with `Calibrant.fake_calibration_image`, now landed (`calcfrom_image.rs`); matplotlib display dropped. |
 
 ## Cluster C — calibrant / crystallography (`rsfai-calibrant`)
 
 | Notebook | pyFAI feature | rsFAI crate | Status | Target example | Note |
 |---|---|---|---|---|---|
-| `tutorial/Calibrant/Calibrant.ipynb` | `ALL_CALIBRANTS`, set wavelength, list calibrants for a setup | `rsfai-calibrant` | ✅ example exists | `crates/rsfai-calibrant/examples/calibrant_rings.rs` | Calibrant load + wavelength + ring/peak list is exactly what the existing example does. `fake_calibration_image` display is `⛔`. |
+| `tutorial/Calibrant/Calibrant.ipynb` | `ALL_CALIBRANTS`, set wavelength, list calibrants for a setup | `rsfai-calibrant` | ✅ example exists | `crates/rsfai-calibrant/examples/calibrant_rings.rs` | Calibrant load + wavelength + ring/peak list is exactly what the existing example does. `fake_calibration_image` is now landed (`calcfrom_image.rs`); only its matplotlib display is `⛔`. |
 | `tutorial/Calibrant/make_calibrant.ipynb` | `Cell.cubic/diamond/cubic(F)`, `calculate_dspacing`, `selection_rules`, `.save()` to `.D` | `rsfai-calibrant` | ✅ example exists | `crates/rsfai-calibrant/examples/make_calibrant.rs` | `Cell::cubic/diamond` + `calculate_dspacing` + selection rules are landed (`cell.rs`). Build a Cell from lattice params, compute d-spacings + reflections, print them (the substance). The `.D` *write* (`Cell.save`) is not a landed method — print the d-spacing table instead. Fully offline, no data file. |
 | `tutorial/Calibrant/new_calibrant.ipynb` | custom rhombohedral/space-group Cell (Cr₂O₃, R-3c) + extinction rules | `rsfai-calibrant` | ✅ example exists | `crates/rsfai-calibrant/examples/space_group.rs` | **Faithful:** the notebooks' core mechanism — appending a space-group reflection condition to `selection_rules` — is now landed as `Cell::add_selection_rule`. Full R-3c (group 167) is reproduced via `Cell::hexagonal(4.958979, 13.59592, Centering::P)` + `group167_r3bar_c` (the validated port of pyFAI's `ReflectionCondition.group167_R3bar_c`, including the c-glide `000l: l = 6n`). Gated bit-exact (0 ULP, d-spacings + multiplicities) in `tests/golden_calibrant.rs` (cell `Cr2O3_R3c_167`) and matches the shipped `Cr2O3.D`. Offline, no data file. |
 | `tutorial/Calibrant/hydrocerussite.ipynb` | another new-calibrant Cell (R-3m corundum-type) + extinction | `rsfai-calibrant` | ✅ example exists | (in `space_group.rs`) | **Faithful:** R-3m (group 166) reproduced the notebook's own way — `Cell::hexagonal(5.24656, 23.7023, Centering::P)` + `group166_r3bar_m` — and the example reproduces the notebook's check that this equals the built-in `Centering::R` reflection set. Gated bit-exact in `tests/golden_calibrant.rs` (cell `hydrocerussite_R3m_166`). |
-| `tutorial/Carbon.ipynb` | `get_calibrant(diamond/graphite/C60)`, `fake_xrpdp`, `fake_calibration_image` | `rsfai-calibrant` | ⛔ out of remit | — | The calibrant peak-list leg is already covered by `calibrant_rings.rs`. The headline (`fake_xrpdp` synthetic 1D powder pattern + `fake_calibration_image`) is not landed in rsFAI; matplotlib display out of remit. |
+| `tutorial/Carbon.ipynb` | `get_calibrant(diamond/graphite/C60)`, `fake_xrpdp`, `fake_calibration_image` | `rsfai` / `rsfai-calibrant` | ✅ example exists | `crates/rsfai/examples/calcfrom_image.rs` | The headline (`fake_xrpdp` synthetic 1D powder pattern + `fake_calibration_image`) is now landed and demoed by `calcfrom_image.rs` (with LaB6) — bit-exact vs pyFAI, the Gaussian Tier-B. The mechanism is identical for the carbon allotropes; only their shipped d-spacing files and the matplotlib display are not carried here. Peak-list leg also covered by `calibrant_rings.rs`. |
 
 ## Cluster D — distortion / detector spline (`rsfai-distortion`)
 
@@ -82,8 +82,8 @@ Status legend: `✅ example exists` · `▶ to port` · `⛔ out of remit`.
 
 | Notebook | pyFAI feature | rsFAI crate | Status | Target example | Note |
 |---|---|---|---|---|---|
-| `tutorial/MultiGeometry/MultiGeometry.ipynb` | `MultiGeometry` 1D/2D across translated/rotated detectors, gap fill | `rsfai-multigeometry` | ✅ example exists | `crates/rsfai-multigeometry/examples/multi_geometry.rs` | Loads the committed `golden/datasets_multigeometry/inputs/` geometries + synthesizes images; bbox-CSR union. `fake_calibration_image` + matplotlib in the notebook are out of remit. |
-| `tutorial/MultiGeometry/MultiGeometryFiber.ipynb` | `FiberIntegrator` + `integrate2d_grazing_incidence` + `MultiGeometryFiber` | `rsfai-fiber` / `rsfai-goniometer` | ✅ example exists | `crates/rsfai-goniometer/examples/goniometer.rs` | The existing `goniometer.rs` already builds a `MultiGeometryFiber` (step 4) from committed fiber frames; `rsfai-fiber/examples/giwaxs_fiber.rs` covers the single-geometry fiber leg. `fake_calibration_image` input synthesis + matplotlib out of remit. |
+| `tutorial/MultiGeometry/MultiGeometry.ipynb` | `MultiGeometry` 1D/2D across translated/rotated detectors, gap fill | `rsfai-multigeometry` | ✅ example exists | `crates/rsfai-multigeometry/examples/multi_geometry.rs` | Loads the committed `golden/datasets_multigeometry/inputs/` geometries + synthesizes images; bbox-CSR union. `fake_calibration_image` input synthesis is now landed (`calcfrom_image.rs`); matplotlib out of remit. |
+| `tutorial/MultiGeometry/MultiGeometryFiber.ipynb` | `FiberIntegrator` + `integrate2d_grazing_incidence` + `MultiGeometryFiber` | `rsfai-fiber` / `rsfai-goniometer` | ✅ example exists | `crates/rsfai-goniometer/examples/goniometer.rs` | The existing `goniometer.rs` already builds a `MultiGeometryFiber` (step 4) from committed fiber frames; `rsfai-fiber/examples/giwaxs_fiber.rs` covers the single-geometry fiber leg. `fake_calibration_image` input synthesis is now landed (`calcfrom_image.rs`); matplotlib out of remit. |
 | `tutorial/FiberGrazingIncidence.ipynb` | `FiberIntegrator`, `integrate2d_grazing_incidence`, exit-angle / polar maps | `rsfai-fiber` | ✅ example exists | `crates/rsfai-fiber/examples/giwaxs_fiber.rs` | GIWAXS qip/qoop + integrate1d/2d fiber is the existing example (synthesized data + committed fiber `.poni`). `fabio`/matplotlib legs out of remit. |
 
 ## Cluster F — calibration / geometry refinement / goniometer (`rsfai-calib`, `rsfai-goniometer`)
@@ -112,10 +112,10 @@ Status legend: `✅ example exists` · `▶ to port` · `⛔ out of remit`.
 
 | Notebook | pyFAI feature | rsFAI crate | Status | Target example | Note |
 |---|---|---|---|---|---|
-| `tutorial/Variance/Variance.ipynb` | SAXS variance model, error propagation through `integrate1d` | `rsfai` | ⛔ out of remit | — | The error-model leg (none/poisson/variance/azimuthal/hybrid) IS landed and bit-exact-verified (`golden/datasets/…__err*`). But the notebook *synthesizes* its SAXS image with `calcfrom1d` (not in rsFAI) and does OpenCL Monte-Carlo statistical validation + matplotlib. No offline path to build the input → catalog only. |
-| `tutorial/Variance/uncertainties.ipynb` | error-model equivalence (poisson vs azimuthal), sigma-clip variance | `rsfai` | ⛔ out of remit | — | `integrate1d` error models landed, but input built via `calcfrom1d`; headline also exercises `sigma_clip_ng` (out of remit) + matplotlib. |
-| `tutorial/Variance/Unweighted.ipynb` | weighted vs unweighted azimuthal average (`method.unweighted`) | `rsfai` | ⛔ out of remit | — | `unweighted`/`weighted_average` appears only in `rsfai-opencl` `.cl` kernels, not exposed as an rsFAI integrate option; input built via `calcfrom1d`; matplotlib + 1000-frame Monte-Carlo out of remit. |
-| `tutorial/Variance/Validator.ipynb` | χ² validator of error propagation over a 100-frame Monte-Carlo set | `rsfai` | ⛔ out of remit | — | Input via `calcfrom1d`, `scipy.stats.chi2` validation, matplotlib widget. The integrate1d+error-model leg is covered by the golden verifier tests, not an example. |
+| `tutorial/Variance/Variance.ipynb` | SAXS variance model, error propagation through `integrate1d` | `rsfai` | ⛔ out of remit | — | The error-model leg (none/poisson/variance/azimuthal/hybrid) IS landed and bit-exact-verified (`golden/datasets/…__err*`). The notebook synthesizes its SAXS image with `calcfrom1d`, now landed (offline input IS possible, `calcfrom_image.rs`); the remaining headline — OpenCL Monte-Carlo statistical validation + matplotlib — stays out of remit. |
+| `tutorial/Variance/uncertainties.ipynb` | error-model equivalence (poisson vs azimuthal), sigma-clip variance | `rsfai` | ⛔ out of remit | — | `integrate1d` error models landed, and input synthesis via `calcfrom1d` is now landed too; the headline still exercises `sigma_clip_ng` (out of remit) + matplotlib. |
+| `tutorial/Variance/Unweighted.ipynb` | weighted vs unweighted azimuthal average (`method.unweighted`) | `rsfai` | ⛔ out of remit | — | `unweighted`/`weighted_average` appears only in `rsfai-opencl` `.cl` kernels, not exposed as an rsFAI integrate option; input synthesis via `calcfrom1d` is now landed, but matplotlib + 1000-frame Monte-Carlo stay out of remit. |
+| `tutorial/Variance/Validator.ipynb` | χ² validator of error propagation over a 100-frame Monte-Carlo set | `rsfai` | ⛔ out of remit | — | Input synthesis via `calcfrom1d` is now landed; the `scipy.stats.chi2` validation + matplotlib widget stay out of remit. The integrate1d+error-model leg is covered by the golden verifier tests, not an example. |
 
 ## Cluster I — out of remit (GUI / IO / parallelization / thick-detector / inpainting / separation filters)
 
@@ -128,8 +128,8 @@ Status legend: `✅ example exists` · `▶ to port` · `⛔ out of remit`.
 | `tutorial/Introduction/introduction.ipynb` | tour of pyFAI (jupyter, fabio, detector, spline, integrate1d/2d) | — | ⛔ out of remit | — | Documentation tour; substance is jupyter/`fabio`/matplotlib usage. Each landed concept (integrate, detector, spline) has its own example above. |
 | `tutorial/LogScale/Guinier.ipynb` | integrate1d in custom log/arcsinh radial units (`register_radial_unit`, numexpr) | — | ⛔ out of remit | — | Custom radial-unit registration is not in rsFAI (fixed-enum units). Plain `integrate1d` leg covered by `integrate_basic.rs`. |
 | `tutorial/AzimuthalFilter.ipynb` | `sigma_clip` + `medfilt1d_ng` azimuthal filtering + benchmark | — | ⛔ out of remit | — | `sigma_clip`/`medfilt` separation filters are not in rsFAI; `fabio` CBF + benchmark + matplotlib. |
-| `tutorial/Separation/Separate.ipynb` | Bragg/amorphous separation (`separate`, `sigma_clip_ng`, `medfilt`, `calcfrom1d`) | — | ⛔ out of remit | — | `separate`/`sigma_clip`/`medfilt`/`calcfrom1d` all out of remit; downloaded CBF + matplotlib. |
-| `tutorial/Separation/sigma_clip_mask.ipynb` | recover dynamically-masked pixels during sigma-clipping (`sigma_clip_ng`, `calcfrom1d`) | — | ⛔ out of remit | — | `sigma_clip_ng` + `calcfrom1d` reconstruction out of remit; `fabio` EDF + matplotlib. |
+| `tutorial/Separation/Separate.ipynb` | Bragg/amorphous separation (`separate`, `sigma_clip_ng`, `medfilt`, `calcfrom1d`) | — | ⛔ out of remit | — | `separate`/`sigma_clip`/`medfilt` out of remit (`calcfrom1d` now landed); downloaded CBF + matplotlib. |
+| `tutorial/Separation/sigma_clip_mask.ipynb` | recover dynamically-masked pixels during sigma-clipping (`sigma_clip_ng`, `calcfrom1d`) | — | ⛔ out of remit | — | `sigma_clip_ng` out of remit (`calcfrom1d` reconstruction now landed); `fabio` EDF + matplotlib. |
 | `tutorial/Separation/Peakfinder8.ipynb` | GPU Peakfinder8 streaming hit-finder | — | ⛔ out of remit | — | OpenCL Peakfinder8 streaming algorithm (not the rsfai-peaks offline blob/watershed); `fabio`/`silx` + matplotlib. |
 | `tutorial/Separation/Laue.ipynb` | Laue peak identification (`sigma_clip` + `OCL_PeakFinder`) | — | ⛔ out of remit | — | `sigma_clip` + OpenCL peakfinder on a downloaded Rayonix `.h5`; matplotlib. integrate1d leg covered by `integrate_basic.rs`. |
 | `tutorial/Separation/Wilson.ipynb` | Wilson plots from a sparsified dataset (`sparsify`) | — | ⛔ out of remit | — | `sparsify` + HDF5 sparse-frame IO + ipywidgets; no integration substance in remit. |

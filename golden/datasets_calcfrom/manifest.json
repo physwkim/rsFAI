@@ -1,0 +1,129 @@
+{
+  "pyfai_version": "2026.5.0",
+  "numpy_version": "2.4.3",
+  "shape": [
+    128,
+    128
+  ],
+  "pixel": 0.0001,
+  "geometry": {
+    "dist": 0.02,
+    "poni1": 0.0064,
+    "poni2": 0.0064,
+    "rot1": 0.0,
+    "rot2": 0.0,
+    "rot3": 0.0,
+    "wavelength": 1e-10
+  },
+  "fake_xrpdp": {
+    "nbpt": 200,
+    "tth_range_deg": [
+      0.0,
+      60.0
+    ],
+    "background": 0.1,
+    "imax": 1.0,
+    "resolution_deg": 0.1,
+    "calibrant": "LaB6",
+    "n_2th": 59
+  },
+  "fake_cal_image": {
+    "imax": 1.0,
+    "imin": 0.1,
+    "resolution_deg": 0.1
+  },
+  "arrays": {
+    "calcfrom1d__tth": {
+      "shape": [
+        40
+      ],
+      "dtype": "float64"
+    },
+    "calcfrom1d__intensity": {
+      "shape": [
+        40
+      ],
+      "dtype": "float64"
+    },
+    "calcfrom1d__mask": {
+      "shape": [
+        128,
+        128
+      ],
+      "dtype": "int8"
+    },
+    "calcfrom1d__flat": {
+      "shape": [
+        128,
+        128
+      ],
+      "dtype": "float64"
+    },
+    "calcfrom1d__dark": {
+      "shape": [
+        128,
+        128
+      ],
+      "dtype": "float64"
+    },
+    "calcfrom1d__ttha": {
+      "shape": [
+        16384
+      ],
+      "dtype": "float64"
+    },
+    "calcfrom1d__interp_pyttha": {
+      "shape": [
+        16384
+      ],
+      "dtype": "float64"
+    },
+    "calcfrom1d__img_sa": {
+      "shape": [
+        128,
+        128
+      ],
+      "dtype": "float64"
+    },
+    "calcfrom1d__img_nosa": {
+      "shape": [
+        128,
+        128
+      ],
+      "dtype": "float64"
+    },
+    "calcfrom1d__img_mask": {
+      "shape": [
+        128,
+        128
+      ],
+      "dtype": "float64"
+    },
+    "calcfrom1d__img_flatdark": {
+      "shape": [
+        128,
+        128
+      ],
+      "dtype": "float64"
+    },
+    "fake_xrpdp__radial": {
+      "shape": [
+        200
+      ],
+      "dtype": "float64"
+    },
+    "fake_xrpdp__intensity": {
+      "shape": [
+        200
+      ],
+      "dtype": "float64"
+    },
+    "fake_cal_image__img": {
+      "shape": [
+        128,
+        128
+      ],
+      "dtype": "float64"
+    }
+  }
+}

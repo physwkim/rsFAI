@@ -674,6 +674,7 @@ dependencies = [
 name = "rsfai"
 version = "0.0.0"
 dependencies = [
+ "rsfai-calibrant",
  "rsfai-core",
  "rsfai-detectors",
  "rsfai-geometry",

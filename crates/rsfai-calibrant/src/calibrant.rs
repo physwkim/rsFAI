@@ -224,6 +224,115 @@ impl Calibrant {
                 .collect()
         }
     }
+
+    /// pyFAI `Calibrant.fake_xrpdp`: synthesize a 1D powder-diffraction pattern
+    /// from this calibrant's visible rings as a sum of Gaussian peaks, returning
+    /// `(tth_deg, intensity)` over `nbpt` points spanning `tth_range_deg`.
+    ///
+    /// `resolution_deg` is the peak FWHM in degrees (pyFAI's `Constant`
+    /// resolution; `sigma² = (FWHM/scale)² / (8·ln2)`); the most intense peak is
+    /// scaled to `imax`, and `background` is added as a flat offset. Requires the
+    /// wavelength to be set (uses [`get_2th`](Self::get_2th)). Peaks farther than
+    /// `4σ` outside the range, with non-positive intensity, are dropped.
+    ///
+    /// Tier-B: the Gaussian `exp`/`sqrt` are transcendental (pyFAI evaluates the
+    /// peak sum through numexpr), so this matches pyFAI within a recorded ULP
+    /// budget, not bitwise. The `linspace` axis, peak positions, intensities and
+    /// the mask selection are exact.
+    pub fn fake_xrpdp(
+        &self,
+        nbpt: usize,
+        tth_range_deg: (f64, f64),
+        background: f64,
+        imax: f64,
+        resolution_deg: f64,
+    ) -> (Vec<f64>, Vec<f64>) {
+        use std::f64::consts::{LN_2, PI};
+        const EPSILON: f64 = 1.0e-6;
+        let scale = 180.0 / PI; // pyFAI TTH_DEG.scale
+
+        let lo = tth_range_deg.0.min(tth_range_deg.1);
+        let hi = tth_range_deg.0.max(tth_range_deg.1);
+        // numpy.linspace(lo, hi, nbpt): y[i] = i*step + lo, last element = hi.
+        let tth_user: Vec<f64> = match nbpt {
+            0 => Vec::new(),
+            1 => vec![lo],
+            _ => {
+                let step = (hi - lo) / ((nbpt - 1) as f64);
+                let mut v: Vec<f64> = (0..nbpt).map(|i| (i as f64) * step + lo).collect();
+                v[nbpt - 1] = hi;
+                v
+            }
+        };
+        let tth_rad: Vec<f64> = tth_user.iter().map(|&t| t / scale).collect();
+
+        let tth_peak = self.get_2th(); // radians
+        let c2 = (resolution_deg / scale).powi(2);
+        let dtth2 = c2 / (8.0 * LN_2); // constant per peak (Constant resolution)
+
+        // intensities: 1.0 by default, overridden by matched config reflections.
+        let mut intensities = vec![1.0_f64; tth_peak.len()];
+        if let Some(cfg) = &self.config {
+            for (i, refl) in cfg.reflections.iter().enumerate() {
+                if i >= self.dspacing.len() {
+                    break;
+                }
+                if (refl.dspacing - self.dspacing[i]).abs() > EPSILON {
+                    continue; // dspacing/config mismatch: keep the default 1.0
+                }
+                intensities[i] = refl.intensity.unwrap_or(1.0);
+            }
+        }
+
+        let sigma = dtth2.sqrt();
+        let tth_min = lo / scale;
+        let tth_max = hi / scale;
+        let kept: Vec<usize> = (0..tth_peak.len())
+            .filter(|&i| {
+                intensities[i] > 0.0
+                    && dtth2 > 0.0
+                    && tth_peak[i] >= tth_min - 4.0 * sigma
+                    && tth_peak[i] <= tth_max + 4.0 * sigma
+            })
+            .collect();
+
+        let mut signal = vec![background; nbpt];
+        if kept.is_empty() {
+            return (tth_user, signal); // no peak in range: flat background
+        }
+
+        // signals[peak][pt] = I_peak * exp(-(tth_rad-tth_peak)²/(2σ²)) / sqrt(2πσ²)
+        let norm = (2.0 * PI * dtth2).sqrt();
+        let mut signals: Vec<Vec<f64>> = Vec::with_capacity(kept.len());
+        let mut gmax = f64::NEG_INFINITY;
+        for &p in &kept {
+            let tp = tth_peak[p];
+            let ip = intensities[p];
+            let row: Vec<f64> = tth_rad
+                .iter()
+                .map(|&tr| {
+                    let g = (-((tr - tp).powi(2)) / (2.0 * dtth2)).exp();
+                    ip * g / norm
+                })
+                .collect();
+            for &v in &row {
+                if v > gmax {
+                    gmax = v;
+                }
+            }
+            signals.push(row);
+        }
+        // Normalize the most intense peak to 1, sum over peaks, scale by imax,
+        // add background — pyFAI's `Imax * (signals/signals.max()).sum(axis=0)`.
+        for (pt, s) in signal.iter_mut().enumerate() {
+            let mut acc = 0.0;
+            for row in &signals {
+                acc += row[pt] / gmax;
+            }
+            *s = imax * acc + background;
+        }
+        (tth_user, signal)
+    }
 }
 
 #[cfg(test)]
