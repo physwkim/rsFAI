@@ -1,0 +1,12 @@
+[package]
+name = "rsfai-calib"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rsfai-geometry.workspace = true
+rsfai-detectors.workspace = true
+rsfai-calibrant.workspace = true

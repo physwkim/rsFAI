@@ -481,6 +481,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsfai-calib"
+version = "0.0.0"
+dependencies = [
+ "rsfai-calibrant",
+ "rsfai-detectors",
+ "rsfai-geometry",
+]
+
+[[package]]
 name = "rsfai-calibrant"
 version = "0.0.0"
 dependencies = [
