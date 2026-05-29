@@ -31,6 +31,11 @@ import rsfai_backend
 # namespace and constructs one for integration. Rebound to the rsFAI subclass.
 _PATCH_TARGETS = ("pyFAI.gui.tasks.IntegrationTask",)
 
+# Window title shown in place of the .ui's "PyFAI Calibration", so the running
+# GUI is visibly the rsFAI build; also the Qt application display name.
+_WINDOW_TITLE = "rsFAI Calibration"
+_APP_DISPLAY_NAME = "rsFAI-calib2"
+
 
 def install_backend():
     """Rebind ``AzimuthalIntegrator`` to the rsFAI subclass in each GUI module
@@ -46,9 +51,38 @@ def install_backend():
     return patched
 
 
+def brand_gui():
+    """Rebrand the calibration window so it reads as the rsFAI build.
+
+    The title is baked into ``calibration-main.ui`` ("PyFAI Calibration") and
+    loaded by ``CalibrationWindow.__init__``; wrap that ``__init__`` to set the
+    title (and the Qt application display name, which exists by then) *after*
+    the ``.ui`` loads.  pyFAI source is untouched.  Idempotent.
+    """
+    from pyFAI.gui.CalibrationWindow import CalibrationWindow
+
+    if getattr(CalibrationWindow, "_rsfai_branded", False):
+        return
+    orig_init = CalibrationWindow.__init__
+
+    def init(self, context, *args, **kwargs):
+        orig_init(self, context, *args, **kwargs)
+        self.setWindowTitle(_WINDOW_TITLE)
+        from silx.gui import qt
+
+        app = qt.QApplication.instance()
+        if app is not None:
+            app.setApplicationDisplayName(_APP_DISPLAY_NAME)
+
+    CalibrationWindow.__init__ = init
+    CalibrationWindow._rsfai_branded = True
+
+
 def main():
     patched = install_backend()
-    print(f"rsFAI backend active in: {', '.join(patched) or '(none)'}", file=sys.stderr)
+    brand_gui()
+    print(f"rsFAI backend active in: {', '.join(patched) or '(none)'}; "
+          f"window title -> {_WINDOW_TITLE!r}", file=sys.stderr)
     from pyFAI.app.calib2 import main as calib2_main
     return calib2_main()
 

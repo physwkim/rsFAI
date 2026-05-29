@@ -18,9 +18,12 @@ never exercises) on the rsFAI subclass and asserts:
   * an OpenCL csr method on the integer image takes the rsFAI ``GpuEngine`` path
     and matches a plain pyFAI OpenCL run (CSR is deterministic on this device).
 
-It also runs the launcher's ``install_backend()`` against the real GUI module
-when a Qt binding is present; without one (this env has none) that leg SKIPs and
-is reported as unverified rather than silently passing.
+It also runs the launcher's ``install_backend()`` + ``brand_gui()`` against the
+real GUI module when a Qt binding is present: it asserts the integrator rebind
+took, then constructs a ``CalibrationWindow`` offscreen and asserts the rebranded
+window title ("rsFAI Calibration", vs the .ui default "PyFAI Calibration") and
+the Qt application display name.  Without a Qt binding that leg SKIPs and is
+reported as unverified rather than silently passing.
 """
 
 import os
@@ -157,18 +160,41 @@ def main():
     failures += (not ok)
     print()
 
-    # --- The launcher's install_backend() against the real GUI module -----
-    print("=== launcher install_backend() ===")
+    # --- The launcher's install_backend() + brand_gui() against the real GUI -
+    print("=== launcher install_backend() + brand_gui() ===")
     try:
         patched = rsfai_calib2.install_backend()
     except ImportError as exc:
         print(f"  SKIP (unverified): GUI import needs a Qt binding — {exc}")
     else:
         from pyFAI.gui.tasks import IntegrationTask
-        ok = IntegrationTask.AzimuthalIntegrator is Rs and patched
+        ok = IntegrationTask.AzimuthalIntegrator is Rs and bool(patched)
         print(f"  patched {patched}; IntegrationTask.AzimuthalIntegrator is rsFAI subclass: "
               f"{IntegrationTask.AzimuthalIntegrator is Rs}")
         if not ok:
+            failures += 1
+
+        # Rebrand: build a CalibrationWindow offscreen and assert the title now
+        # reads as rsFAI (the .ui default is "PyFAI Calibration").
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from silx.gui import qt
+        from pyFAI.gui.CalibrationWindow import CalibrationWindow
+        from pyFAI.gui.CalibrationContext import CalibrationContext
+
+        app = qt.QApplication.instance() or qt.QApplication([])  # noqa: F841
+        rsfai_calib2.brand_gui()
+        settings = qt.QSettings(qt.QSettings.IniFormat, qt.QSettings.UserScope,
+                                "pyfai", "pyfai-calib2-rsfai-test", None)
+        context = CalibrationContext(settings)
+        context.restoreSettings()
+        window = CalibrationWindow(context)
+        title = window.windowTitle()
+        appname = qt.QApplication.instance().applicationDisplayName()
+        title_ok = (title == rsfai_calib2._WINDOW_TITLE
+                    and appname == rsfai_calib2._APP_DISPLAY_NAME)
+        print(f"  window title: {title!r}; appDisplayName: {appname!r} | "
+              f"{'PASS' if title_ok else 'FAIL'}")
+        if not title_ok:
             failures += 1
 
     print(f"\nRESULT: {'PASS' if failures == 0 else 'FAIL'} ({failures} failing groups)")
