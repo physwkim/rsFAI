@@ -55,3 +55,12 @@ golden/datasets_calibrant/**/*.h5
 # corrected image), the manifest, and the committed halfccd.spline (not .npy).
 golden/datasets_distortion/**/*.npy
 !golden/datasets_distortion/**/out_*.npy
+# ControlPoints + GeometryRefinement golden (M14, rsfai-calib): every output is
+# tiny and offline-required (control points <= 51x3 doubles, the 6-param vectors,
+# the per-point residual/2theta arrays, the calibrant d-spacing/2theta lists), so
+# we COMMIT all the .npy arrays + manifest.json. Only ignore detector-image /
+# archive blobs that have no business in this tree (none are generated today; the
+# rule is defensive against an accidental large per-pixel input drop).
+golden/datasets_calib/**/*.edf
+golden/datasets_calib/**/*.cbf
+golden/datasets_calib/**/*.h5
