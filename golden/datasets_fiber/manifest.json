@@ -1,0 +1,50 @@
+{
+  "dataset": "fiber_units",
+  "source": "gen_golden_fiber.py",
+  "wavelength": 1e-10,
+  "n_sample": 4096,
+  "units": [
+    "qip",
+    "qoop",
+    "qtot",
+    "chigi",
+    "qbeam",
+    "qhorz",
+    "scatvert",
+    "scathorz",
+    "exitvert",
+    "exithorz"
+  ],
+  "combos": [
+    {
+      "index": 0,
+      "incident_angle": 0.0,
+      "tilt_angle": 0.0,
+      "sample_orientation": 1
+    },
+    {
+      "index": 1,
+      "incident_angle": 0.2,
+      "tilt_angle": 0.4,
+      "sample_orientation": 1
+    },
+    {
+      "index": 2,
+      "incident_angle": 0.2,
+      "tilt_angle": 0.4,
+      "sample_orientation": 2
+    },
+    {
+      "index": 3,
+      "incident_angle": 0.2,
+      "tilt_angle": 0.4,
+      "sample_orientation": 5
+    },
+    {
+      "index": 4,
+      "incident_angle": 0.1,
+      "tilt_angle": -0.3,
+      "sample_orientation": 7
+    }
+  ]
+}

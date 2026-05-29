@@ -30,3 +30,12 @@ golden/datasets_multigeometry/**/*.npy
 !golden/datasets_multigeometry/**/out_*.npy
 golden/datasets_corrections/**/*.npy
 !golden/datasets_corrections/**/out_*.npy
+# Fiber/GI golden (M10.0 unit arrays, M10.1 FiberIntegrator): regenerate the
+# per-pixel inputs via golden/gen_golden_fiber.py / gen_golden_fiber_integrator.py.
+# datasets_fiber outputs use the out_*.npy naming (commit them, ignore the
+# sample_*.npy position inputs); datasets_fiber_integrator commits its small
+# integration-result arrays + .poni + manifest and ignores only the large input
+# image (data.npy).
+golden/datasets_fiber/**/*.npy
+!golden/datasets_fiber/**/out_*.npy
+golden/datasets_fiber_integrator/data.npy

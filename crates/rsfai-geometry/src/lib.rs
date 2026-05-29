@@ -14,6 +14,7 @@
 pub mod corners;
 pub mod corrections;
 pub mod error;
+pub mod fiber_units;
 pub mod poni;
 pub mod transform;
 pub mod units;
@@ -21,6 +22,9 @@ pub mod units;
 pub use corners::{corner_array_f32, delta_chi, delta_radial};
 pub use corrections::{polarization_array, solid_angle_array};
 pub use error::{GeometryError, Result};
+pub use fiber_units::{
+    fiber_center_array, fiber_center_value, fiber_equation, FiberSpace, GiParams,
+};
 pub use poni::PoniFile;
 pub use transform::{calc_pos_zyx, PosZyx};
 pub use units::{center_array, center_value, equation, unscaled_center_array, Space, Unit};
