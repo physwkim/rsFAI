@@ -1,0 +1,362 @@
+{
+  "dataset": "peaks",
+  "pyfai_version": "2026.5.0",
+  "numpy_version": "2.4.3",
+  "scipy_version": "1.17.1",
+  "platform": "Darwin-arm64",
+  "omp_num_threads": "1",
+  "label": {
+    "input": {
+      "file": "label_input.npy",
+      "shape": [
+        24,
+        28
+      ],
+      "dtype": "int8"
+    },
+    "cases": [
+      {
+        "file": "label_c8.npy",
+        "shape": [
+          24,
+          28
+        ],
+        "dtype": "int32",
+        "connectivity": "c8",
+        "n": 5
+      },
+      {
+        "file": "label_c4.npy",
+        "shape": [
+          24,
+          28
+        ],
+        "dtype": "int32",
+        "connectivity": "c4",
+        "n": 7
+      }
+    ]
+  },
+  "edt": {
+    "input": {
+      "file": "edt_input.npy",
+      "shape": [
+        20,
+        22
+      ],
+      "dtype": "int8"
+    },
+    "dist": {
+      "file": "edt_dist.npy",
+      "shape": [
+        20,
+        22
+      ],
+      "dtype": "float64"
+    },
+    "idx_row": {
+      "file": "edt_idx_row.npy",
+      "shape": [
+        20,
+        22
+      ],
+      "dtype": "int32"
+    },
+    "idx_col": {
+      "file": "edt_idx_col.npy",
+      "shape": [
+        20,
+        22
+      ],
+      "dtype": "int32"
+    }
+  },
+  "watershed": {
+    "image": {
+      "file": "ws_image.npy",
+      "shape": [
+        64,
+        64
+      ],
+      "dtype": "float32"
+    },
+    "labels": {
+      "file": "ws_labels.npy",
+      "shape": [
+        64,
+        64
+      ],
+      "dtype": "int32"
+    },
+    "borders": {
+      "file": "ws_borders.npy",
+      "shape": [
+        64,
+        64
+      ],
+      "dtype": "int32"
+    },
+    "n_regions": 5,
+    "peaks": [
+      {
+        "file": "ws_peaks_imin10_keep10_refine.npy",
+        "shape": [
+          5,
+          2
+        ],
+        "dtype": "float64",
+        "tag": "imin10_keep10_refine",
+        "config": {
+          "Imin": 10.0,
+          "keep": 10,
+          "refine": true,
+          "dmin": 0.0
+        }
+      },
+      {
+        "file": "ws_peaks_imin10_keep10_norefine.npy",
+        "shape": [
+          5,
+          2
+        ],
+        "dtype": "float64",
+        "tag": "imin10_keep10_norefine",
+        "config": {
+          "Imin": 10.0,
+          "keep": 10,
+          "refine": false,
+          "dmin": 0.0
+        }
+      },
+      {
+        "file": "ws_peaks_imin0_keep3_refine_dmin5.npy",
+        "shape": [
+          3,
+          2
+        ],
+        "dtype": "float64",
+        "tag": "imin0_keep3_refine_dmin5",
+        "config": {
+          "Imin": 1.0,
+          "keep": 3,
+          "refine": true,
+          "dmin": 5.0
+        }
+      }
+    ]
+  },
+  "blob": {
+    "dogs": {
+      "file": "blob_dogs.npy",
+      "shape": [
+        4,
+        128,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "mask": {
+      "file": "blob_mask.npy",
+      "shape": [
+        128,
+        128
+      ],
+      "dtype": "int8"
+    },
+    "refine": {
+      "file": "blob_refine_n3.npy",
+      "shape": [
+        5,
+        5
+      ],
+      "dtype": "float64",
+      "tag": "n3"
+    },
+    "localmax": [
+      {
+        "file": "blob_localmax_n3.npy",
+        "shape": [
+          5,
+          3
+        ],
+        "dtype": "int32",
+        "tag": "n3",
+        "n_5": false
+      },
+      {
+        "file": "blob_localmax_n5.npy",
+        "shape": [
+          2,
+          3
+        ],
+        "dtype": "int32",
+        "tag": "n5",
+        "n_5": true
+      }
+    ]
+  },
+  "ellipse": {
+    "cases": [
+      {
+        "tag": "a",
+        "pty": {
+          "file": "ellipse_a_pty.npy",
+          "shape": [
+            32
+          ],
+          "dtype": "float64"
+        },
+        "ptx": {
+          "file": "ellipse_a_ptx.npy",
+          "shape": [
+            32
+          ],
+          "dtype": "float64"
+        },
+        "design": {
+          "file": "ellipse_a_design.npy",
+          "shape": [
+            32,
+            6
+          ],
+          "dtype": "float64"
+        },
+        "params": {
+          "center_1": 49.99999999999386,
+          "center_2": 99.99999999998468,
+          "angle": 1.5707963267842513,
+          "half_long_axis": 19.999999999704826,
+          "half_short_axis": 10.000000000143118
+        }
+      },
+      {
+        "tag": "b",
+        "pty": {
+          "file": "ellipse_b_pty.npy",
+          "shape": [
+            32
+          ],
+          "dtype": "float64"
+        },
+        "ptx": {
+          "file": "ellipse_b_ptx.npy",
+          "shape": [
+            32
+          ],
+          "dtype": "float64"
+        },
+        "design": {
+          "file": "ellipse_b_design.npy",
+          "shape": [
+            32,
+            6
+          ],
+          "dtype": "float64"
+        },
+        "params": {
+          "center_1": 50.00000000000034,
+          "center_2": 100.00000000000347,
+          "angle": 3.141592653588159,
+          "half_long_axis": 19.999999999982446,
+          "half_short_axis": 10.000000000008896
+        }
+      },
+      {
+        "tag": "half_circle",
+        "pty": {
+          "file": "ellipse_half_circle_pty.npy",
+          "shape": [
+            10
+          ],
+          "dtype": "float64"
+        },
+        "ptx": {
+          "file": "ellipse_half_circle_ptx.npy",
+          "shape": [
+            10
+          ],
+          "dtype": "float64"
+        },
+        "design": {
+          "file": "ellipse_half_circle_design.npy",
+          "shape": [
+            10,
+            6
+          ],
+          "dtype": "float64"
+        },
+        "params": {
+          "center_1": 10.000000000000549,
+          "center_2": 9.999999999999993,
+          "angle": 0.007933611051694323,
+          "half_long_axis": 19.999999999999936,
+          "half_short_axis": 19.999999999999392
+        }
+      },
+      {
+        "tag": "quarter_circle",
+        "pty": {
+          "file": "ellipse_quarter_circle_pty.npy",
+          "shape": [
+            10
+          ],
+          "dtype": "float64"
+        },
+        "ptx": {
+          "file": "ellipse_quarter_circle_ptx.npy",
+          "shape": [
+            10
+          ],
+          "dtype": "float64"
+        },
+        "design": {
+          "file": "ellipse_quarter_circle_design.npy",
+          "shape": [
+            10,
+            6
+          ],
+          "dtype": "float64"
+        },
+        "params": {
+          "center_1": 10.000000000288273,
+          "center_2": 10.000000000282993,
+          "angle": 2.366093302790617,
+          "half_long_axis": 19.999999999830447,
+          "half_short_axis": 19.999999999593705
+        }
+      },
+      {
+        "tag": "real",
+        "pty": {
+          "file": "ellipse_real_pty.npy",
+          "shape": [
+            10
+          ],
+          "dtype": "float64"
+        },
+        "ptx": {
+          "file": "ellipse_real_ptx.npy",
+          "shape": [
+            10
+          ],
+          "dtype": "float64"
+        },
+        "design": {
+          "file": "ellipse_real_design.npy",
+          "shape": [
+            10,
+            6
+          ],
+          "dtype": "float64"
+        },
+        "params": {
+          "center_1": 0.06647097027174459,
+          "center_2": 0.05973925222786329,
+          "angle": 1.5046701256205326,
+          "half_long_axis": 0.007040259853475126,
+          "half_short_axis": 0.001320125902419408
+        }
+      }
+    ]
+  }
+}
