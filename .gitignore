@@ -55,3 +55,12 @@ golden/datasets_calibrant/**/*.h5
 # corrected image), the manifest, and the committed halfccd.spline (not .npy).
 golden/datasets_distortion/**/*.npy
 !golden/datasets_distortion/**/out_*.npy
+# Peak-finding golden (rsfai-peaks): every output is small (synthetic images
+# <= 128x128 and a handful of points / coordinate arrays) and offline-required,
+# so we COMMIT all the .npy arrays (inputs + outputs) and the manifest — the
+# verifier reloads the identical inputs pyFAI consumed. Only defensively ignore
+# detector-image / archive blobs that have no business in this tree (none are
+# generated today; the rule guards against an accidental large drop).
+golden/datasets_peaks/**/*.edf
+golden/datasets_peaks/**/*.cbf
+golden/datasets_peaks/**/*.h5
