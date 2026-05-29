@@ -1,0 +1,100 @@
+{
+  "dataset": "georef_noSpline_LaB6",
+  "pyfai_version": "2026.5.0",
+  "numpy_version": "2.4.3",
+  "scipy_version": "1.17.1",
+  "platform": "macOS-26.5-arm64-arm-64bit-Mach-O",
+  "omp_num_threads": "1",
+  "config": {
+    "pixel1": 1.5e-05,
+    "pixel2": 1.5e-05,
+    "wavelength": 1.54e-10,
+    "orientation": 3,
+    "npt": 51,
+    "n_rings": 6,
+    "fixed_param6": [
+      0.0702417541194065,
+      0.02680054783838907,
+      0.055151327149649314,
+      -0.2901966277633379,
+      0.037172576377420476,
+      0.0
+    ],
+    "chi2_fixed": 0.0633780957757482,
+    "converged_param6": [
+      0.08974985014884991,
+      0.030900592556684543,
+      0.027165661957303845,
+      -0.7048074556632914,
+      0.010620502229984579,
+      -6.878115426418315e-09
+    ],
+    "chi2_converged": 0.00018806742223256777,
+    "converged_param6_fix_rot3": [
+      0.0897498501142143,
+      0.03090059266225806,
+      0.027165662370378815,
+      -0.7048074511357216,
+      0.010620501426779843,
+      0.0
+    ],
+    "chi2_converged_fix_rot3": 0.000188067422194797
+  },
+  "arrays": {
+    "control_points": [
+      [
+        51,
+        3
+      ],
+      "float64"
+    ],
+    "fixed_param6": [
+      [
+        6
+      ],
+      "float64"
+    ],
+    "tth_measured": [
+      [
+        51
+      ],
+      "float64"
+    ],
+    "expected_2th": [
+      [
+        51
+      ],
+      "float64"
+    ],
+    "residual": [
+      [
+        51
+      ],
+      "float64"
+    ],
+    "calibrant_2th": [
+      [
+        25
+      ],
+      "float64"
+    ],
+    "calibrant_dspacing": [
+      [
+        25
+      ],
+      "float64"
+    ],
+    "converged_param6": [
+      [
+        6
+      ],
+      "float64"
+    ],
+    "converged_param6_fix_rot3": [
+      [
+        6
+      ],
+      "float64"
+    ]
+  }
+}
