@@ -179,15 +179,22 @@ pub fn local_max(dogs: &DogStack, mask: Option<&[bool]>, n_5: bool) -> Vec<(usiz
 }
 
 /// A refined blob keypoint (`refine_Hessian` output, `blob_detection.py:387`).
+///
+/// pyFAI computes the Hessian deltas in `float32` (numpy `float32` array ops with
+/// Python-float literal scalars stay `float32`), but the final positions
+/// `kpx + delta_x` promote to `float64` because `kpx` is an `int64` numpy array
+/// and `int64 + float32 -> float64`. The peak value `curr + 0.5 * (...)` is a
+/// pure `float32` array expression and stays `float32`. We mirror that exactly:
+/// positions are `f64`, `peak_val` is `f32`.
 #[derive(Debug, Clone, Copy)]
 pub struct RefinedKeypoint {
-    /// Sub-pixel x position (`kpx + delta_x`).
-    pub x: f32,
-    /// Sub-pixel y position (`kpy + delta_y`).
-    pub y: f32,
-    /// Sub-pixel scale (`kps + delta_s`).
-    pub sigma: f32,
-    /// Interpolated DoG peak value.
+    /// Sub-pixel x position (`kpx + delta_x`, `int64 + float32 -> float64`).
+    pub x: f64,
+    /// Sub-pixel y position (`kpy + delta_y`, `int64 + float32 -> float64`).
+    pub y: f64,
+    /// Sub-pixel scale (`kps + delta_s`, `int64 + float32 -> float64`).
+    pub sigma: f64,
+    /// Interpolated DoG peak value (pure `float32` expression).
     pub peak_val: f32,
     /// Validity: every offset `< TRESH`.
     pub valid: bool,
@@ -250,10 +257,14 @@ pub fn refine_hessian(dogs: &DogStack, kpx: usize, kpy: usize, kps: usize) -> Re
     let delta_x = -(ds * k20 + dy * k21 + dx * k22) / det;
     let peak_val = curr + 0.5 * (delta_s * ds + delta_y * dy + delta_x * dx);
     let valid = delta_x.abs() < TRESH && delta_y.abs() < TRESH && delta_s.abs() < TRESH;
+    // The deltas above are f32 (matching numpy float32 array arithmetic), but the
+    // positions promote to f64 because pyFAI adds an int64 keypoint-coordinate
+    // array to the float32 delta array (`kpx + delta_x`). Promote each delta to
+    // f64 only at the final sum so the f32 rounding of the delta is preserved.
     RefinedKeypoint {
-        x: kpx as f32 + delta_x,
-        y: kpy as f32 + delta_y,
-        sigma: kps as f32 + delta_s,
+        x: kpx as f64 + delta_x as f64,
+        y: kpy as f64 + delta_y as f64,
+        sigma: kps as f64 + delta_s as f64,
         peak_val,
         valid,
     }

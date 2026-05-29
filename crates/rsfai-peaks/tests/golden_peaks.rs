@@ -10,8 +10,10 @@
 //!     exact integer is correctly-rounded, so the distance is exact too).
 //!   * `InverseWatershed` int32 labels, uint8 borders, and `peaks_from_area`
 //!     coordinates (f32): **bit-exact** (deterministic hill-climb + algebra).
-//!   * blob DoG `local_max` voxel coords (int32) + `refine_Hessian` (f32):
-//!     **bit-exact** (pure comparison / `f32` algebra on the golden DoG stack).
+//!   * blob DoG `local_max` voxel coords (int32): **bit-exact**; `refine_Hessian`
+//!     positions (f64, `int64_kp + float32_delta`) and peak value (f32):
+//!     **bit-exact** (pure `f32` Hessian algebra on the golden DoG stack, the
+//!     positions promoting to f64 only at the final `kp + delta` add).
 //!   * ellipse `design` matrix (f64 products): **bit-exact**; the fitted
 //!     ellipse parameters: **Tier-B tolerance** (the LAPACK `eig`/`inv` vs
 //!     `nalgebra` divergence; the measured relative error is printed and
@@ -281,36 +283,52 @@ fn blob_matches_pyfai() {
     }
 
     // refine_Hessian on the n3 keypoints.
+    //
+    // The golden stores 5 columns per keypoint: [rx, ry, rs, peakval, valid] as
+    // float64. pyFAI's refine_Hessian computes the Hessian deltas in float32, so
+    // the positions are `int64_kp + float32_delta -> float64` (rx/ry/rs are
+    // genuinely f64) while peakval is a pure float32 expression widened to f64
+    // losslessly. So gate positions as f64 bit-exact and peakval by narrowing the
+    // stored f64 back to f32 and comparing f32 bit-exact. valid is 0.0/1.0.
     if let Some(refine_meta) = b.get("refine") {
         let coords = blob::local_max(&dogs, Some(&mask), false);
-        let mut got: Vec<f64> = Vec::new();
+        let mut got_pos: Vec<f64> = Vec::new();
+        let mut got_peak_f32: Vec<f32> = Vec::new();
+        let mut got_valid: Vec<f64> = Vec::new();
         for (s, y, x) in coords {
             let r = refine_hessian(&dogs, x, y, s);
-            got.extend_from_slice(&[
-                r.x as f64,
-                r.y as f64,
-                r.sigma as f64,
-                r.peak_val as f64,
-                if r.valid { 1.0 } else { 0.0 },
-            ]);
+            got_pos.extend_from_slice(&[r.x, r.y, r.sigma]);
+            got_peak_f32.push(r.peak_val);
+            got_valid.push(if r.valid { 1.0 } else { 0.0 });
         }
         let golden = f64v(refine_meta["file"].as_str().unwrap());
-        // The golden stored f32 refinement results promoted to f64; compare the
-        // f32 round-trip bit-for-bit by re-narrowing both sides.
-        let got_f32: Vec<f32> = got.iter().map(|&v| v as f32).collect();
-        let golden_f32: Vec<f32> = golden.iter().map(|&v| v as f32).collect();
-        let ok = got_f32.len() == golden_f32.len() && {
-            let r = compare_f32(&got_f32, &golden_f32);
-            r.is_bit_exact()
-        };
+        let n = golden.len() / 5;
+        // split the golden 5-tuples into positions (f64), peakval (narrow to f32),
+        // and valid (f64).
+        let mut gold_pos: Vec<f64> = Vec::with_capacity(n * 3);
+        let mut gold_peak_f32: Vec<f32> = Vec::with_capacity(n);
+        let mut gold_valid: Vec<f64> = Vec::with_capacity(n);
+        for c in golden.chunks_exact(5) {
+            gold_pos.extend_from_slice(&[c[0], c[1], c[2]]);
+            gold_peak_f32.push(c[3] as f32);
+            gold_valid.push(c[4]);
+        }
+
+        let len_ok = got_pos.len() == gold_pos.len();
+        let pos_cmp = compare_f64(&got_pos, &gold_pos);
+        let peak_cmp = compare_f32(&got_peak_f32, &gold_peak_f32);
+        let valid_ok = got_valid == gold_valid;
+        let ok = len_ok && pos_cmp.is_bit_exact() && peak_cmp.is_bit_exact() && valid_ok;
         if !ok {
             fails += 1;
         }
         eprintln!(
-            "blob refine_Hessian   {}  n={} (golden {})",
+            "blob refine_Hessian   {}  n={} (golden {})  pos_ulp={} peak_ulp={} valid_ok={valid_ok}",
             if ok { "BIT-EXACT" } else { "FAIL" },
-            got_f32.len() / 5,
-            golden_f32.len() / 5
+            got_pos.len() / 3,
+            n,
+            pos_cmp.max_ulp,
+            peak_cmp.max_ulp,
         );
     }
     assert_eq!(fails, 0, "{fails} blob field(s) failed bit-exactness");
