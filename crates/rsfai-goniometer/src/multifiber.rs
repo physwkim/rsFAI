@@ -34,7 +34,8 @@
 //! mirrors [`rsfai_fiber`], whose `Integrate*FiberResult` carry no variance.
 
 use rsfai::{Corrections, IntegrationOptions};
-use rsfai_fiber::{FiberAxes, FiberIntegrator};
+use rsfai_fiber::{FiberAxes, FiberIntegrator, FiberUnit};
+use rsfai_geometry::fiber_center_array;
 
 /// `numpy.finfo("float32").tiny` — the smallest positive normal f32 — as the f64
 /// the normalization clamp uses. `numpy.maximum(normalization, tiny)` upcasts
@@ -125,6 +126,61 @@ impl MultiGeometryFiber {
         pixel1 * pixel2 / dist.powi(2)
     }
 
+    /// The per-frame scaled fiber-position array for `unit`, i.e. the value
+    /// pyFAI's `Geometry.array_from_unit(unit=..., scale=True)` returns for
+    /// frame `i`. Used to guess the common integration range.
+    fn unit_array(&self, i: usize, unit: FiberUnit) -> Vec<f64> {
+        let fi = &self.fis[i];
+        let pos = fi.ai.pixel_positions();
+        fiber_center_array(
+            unit.space,
+            unit.scale,
+            &pos.x,
+            &pos.y,
+            &pos.z,
+            fi.ai.wavelength,
+            fi.gi,
+        )
+    }
+
+    /// The common `(min, max)` range, in the scaled unit, over every frame's
+    /// position array for `unit`. pyFAI's `_guess_inplane_range` /
+    /// `_guess_outofplane_range`: `ip = array([fi.array_from_unit(unit) for fi in
+    /// fis]); (ip.min(), ip.max())`. The min/max is over the concatenation of all
+    /// frames' arrays; reduction order does not affect the extrema.
+    fn guess_range(&self, unit: FiberUnit) -> (f64, f64) {
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for i in 0..self.fis.len() {
+            for v in self.unit_array(i, unit) {
+                if v < lo {
+                    lo = v;
+                }
+                if v > hi {
+                    hi = v;
+                }
+            }
+        }
+        (lo, hi)
+    }
+
+    /// Resolve the per-call axes: pyFAI computes **one** common ip/oop range
+    /// across all frames *once* (when the stored range is `None`) and passes that
+    /// fixed range to every frame's `integrate*_fiber`. Without this each frame
+    /// would guess its own data range, so frames with different detector PONI
+    /// geometry would bin onto different edges and the cross-frame `+=` would mix
+    /// incompatible bins. Returns axes with `ip_range`/`oop_range` filled.
+    fn resolved_axes(&self) -> FiberAxes {
+        let mut axes = self.axes;
+        if axes.ip_range.is_none() {
+            axes.ip_range = Some(self.guess_range(axes.unit_ip));
+        }
+        if axes.oop_range.is_none() {
+            axes.oop_range = Some(self.guess_range(axes.unit_oop));
+        }
+        axes
+    }
+
     /// Combine the geometries into a 2D fiber map, `MultiGeometryFiber.integrate2d_fiber`.
     ///
     /// Each `lst_data[i]` is the detector image for geometry `i`; `opts`/`corr`
@@ -157,8 +213,10 @@ impl MultiGeometryFiber {
         let mut inplane = Vec::new();
         let mut outofplane = Vec::new();
 
+        // One common range across all frames, then the same range for each frame.
+        let axes = self.resolved_axes();
         for (i, data) in lst_data.iter().enumerate() {
-            let res = self.fis[i].integrate2d_fiber(data, &self.axes, opts, corr);
+            let res = self.fis[i].integrate2d_fiber(data, &axes, opts, corr);
             let sac = self.sac(i, opts.correct_solid_angle);
             for k in 0..n {
                 count[k] += res.count[k];
@@ -214,9 +272,10 @@ impl MultiGeometryFiber {
         let mut count = vec![0.0_f64; nout];
         let mut axis = Vec::new();
 
+        // One common range across all frames, then the same range for each frame.
+        let axes = self.resolved_axes();
         for (i, data) in lst_data.iter().enumerate() {
-            let res =
-                self.fis[i].integrate_fiber(data, &self.axes, vertical_integration, opts, corr);
+            let res = self.fis[i].integrate_fiber(data, &axes, vertical_integration, opts, corr);
             let sac = self.sac(i, opts.correct_solid_angle);
             for k in 0..nout {
                 count[k] += res.count[k];
