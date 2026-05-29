@@ -22,3 +22,11 @@ golden/datasets/**/*.npy
 golden/datasets/**/*.edf
 golden/datasets/**/*.cbf
 golden/datasets/**/*.h5
+# Same convention for the MultiGeometry (M9.1) and Corrections (M9.0) golden
+# trees: regenerate the per-pixel inputs (images, mask, flat, ...) via
+# golden/gen_golden_multigeometry.py / gen_golden_corrections.py; commit only the
+# out_*.npy curves, the manifests, the .poni, and inputs.json (not an .npy).
+golden/datasets_multigeometry/**/*.npy
+!golden/datasets_multigeometry/**/out_*.npy
+golden/datasets_corrections/**/*.npy
+!golden/datasets_corrections/**/out_*.npy

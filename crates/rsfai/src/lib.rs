@@ -160,6 +160,115 @@ impl Default for IntegrationOptions {
     }
 }
 
+/// Per-frame corrections + normalization for
+/// [`AzimuthalIntegrator::integrate1d_with`] / [`AzimuthalIntegrator::integrate2d_with`],
+/// mirroring the per-call `dark`/`flat`/`mask`/`variance`/`normalization_factor`
+/// pyFAI's `integrate1d_ng` accepts and that `MultiGeometry` passes per geometry.
+/// Arrays, when present, are the flat row-major detector frame.
+///
+/// `mask` follows pyFAI's `create_mask`: **when supplied it replaces the detector
+/// mask** (it does not OR with it); `None` uses the detector gap mask.
+/// `normalization_factor` is carried as **f64** and cast to f32 only at the preproc
+/// boundary — exactly like pyFAI's `floating normalization_factor` parameter
+/// receiving a Python float — so a solid-angle-scaled monitor (`pixel1*pixel2/dist²`,
+/// f64) reaches preproc bit-identically.
+#[derive(Debug, Clone, Copy)]
+pub struct Corrections<'a> {
+    /// Dark current subtracted from the signal (`data - dark`).
+    pub dark: Option<&'a [f32]>,
+    /// Flat field (multiplies the normalization).
+    pub flat: Option<&'a [f32]>,
+    /// User mask (nonzero ⇒ bad); replaces the detector mask when `Some`.
+    pub mask: Option<&'a [i8]>,
+    /// Per-pixel variance, for the VARIANCE error model.
+    pub variance: Option<&'a [f32]>,
+    /// Denominator seed (pyFAI's `normalization_factor`); cast to f32 at preproc.
+    pub normalization_factor: f64,
+}
+
+impl<'a> Corrections<'a> {
+    /// Corrections carrying only a normalization factor (no dark/flat/mask/variance)
+    /// — the shape the bare [`AzimuthalIntegrator::integrate1d`] wrapper builds.
+    pub fn with_normalization(normalization_factor: f64) -> Self {
+        Corrections {
+            dark: None,
+            flat: None,
+            mask: None,
+            variance: None,
+            normalization_factor,
+        }
+    }
+}
+
+/// The per-pixel variance route preproc takes, resolved once per integrate by
+/// [`resolve_variance`] (pyFAI's `_normalize_error_model_variance`): either the
+/// engine's own poisson (`poissonian = true`, no slice) or an explicit per-pixel
+/// `variance` (`poissonian = false`) — the caller's array, or the precomputed
+/// `max(data,1)[+max(dark,0)]` for an engine that cannot manage variance itself.
+struct ResolvedVariance {
+    poissonian: bool,
+    variance: Option<Vec<f32>>,
+}
+
+/// pyFAI `IntegrationMethod.manage_variance` for the cython engines: whether the
+/// reduce kernel computes the error model itself (so poisson stays poisson and
+/// preproc emits `max(data,1)`) or needs a precomputed per-pixel variance fed in
+/// as VARIANCE. Every 1D engine manages it; in 2D only the `bbox`/`no` CSR and
+/// `bbox` LUT engines do **not** (verified against pyFAI's registry —
+/// `_does_manage_variance`, which checks the engine for a `poissonian`/
+/// `error_model` parameter).
+fn manage_variance(method: Method, dim: u8) -> bool {
+    if dim == 1 {
+        return true;
+    }
+    !matches!(
+        (method.split, method.algo),
+        (Split::Bbox, Algo::Csr) | (Split::Bbox, Algo::Lut) | (Split::No, Algo::Csr)
+    )
+}
+
+/// pyFAI `_normalize_error_model_variance` (`integrator/common.py:385`): pick the
+/// per-pixel variance route preproc will take. An explicit `variance` wins (pyFAI
+/// forces the VARIANCE model). Otherwise, for a poisson error model on an engine
+/// that does **not** manage variance (`!manage_variance`), precompute the per-pixel
+/// variance as `max(data,1)`, augmented by `max(dark,0)` when a dark frame is
+/// subtracted — exactly the array pyFAI feeds the engine as VARIANCE. A
+/// `manage_variance` engine keeps poisson, letting preproc emit `max(data,1)` with
+/// no dark term (`preproc.pyx:309`). f32 throughout, matching numpy's
+/// `(maximum(data,1)+maximum(dark,0)).astype(float32)`.
+fn resolve_variance(
+    data: &[f32],
+    dark: Option<&[f32]>,
+    explicit: Option<&[f32]>,
+    em: ErrorModel,
+    manage_variance: bool,
+) -> ResolvedVariance {
+    if let Some(v) = explicit {
+        return ResolvedVariance {
+            poissonian: false,
+            variance: Some(v.to_vec()),
+        };
+    }
+    if em.poissonian() && !manage_variance {
+        let variance = match dark {
+            Some(d) => data
+                .iter()
+                .zip(d)
+                .map(|(&x, &dk)| x.max(1.0) + dk.max(0.0))
+                .collect(),
+            None => data.iter().map(|&x| x.max(1.0)).collect(),
+        };
+        return ResolvedVariance {
+            poissonian: false,
+            variance: Some(variance),
+        };
+    }
+    ResolvedVariance {
+        poissonian: em.poissonian(),
+        variance: None,
+    }
+}
+
 /// Port of `Geometry.normalize_azimuth_range` (`geometry/core.py`): convert a
 /// `(lo, hi)` azimuth range from **degrees** to radians in the `chiDiscAtPi`
 /// (discontinuity at π — pyFAI's default) frame, wrapping the upper bound by
@@ -323,6 +432,17 @@ impl AzimuthalIntegrator {
         )
     }
 
+    /// The **scaled** per-pixel center array for `unit` (pyFAI's
+    /// `array_from_unit(unit)` / `center_array(scale=True)`), flat row-major over
+    /// the detector. Radial spaces (q/2θ/r) carry `unit.scale`; chi is in the
+    /// unit's angular scale (CHI_DEG → degrees, CHI_RAD → radians). Used by
+    /// `MultiGeometry` to guess the common radial/azimuth range across geometries
+    /// (`min`/`max` over the concatenation, order-independent ⇒ bit-exact).
+    pub fn array_from_unit(&self, unit: Unit) -> Vec<f64> {
+        let pos = self.pixel_positions();
+        center_array(unit, &pos.x, &pos.y, &pos.z, self.wavelength)
+    }
+
     /// The f32 `(npix, 4, 2)` corner array (radial in `unit.space` + chi) the
     /// bbox/full splits bin on: `corner_array_f32` over the corner-grid lab
     /// coords (`calc_pos_zyx` over `detector.corner_positions_f64`). `chiDiscAtPi
@@ -373,12 +493,14 @@ impl AzimuthalIntegrator {
     /// applying the same corrections / mask / dummy pyFAI feeds to preproc.
     /// `data` is the image already cast to f32 (preproc's `data_t`); `pos`
     /// supplies the lab coordinates the polarization correction needs.
-    fn preproc_rows(
+    fn preproc_rows_with(
         &self,
         data: &[f32],
         pos: &PosZyx,
         mask: Option<&[i8]>,
         opts: &IntegrationOptions,
+        corr: &Corrections,
+        rv: &ResolvedVariance,
     ) -> Vec<f32> {
         // solid angle (f64) cast to f32, matching pyFAI's preproc input dtype.
         let solidangle: Option<Vec<f32>> = opts.correct_solid_angle.then(|| {
@@ -399,11 +521,20 @@ impl AzimuthalIntegrator {
         let (dummy, delta_dummy) = self.detector.get_dummies();
 
         let popt = PreprocOptions {
+            dark: corr.dark,
+            flat: corr.flat,
             solidangle: solidangle.as_deref(),
             polarization: polarization.as_deref(),
             mask,
-            normalization_factor: opts.normalization_factor,
-            poissonian: opts.error_model.poissonian(),
+            // The per-pixel variance route is resolved once per integrate by
+            // pyFAI's `_normalize_error_model_variance` (see [`resolve_variance`]):
+            // either the engine's own poisson (`poissonian`, no slice) or an
+            // explicit/precomputed per-pixel `variance`.
+            variance: rv.variance.as_deref(),
+            // pyFAI's `floating normalization_factor` receives the (f64) monitor and
+            // casts it to f32 for the f32-image preproc path; mirror that cast.
+            normalization_factor: corr.normalization_factor as f32,
+            poissonian: rv.poissonian,
             check_dummy: dummy.is_some(),
             dummy: dummy.unwrap_or(0.0),
             delta_dummy: delta_dummy.unwrap_or(0.0),
@@ -428,6 +559,21 @@ impl AzimuthalIntegrator {
         unit: Unit,
         opts: &IntegrationOptions,
     ) -> Integrate1dResult {
+        let corr = Corrections::with_normalization(opts.normalization_factor as f64);
+        self.integrate1d_with(image, npt, unit, opts, &corr)
+    }
+
+    /// Like [`integrate1d`](Self::integrate1d) but with per-frame `dark`/`flat`/
+    /// `mask`/`variance` corrections and an f64 `normalization_factor`
+    /// ([`Corrections`]). This is the entry `MultiGeometry` drives per geometry.
+    pub fn integrate1d_with(
+        &self,
+        image: &[f32],
+        npt: usize,
+        unit: Unit,
+        opts: &IntegrationOptions,
+        corr: &Corrections,
+    ) -> Integrate1dResult {
         assert_eq!(
             image.len(),
             self.detector.size(),
@@ -436,9 +582,26 @@ impl AzimuthalIntegrator {
             self.detector.size()
         );
         let pos = self.pixel_positions();
+        // pyFAI `create_mask`: a supplied user mask *replaces* the detector mask;
+        // `None` falls back to the detector gap mask.
+        let base_mask_storage: Option<Vec<i8>> = match corr.mask {
+            Some(user) => Some(user.to_vec()),
+            None => self.build_mask(),
+        };
+        let base_mask: Option<&[i8]> = base_mask_storage.as_deref();
+        let pos = &pos;
         let radial = unscaled_center_array(unit.space, &pos.x, &pos.y, &pos.z, self.wavelength);
-        let mask = self.build_mask();
         let em = opts.error_model;
+        // Resolve the per-pixel variance route once (pyFAI's
+        // `_normalize_error_model_variance`); every 1D engine manages variance, so a
+        // poisson model keeps `poissonian` and preproc emits `max(data,1)`.
+        let rv = resolve_variance(
+            image,
+            corr.dark,
+            corr.variance,
+            em,
+            manage_variance(opts.method, 1),
+        );
         // `radial_range` is given in the scaled unit; binning is on the unscaled
         // radial, so divide each endpoint by `unit.scale` (pyFAI's
         // `_normalize_range`). `None` keeps the full data range.
@@ -457,9 +620,9 @@ impl AzimuthalIntegrator {
         // which pyFAI's `histogram1d_engine` cannot take per-pixel, so it is folded
         // into the preproc mask (`chi > chi_max | chi < chi_min`, radian center).
         if opts.method.split == Split::No && opts.method.algo == Algo::Histogram {
-            let chi_mask = pos1_range.map(|(lo, hi)| self.chi_mask(&pos, mask.as_deref(), lo, hi));
-            let m = chi_mask.as_deref().or(mask.as_deref());
-            let prep = self.preproc_rows(image, &pos, m, opts);
+            let chi_mask = pos1_range.map(|(lo, hi)| self.chi_mask(pos, base_mask, lo, hi));
+            let m = chi_mask.as_deref().or(base_mask);
+            let prep = self.preproc_rows_with(image, pos, m, opts, corr, &rv);
             let h = histogram1d(&radial, &prep, npt, pos0_range, em, 0.0);
             return histogram_to_result(h, unit.scale);
         }
@@ -471,8 +634,8 @@ impl AzimuthalIntegrator {
         // non-negative ⇒ `allow_pos0_neg = false`. The 1D full-split build is not
         // handed chiDiscAtPi / pos1_period (common.py does not forward them), so
         // they take the defaults true / 2π.
-        let prep = self.preproc_rows(image, &pos, mask.as_deref(), opts);
-        let mask_ref = mask.as_deref();
+        let prep = self.preproc_rows_with(image, pos, base_mask, opts, corr, &rv);
+        let mask_ref = base_mask;
         let allow_neg = false;
         // Per-pixel chi center, threaded into the bbox builders only when an
         // azimuth_range is set (pyFAI passes pos1/delta_pos1 then).
@@ -578,6 +741,22 @@ impl AzimuthalIntegrator {
         unit: Unit,
         opts: &IntegrationOptions,
     ) -> Integrate2dResult {
+        let corr = Corrections::with_normalization(opts.normalization_factor as f64);
+        self.integrate2d_with(image, npt_rad, npt_azim, unit, opts, &corr)
+    }
+
+    /// Like [`integrate2d`](Self::integrate2d) but with per-frame `dark`/`flat`/
+    /// `mask`/`variance` corrections and an f64 `normalization_factor`
+    /// ([`Corrections`]). This is the entry `MultiGeometry` drives per geometry.
+    pub fn integrate2d_with(
+        &self,
+        image: &[f32],
+        npt_rad: usize,
+        npt_azim: usize,
+        unit: Unit,
+        opts: &IntegrationOptions,
+        corr: &Corrections,
+    ) -> Integrate2dResult {
         assert_eq!(
             image.len(),
             self.detector.size(),
@@ -586,14 +765,32 @@ impl AzimuthalIntegrator {
             self.detector.size()
         );
         let pos = self.pixel_positions();
+        // pyFAI `create_mask`: a supplied user mask *replaces* the detector mask;
+        // `None` falls back to the detector gap mask.
+        let base_mask_storage: Option<Vec<i8>> = match corr.mask {
+            Some(user) => Some(user.to_vec()),
+            None => self.build_mask(),
+        };
+        let base_mask: Option<&[i8]> = base_mask_storage.as_deref();
+        let pos = &pos;
         // Bin on the unscaled internal radial (pos0) and the unscaled chi in
         // radians (pos1; `CHI_RAD.scale == 1`); the reported axes scale once —
         // radial × `unit.scale`, azimuth × `CHI_DEG.scale` (degrees).
         let radial = unscaled_center_array(unit.space, &pos.x, &pos.y, &pos.z, self.wavelength);
         let azimuthal = center_array(Unit::CHI_RAD, &pos.x, &pos.y, &pos.z, self.wavelength);
-        let mask = self.build_mask();
-        let prep = self.preproc_rows(image, &pos, mask.as_deref(), opts);
         let em = opts.error_model;
+        // Resolve the per-pixel variance route once (pyFAI's
+        // `_normalize_error_model_variance`): the 2D `bbox`/`no` CSR and `bbox` LUT
+        // engines do not manage variance, so a poisson model is precomputed to
+        // `max(data,1)+max(dark,0)` and fed as VARIANCE rather than left to preproc.
+        let rv = resolve_variance(
+            image,
+            corr.dark,
+            corr.variance,
+            em,
+            manage_variance(opts.method, 2),
+        );
+        let prep = self.preproc_rows_with(image, pos, base_mask, opts, corr, &rv);
         let bins = (npt_rad, npt_azim);
         // `radial_range` is the scaled-unit radial; binning is on the unscaled
         // radial, so divide by `unit.scale` (pyFAI's `_normalize_range`).
@@ -620,7 +817,7 @@ impl AzimuthalIntegrator {
                 pos1_period: AZIMUTH_PERIOD_DEG,
                 empty: 0.0,
             };
-            let h = histogram2d(&radial, &azimuthal, &prep, mask.as_deref(), &hopts);
+            let h = histogram2d(&radial, &azimuthal, &prep, base_mask, &hopts);
             return integrate2d_to_result(h, unit.scale);
         }
 
@@ -628,7 +825,7 @@ impl AzimuthalIntegrator {
         // chiDiscAtPi = true, pos1_period = CHI_DEG.period (= 360), allow_pos0_neg
         // = false (radial units are non-negative) — the 2D `Bbox2dBounds` pyFAI's
         // common.py forwards.
-        let mask_ref = mask.as_deref();
+        let mask_ref = base_mask;
         let bounds = Bbox2dBounds {
             allow_pos0_neg: false,
             chi_disc_at_pi: true,

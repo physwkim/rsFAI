@@ -1,0 +1,161 @@
+{
+  "dataset": "Pilatus1M__no-csr-cython__q_nmm1__dim2__errpoisson__corr",
+  "pyfai_version": "2026.5.0",
+  "numpy_version": "2.4.3",
+  "platform": "macOS-26.5-arm64-arm-64bit-Mach-O",
+  "omp_num_threads": "1",
+  "config": {
+    "dim": 2,
+    "npt_rad": 1000,
+    "npt_azim": 360,
+    "azim_scale": 57.29577951308232,
+    "pos1_period": 360.0,
+    "chi_disc_at_pi": true,
+    "unit": "q_nm^-1",
+    "unit_scale": 1.0,
+    "method": [
+      "no",
+      "csr",
+      "cython"
+    ],
+    "error_model": "poisson",
+    "error_model_code": 2,
+    "manage_variance": false,
+    "correct_solid_angle": true,
+    "polarization_factor": null,
+    "normalization_factor": 3.1866328096364306e-08,
+    "monitor": 2.7,
+    "has_dark": true,
+    "has_flat": true,
+    "has_user_mask": true,
+    "has_variance": false,
+    "radial_range": null,
+    "azimuth_range": null,
+    "dummy": -2.0,
+    "delta_dummy": 1.5
+  },
+  "geometry": {
+    "dist": 1.58323111834,
+    "poni1": 0.0334170169115,
+    "poni2": 0.0412277798782,
+    "rot1": 0.00648735642526,
+    "rot2": 0.00755810191106,
+    "rot3": 4.12987220385e-08,
+    "wavelength": 1e-10
+  },
+  "detector": {
+    "name": "Pilatus 1M",
+    "pixel1": 0.000172,
+    "pixel2": 0.000172,
+    "shape": [
+      1043,
+      981
+    ],
+    "orientation": 3
+  },
+  "arrays": {
+    "image": {
+      "dtype": "int32",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "dark": {
+      "dtype": "float32",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "flat": {
+      "dtype": "float32",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "user_mask": {
+      "dtype": "int8",
+      "shape": [
+        1043,
+        981
+      ]
+    },
+    "out_radial": {
+      "dtype": "float64",
+      "shape": [
+        1000
+      ]
+    },
+    "out_azimuthal": {
+      "dtype": "float64",
+      "shape": [
+        360
+      ]
+    },
+    "out_intensity": {
+      "dtype": "float32",
+      "shape": [
+        360,
+        1000
+      ]
+    },
+    "out_sigma": {
+      "dtype": "float32",
+      "shape": [
+        360,
+        1000
+      ]
+    },
+    "out_count": {
+      "dtype": "float64",
+      "shape": [
+        360,
+        1000
+      ]
+    },
+    "out_sum_signal": {
+      "dtype": "float64",
+      "shape": [
+        360,
+        1000
+      ]
+    },
+    "out_sum_variance": {
+      "dtype": "float64",
+      "shape": [
+        360,
+        1000
+      ]
+    },
+    "out_sum_normalization": {
+      "dtype": "float64",
+      "shape": [
+        360,
+        1000
+      ]
+    },
+    "out_sum_normalization2": {
+      "dtype": "float64",
+      "shape": [
+        360,
+        1000
+      ]
+    },
+    "out_std": {
+      "dtype": "float32",
+      "shape": [
+        360,
+        1000
+      ]
+    },
+    "out_sem": {
+      "dtype": "float32",
+      "shape": [
+        360,
+        1000
+      ]
+    }
+  }
+}
