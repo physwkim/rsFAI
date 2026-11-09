@@ -6,10 +6,11 @@
 //!     reachable from a start pixel. Drives the inverse-watershed labelling.
 //!   * [`Bilinear::local_maxi`] (`local_maxi`, `bilinear.pxi:147`): sub-pixel
 //!     refinement via a second-order Taylor expansion of the discrete maximum,
-//!     falling back to a 3x3 centre-of-mass. Returns `(y, x)` as `f32`.
+//!     falling back to a 3x3 centre-of-mass. Returns `(y, x)` as `f64`.
 //!
 //! All arithmetic is `f32`, matching the Cython `float` storage and operations,
-//! so the refined coordinates are reproducible bit-for-bit.
+//! so the refined coordinates are reproducible bit-for-bit; they leave as the
+//! Python floats Cython returns (`delta0 + float(current0)` adds in double).
 
 /// A 2-D `f32` image wrapped so peaks can be located like a continuous function.
 pub struct Bilinear<'a> {
@@ -75,8 +76,8 @@ impl<'a> Bilinear<'a> {
     /// `(y, x)` integer-ish seed; the value is rounded to the nearest pixel,
     /// hill-climbed, then refined by a second-order Taylor expansion (or a 3x3
     /// centre of mass when the Hessian is singular / the step exceeds one
-    /// pixel). Returns the refined `(y, x)` as `f32`.
-    pub fn local_maxi(&self, x: (f32, f32)) -> (f32, f32) {
+    /// pixel). Returns the refined `(y, x)`.
+    pub fn local_maxi(&self, x: (f32, f32)) -> (f64, f64) {
         // round(x[0]) * width + round(x[1]); Cython `round` on a Python float
         // is banker's rounding, but here the inputs are the integer peak coords
         // produced by the watershed, so round-half is never exercised. Match
@@ -103,9 +104,10 @@ impl<'a> Bilinear<'a> {
             let a12 = self.at(c0, c1 + 1);
             let a20 = self.at(c0 + 1, c1 - 1);
             let a21 = self.at(c0 + 1, c1);
-            // NOTE: pyFAI uses `a22 = self.data[current0 + 1, current1 - 1]`
+            // NOTE: pyFAI 2026.5.0 uses `a22 = self.data[current0 + 1, current1 - 1]`
             // (a copy of a20, an upstream quirk at bilinear.pxi:182). Reproduce
-            // it verbatim so the refinement matches bit-for-bit.
+            // it verbatim so the refinement matches bit-for-bit. 2026.9.0 fixes
+            // it and swaps d00/d11, so its peaks differ by up to ~0.05 px.
             let a22 = self.at(c0 + 1, c1 - 1);
             // pyFAI's Cython stores these as C `float` but the RHS expressions
             // contain `double` literals (2.0, 4.0), so each is evaluated under
@@ -124,7 +126,10 @@ impl<'a> Bilinear<'a> {
                 let delta0 = ((a12 - a10) * d01 + (a01 - a21) * d11) / denom;
                 let delta1 = ((a10 - a12) * d00 + (a21 - a01) * d01) / denom;
                 if delta0.abs() <= 1.0 && delta1.abs() <= 1.0 {
-                    return (delta0 + current0 as f32, delta1 + current1 as f32);
+                    return (
+                        f64::from(delta0) + current0 as f64,
+                        f64::from(delta1) + current1 as f64,
+                    );
                 }
             }
             // centre-of-mass fallback over the 3x3 patch.
@@ -140,17 +145,17 @@ impl<'a> Bilinear<'a> {
                 }
             }
             if sum > 0.0 {
-                return (sum0 / sum, sum1 / sum);
+                return (f64::from(sum0 / sum), f64::from(sum1 / sum));
             }
         }
-        (current0 as f32, current1 as f32)
+        (current0 as f64, current1 as f64)
     }
 }
 
 /// Round half to even (Python 3 / numpy convention), in f64 to match CPython's
 /// `round` on the float coordinates pyFAI passes in.
 #[inline]
-fn round_half_even(x: f64) -> f64 {
+pub(crate) fn round_half_even(x: f64) -> f64 {
     let r = x.round(); // round half away from zero
     if (x - x.trunc()).abs() == 0.5 {
         // exactly halfway: pick the even neighbour

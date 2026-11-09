@@ -308,7 +308,8 @@ impl InverseWatershed {
         if refine {
             let bilinear = Bilinear::new(&self.data, self.height, self.width);
             for p in output_points.iter_mut() {
-                *p = bilinear.local_maxi(*p);
+                let (y, x) = bilinear.local_maxi(*p);
+                *p = (y as f32, x as f32);
             }
         }
 

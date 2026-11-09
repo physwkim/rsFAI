@@ -8,6 +8,8 @@
 //!     building blocks `pyFAI.massif.Massif` uses.
 //!   * [`bilinear`] — the `Bilinear` peak interpolator (discrete hill-climb +
 //!     sub-pixel Taylor refinement) shared by the watershed and Massif.
+//!   * [`massif`] — `Massif` peak picking inside an area (Dioptas's ring
+//!     search).
 //!   * [`watershed`] — `InverseWatershed`: label every pixel to its catchment
 //!     peak, build regions, and extract peak coordinates.
 //!   * [`blob`] — Difference-of-Gaussian keypoint detection + Hessian refinement.
@@ -19,10 +21,12 @@ pub mod bilinear;
 pub mod blob;
 pub mod ellipse;
 pub mod label;
+pub mod massif;
 pub mod watershed;
 
 pub use bilinear::Bilinear;
 pub use blob::{local_max, refine_hessian, DogStack, RefinedKeypoint, TRESH};
 pub use ellipse::{design_matrix, fit_ellipse, Ellipse, EllipseError};
 pub use label::{distance_transform_edt, label, EdtResult, Structure};
+pub use massif::{Massif, OffImage};
 pub use watershed::{InverseWatershed, Region};
