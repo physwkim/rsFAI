@@ -175,15 +175,14 @@ fn fit_ellipse_inner(pty: &[f64], ptx: &[f64], allow_delta: bool) -> Result<Elli
     }
     let mut res1 = a2.sqrt();
     let mut res2 = b2.sqrt();
-    let angle;
-    if a == c {
-        angle = 0.0;
+    let angle = if a == c {
+        0.0
     } else if res2 > res1 {
         std::mem::swap(&mut res1, &mut res2);
-        angle = 0.5 * (std::f64::consts::PI + (2.0 * b).atan2(a - c));
+        0.5 * (std::f64::consts::PI + (2.0 * b).atan2(a - c))
     } else {
-        angle = 0.5 * (std::f64::consts::PI + (2.0 * b).atan2(a - c));
-    }
+        0.5 * (std::f64::consts::PI + (2.0 * b).atan2(a - c))
+    };
     Ok(Ellipse {
         center_1: y0,
         center_2: x0,
