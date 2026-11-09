@@ -7,12 +7,12 @@
 //!   1. `ttha` — the per-pixel internal 2θ array `calcfrom1d` interpolates onto
 //!      (arctan2/sqrt over pixel positions). BIT-EXACT vs pyFAI's `center_array`.
 //!   2. `numpy_interp` driven on pyFAI's OWN `ttha` — the pure-f64 interpolation.
-//!      BIT-EXACT: numpy's `compiled_base.c` contracts `slope*(x-xp)+fp` to a
-//!      hardware FMA, which the port matches via `f64::mul_add` (separate
-//!      rounded mul+add diverges by 1 ULP on ~2% of interior points). Isolating
-//!      the interp on identical inputs proves item 3's parity is not luck.
+//!      BIT-EXACT: `slope*(x-xp)+fp` is fused on aarch64 numpy and not on
+//!      x86-64 numpy, and the port follows the target (the two differ by 1 ULP
+//!      on ~2% of interior points). Isolating the interp on identical inputs
+//!      proves item 3's parity is not luck.
 //!   3. `calcfrom1d` end-to-end (4 variants: solid-angle on/off, masked,
-//!      flat+dark) — BIT-EXACT: bit-exact `ttha` (1) + bit-exact FMA interp (2)
+//!      flat+dark) — BIT-EXACT: bit-exact `ttha` (1) + bit-exact interp (2)
 //!      + f64 solid-angle / flat / dark / mask, none of which numpy fuses.
 //!   4. `fake_xrpdp` radial axis (a `linspace`): BIT-EXACT. Its intensity column
 //!      (numexpr Gaussian `exp` + Bragg-2θ `asin`) and `fake_calibration_image`
@@ -135,9 +135,9 @@ fn calcfrom_matches_pyfai_golden() {
     );
 
     // ---- 2. numpy_interp on pyFAI's OWN ttha (bit-exact: isolates the algebra)
-    // Identical x/xp/fp ⇒ the FMA-contracted interp must agree bitwise, so item
+    // Identical x/xp/fp ⇒ the interp must agree bitwise, so item
     // 3's parity is wholly the algebra, not an accidental geometry cancellation.
-    eprintln!("=== numpy_interp on pyFAI ttha (bit-exact: isolates the FMA interp) ===");
+    eprintln!("=== numpy_interp on pyFAI ttha (bit-exact: isolates the interp) ===");
     let ttha_py = load_f64("calcfrom1d__ttha.npy");
     let tth_internal: Vec<f64> = tth.iter().map(|&t| t / u.scale).collect();
     let interp_rs: Vec<f64> = ttha_py

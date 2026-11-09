@@ -1038,8 +1038,8 @@ impl AzimuthalIntegrator {
     /// stays f64 — pyFAI's `calcfrom1d` never casts to f32 — so the result is
     /// bit-exact vs pyFAI: the internally-computed `ttha` (per-pixel 2θ from
     /// [`unscaled_center_array`]) matches pyFAI's `center_array` bitwise, the
-    /// [`numpy_interp`] step reproduces `numpy.interp`'s FMA-contracted formula
-    /// bitwise (see its docs), and the solid-angle / flat / dark / mask steps are
+    /// [`numpy_interp`] step reproduces `numpy.interp`'s rounding bitwise (see
+    /// its docs), and the solid-angle / flat / dark / mask steps are
     /// plain f64 array ops numpy does not fuse. `numpy.interp` clamps outside
     /// `[tth[0], tth[last]]` to the endpoint values (no extrapolation).
     ///
@@ -1140,12 +1140,10 @@ pub struct Calcfrom1dOptions<'a> {
 /// no period. `slope = (fp[j+1] - fp[j]) / (xp[j+1] - xp[j])`; numpy's choice to
 /// precompute the slopes once vs per point is bitwise-irrelevant (same division).
 ///
-/// The interpolation value `slope*(x - xp[j]) + fp[j]` must be a **fused**
-/// multiply-add: numpy's compiled `compiled_base.c` contracts this expression to
-/// a single hardware FMA (verified against numpy 2.4.3 on aarch64 — separate
-/// rounded mul+add diverges by 1 ULP on ~2% of interior points, `f64::mul_add`
-/// matches bitwise on all). Rust does not auto-contract `a*b+c`, so the FMA is
-/// requested explicitly via [`f64::mul_add`].
+/// The interpolation value `slope*(x - xp[j]) + fp[j]` is rounded as numpy's
+/// build rounds it (see [`interp_step`]): one FMA on aarch64, a separate
+/// multiply and add on x86-64. The two differ by 1 ULP on ~2% of interior
+/// points.
 ///
 /// Public so the golden suite can drive it on pyFAI's own `ttha` array and
 /// confirm the interpolation alone is bitwise-exact. `xp` must be ascending.
@@ -1158,21 +1156,33 @@ pub fn numpy_interp(x: f64, xp: &[f64], fp: &[f64]) -> f64 {
         return fp[n - 1];
     }
     // Largest j with xp[j] <= x. x is strictly inside (xp[0], xp[n-1]) here, so
-    // j ∈ [0, n-2] and j+1 is valid. For an exact knot mul_add yields
-    // `fma(slope, 0, fp[j]) == fp[j]`, matching numpy's `dx[j] == x` short-circuit.
+    // j ∈ [0, n-2] and j+1 is valid. For an exact knot the step yields
+    // `slope*0 + fp[j] == fp[j]`, matching numpy's `dx[j] == x` short-circuit.
     let j = match xp.binary_search_by(|v| v.partial_cmp(&x).expect("xp has NaN")) {
         Ok(idx) => idx,
         Err(idx) => idx - 1,
     };
     let slope = (fp[j + 1] - fp[j]) / (xp[j + 1] - xp[j]);
-    let mut res = slope.mul_add(x - xp[j], fp[j]);
+    let mut res = interp_step(slope, x - xp[j], fp[j]);
     if res.is_nan() {
-        res = slope.mul_add(x - xp[j + 1], fp[j + 1]);
+        res = interp_step(slope, x - xp[j + 1], fp[j + 1]);
         if res.is_nan() && fp[j] == fp[j + 1] {
             res = fp[j];
         }
     }
     res
+}
+
+/// `slope * dx + fp` rounded as numpy's build rounds it: `compiled_base.c` is
+/// contracted to an FMA where numpy's baseline has one, but not on x86-64,
+/// whose X86_V2 baseline lacks FMA.
+#[inline]
+fn interp_step(slope: f64, dx: f64, fp: f64) -> f64 {
+    if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
+        slope * dx + fp
+    } else {
+        slope.mul_add(dx, fp)
+    }
 }
 
 /// pyFAI `Calibrant.fake_calibration_image`: synthesize a 2D calibration image
@@ -1303,4 +1313,25 @@ fn resolve_detector(poni: &PoniFile) -> Result<Detector> {
         detector.orientation = o;
     }
     Ok(detector)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::numpy_interp;
+
+    #[test]
+    fn numpy_interp_rounds_as_numpy_does_on_this_arch() {
+        // numpy 2.5 on x86-64 (no FMA) gives ...907; the fused result is 1 ULP up.
+        let got = numpy_interp(
+            0.3792623155788948,
+            &[0.0, 0.3, 1.1, 2.7],
+            &[0.1, 0.7, 0.2, 1.9],
+        );
+        let want: f64 = if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
+            0.6504610527631907
+        } else {
+            0.6504610527631908
+        };
+        assert_eq!(got.to_bits(), want.to_bits());
+    }
 }
