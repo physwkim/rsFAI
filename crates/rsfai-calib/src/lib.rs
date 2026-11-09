@@ -14,10 +14,17 @@
 //!     trajectory differs from scipy's SLSQP by construction. The converged
 //!     parameters are validated at a recorded relative tolerance, with the
 //!     converged cost asserted `<=` pyFAI's converged cost.
+//!
+//! [`ring_search`] is Dioptas's automatic refinement on top of both: pick
+//! the peaks around each ring where the geometry puts it, refine, repeat.
 
 pub mod control_points;
 mod optimizer;
 pub mod refinement;
+pub mod ring_search;
 
 pub use control_points::{ControlPoints, PointGroup};
 pub use refinement::{GeometryParams, GeometryRefinement, Param};
+pub use ring_search::{
+    auto_refine, ring_band, tth_array, AutoRefine, Band, Calibration, RingSearch,
+};

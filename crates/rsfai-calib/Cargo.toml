@@ -10,6 +10,7 @@ rust-version.workspace = true
 rsfai-geometry.workspace = true
 rsfai-detectors.workspace = true
 rsfai-calibrant.workspace = true
+rsfai-peaks.workspace = true
 # Iterative optimizer for `refine()`. ISOLATED to this crate: the bit-exact
 # residual/chi2 core never touches argmin; only the converged-parameter search
 # does, and it is gated at a recorded tolerance (not bit-exact) because the

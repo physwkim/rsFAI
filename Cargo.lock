@@ -693,6 +693,7 @@ dependencies = [
  "rsfai-core",
  "rsfai-detectors",
  "rsfai-geometry",
+ "rsfai-peaks",
  "serde_json",
 ]
 

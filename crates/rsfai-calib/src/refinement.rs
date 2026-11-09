@@ -328,7 +328,7 @@ impl Param {
 /// reorder by orientation, add the half-pixel offset, multiply by pixel size.
 /// `p3` is `None` for the flat detectors in scope. PONI is not subtracted here
 /// (`calc_pos_zyx` subtracts it, matching `tth`'s chain).
-fn point_cartesian(det: &Detector, d1: f64, d2: f64) -> (f64, f64) {
+pub(crate) fn point_cartesian(det: &Detector, d1: f64, d2: f64) -> (f64, f64) {
     let (rd1, rd2) = reorder_point(det, d1, d2);
     // center=True: d1c = d1 + 0.5 (the half-pixel offset).
     let d1c = rd1 + 0.5;

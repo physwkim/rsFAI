@@ -1,0 +1,88 @@
+{
+  "dataset": "ringsearch_LaB6_synthetic",
+  "dioptas_version": "0.13.0",
+  "pyfai_version": "2026.5.0",
+  "numpy_version": "2.5.4",
+  "scipy_version": "1.18.1",
+  "platform": "Linux-6.14.0-37-generic-x86_64-with-glibc2.39",
+  "omp_num_threads": "1",
+  "config": {
+    "shape": [
+      128,
+      128
+    ],
+    "pixel": 0.00015,
+    "wavelength": 2.5e-11,
+    "orientation": 3,
+    "truth": {
+      "dist": 0.1,
+      "poni1": 0.0098,
+      "poni2": 0.0094,
+      "rot1": 0.012,
+      "rot2": -0.009,
+      "rot3": 0.0
+    },
+    "start": {
+      "dist": 0.1004,
+      "poni1": 0.0099,
+      "poni2": 0.00932,
+      "rot1": 0.0,
+      "rot2": 0.0,
+      "rot3": 0.0
+    },
+    "num_rings": 6,
+    "delta_tth_deg": 0.1,
+    "min_mean_factor": 1.0,
+    "upper_limit": 55000.0,
+    "seed": 20261109
+  },
+  "rings": [
+    {
+      "ring": 0,
+      "imin": -19.356205990898033,
+      "keep": 6,
+      "peaks": 2
+    },
+    {
+      "ring": 1,
+      "imin": -29.99852899578711,
+      "keep": 7,
+      "peaks": 3
+    },
+    {
+      "ring": 2,
+      "imin": 10.059226072568293,
+      "keep": 11,
+      "peaks": 11
+    },
+    {
+      "ring": 3,
+      "imin": 58.786918493581595,
+      "keep": 7,
+      "peaks": 7
+    },
+    {
+      "ring": 4,
+      "imin": 39.448419057390964,
+      "keep": 4,
+      "peaks": 4
+    },
+    {
+      "ring": 5,
+      "imin": 112.45108916162266,
+      "keep": 0,
+      "peaks": 0
+    }
+  ],
+  "final_param": [
+    0.100097476329119,
+    0.009089468460481104,
+    0.008968076156737647,
+    0.00779485068090472,
+    -0.002011407869911959,
+    4.797183993743307e-09,
+    2.5e-11
+  ],
+  "final_chi2": 5.519117296818169e-07,
+  "npt": 27
+}
