@@ -226,8 +226,10 @@ fn watershed_matches_pyfai() {
             .collect();
         let golden_f64 = f64v(case["file"].as_str().unwrap());
         let mut golden_pairs: Vec<(u32, u32)> = golden_f64
-            .chunks_exact(2)
-            .map(|c| ((c[0] as f32).to_bits(), (c[1] as f32).to_bits()))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&[y, x]| ((y as f32).to_bits(), (x as f32).to_bits()))
             .collect();
         got_pairs.sort_unstable();
         golden_pairs.sort_unstable();
@@ -308,10 +310,10 @@ fn blob_matches_pyfai() {
         let mut gold_pos: Vec<f64> = Vec::with_capacity(n * 3);
         let mut gold_peak_f32: Vec<f32> = Vec::with_capacity(n);
         let mut gold_valid: Vec<f64> = Vec::with_capacity(n);
-        for c in golden.chunks_exact(5) {
-            gold_pos.extend_from_slice(&[c[0], c[1], c[2]]);
-            gold_peak_f32.push(c[3] as f32);
-            gold_valid.push(c[4]);
+        for &[x, y, sigma, peak, valid] in golden.as_chunks::<5>().0 {
+            gold_pos.extend_from_slice(&[x, y, sigma]);
+            gold_peak_f32.push(peak as f32);
+            gold_valid.push(valid);
         }
 
         let len_ok = got_pos.len() == gold_pos.len();

@@ -80,8 +80,10 @@ fn load_control_points() -> Vec<(f64, f64, usize)> {
     assert_eq!(shape.len(), 2, "control_points must be 2D");
     assert_eq!(shape[1], 3, "control_points must have 3 columns");
     let flat: Vec<f64> = a.iter().copied().collect();
-    flat.chunks_exact(3)
-        .map(|r| (r[0], r[1], r[2] as usize))
+    flat.as_chunks::<3>()
+        .0
+        .iter()
+        .map(|&[d1, d2, ring]| (d1, d2, ring as usize))
         .collect()
 }
 

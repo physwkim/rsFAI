@@ -34,8 +34,10 @@ fn main() {
     // --- Control points (golden (d1, d2, ring) rows) into a ControlPoints. ---
     let cp_flat = load_f64("control_points.npy"); // (51, 3) row-major
     let rows: Vec<(f64, f64, usize)> = cp_flat
-        .chunks_exact(3)
-        .map(|r| (r[0], r[1], r[2] as usize))
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|&[d1, d2, ring]| (d1, d2, ring as usize))
         .collect();
 
     // Group the points by ring into the container (one PointGroup per ring),
