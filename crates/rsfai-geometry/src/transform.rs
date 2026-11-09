@@ -49,11 +49,6 @@ fn orient_t2(orientation: i32) -> f64 {
     }
 }
 
-/// Pixels per parallel task. A refinement calls `calc_pos_zyx` on its few
-/// hundred control points for every cost evaluation; spread over every
-/// core, that batch spent ten times its arithmetic waking threads.
-const MIN_LEN: usize = 4096;
-
 /// Port of `_geometry.calc_pos_zyx`. `p1`/`p2` are pixel centres (m) along the
 /// slow/fast axes; `p3` is the per-pixel altitude (m) for non-flat detectors
 /// (`None` for flat, matching pyFAI's `pos3 is None` branch where `L3 = dist`).
@@ -97,7 +92,7 @@ pub fn calc_pos_zyx(
         .zip(y.par_iter_mut())
         .zip(x.par_iter_mut())
         .enumerate()
-        .with_min_len(MIN_LEN)
+        .with_min_len(rsfai_core::PAR_MIN_LEN)
         .for_each(|(i, ((zi, yi), xi))| {
             let pp1 = p1[i] - poni1;
             let pp2 = p2[i] - poni2;

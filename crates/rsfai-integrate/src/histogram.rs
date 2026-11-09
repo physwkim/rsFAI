@@ -222,6 +222,7 @@ pub fn histogram_preproc(
     } else {
         (0..size)
             .into_par_iter()
+            .with_min_len(rsfai_core::PAR_MIN_LEN)
             .fold(
                 || vec![[0.0f64; 5]; npt],
                 |mut acc, i| {
@@ -509,6 +510,7 @@ pub fn histogram2d(
     };
     let out = (0..size)
         .into_par_iter()
+        .with_min_len(rsfai_core::PAR_MIN_LEN)
         .fold(
             || vec![[0.0f64; 5]; n_grid],
             |mut acc, idx| {

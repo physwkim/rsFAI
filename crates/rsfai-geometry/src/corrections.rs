@@ -48,6 +48,7 @@ pub fn solid_angle_array(
     // Per-pixel map (each element independent) -> bit-exact under parallelism.
     p1.par_iter()
         .zip(p2.par_iter())
+        .with_min_len(rsfai_core::PAR_MIN_LEN)
         .map(|(&a, &b)| {
             // PONI subtraction stays in f32 (numpy weak promotion), then f_cosa
             // upcasts to f64.
@@ -79,6 +80,7 @@ pub fn polarization_array(
     // Per-pixel map (each element independent) -> bit-exact under parallelism.
     (0..x.len())
         .into_par_iter()
+        .with_min_len(rsfai_core::PAR_MIN_LEN)
         .map(|i| {
             // tth/chi are the scale=False unit equations (rad).
             let tth = equation(Space::TwoTheta, x[i], y[i], z[i], 1.0);

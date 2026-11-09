@@ -15,6 +15,13 @@ pub use dtype::{
 };
 pub use error::{CoreError, Result};
 
+/// Pixels per rayon task in every per-pixel map. Below it, waking threads
+/// costs more than the arithmetic (a refinement's few-hundred-point
+/// `calc_pos_zyx` batches spent ten times their work on it), and without a
+/// floor rayon re-splits each stolen task down to one pixel, a join stack
+/// deep enough to overflow a debug build's 2 MiB worker stack.
+pub const PAR_MIN_LEN: usize = 4096;
+
 #[cfg(test)]
 mod roundtrip_tests {
     use ndarray::{ArrayD, IxDyn};

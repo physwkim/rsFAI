@@ -101,6 +101,7 @@ pub fn center_array(unit: Unit, x: &[f64], y: &[f64], z: &[f64], wavelength: f64
     assert_eq!(x.len(), z.len());
     (0..x.len())
         .into_par_iter()
+        .with_min_len(rsfai_core::PAR_MIN_LEN)
         .map(|i| center_value(unit, x[i], y[i], z[i], wavelength))
         .collect()
 }
@@ -125,6 +126,7 @@ pub fn unscaled_center_array(
     assert_eq!(x.len(), z.len());
     (0..x.len())
         .into_par_iter()
+        .with_min_len(rsfai_core::PAR_MIN_LEN)
         .map(|i| equation(space, x[i], y[i], z[i], wavelength))
         .collect()
 }

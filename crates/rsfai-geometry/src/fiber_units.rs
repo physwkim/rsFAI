@@ -276,6 +276,7 @@ pub fn fiber_center_array(
     assert_eq!(x.len(), z.len());
     (0..x.len())
         .into_par_iter()
+        .with_min_len(rsfai_core::PAR_MIN_LEN)
         .map(|i| fiber_center_value(space, scale, x[i], y[i], z[i], wavelength, gi))
         .collect()
 }

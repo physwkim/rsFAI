@@ -69,9 +69,12 @@ pub fn preproc4(data: &[f32], opt: &PreprocOptions) -> Vec<f32> {
     }
 
     let mut out = vec![0.0f32; 4 * size];
-    out.par_chunks_mut(4).enumerate().for_each(|(i, row)| {
-        row.copy_from_slice(&preproc_one(i, data, opt));
-    });
+    out.par_chunks_mut(4)
+        .enumerate()
+        .with_min_len(rsfai_core::PAR_MIN_LEN)
+        .for_each(|(i, row)| {
+            row.copy_from_slice(&preproc_one(i, data, opt));
+        });
     out
 }
 

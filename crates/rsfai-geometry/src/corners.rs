@@ -52,6 +52,7 @@ pub fn corner_array_f32(
     // node is an independent pure function of its coords -> bit-exact in parallel.
     let res: Vec<(f32, f32)> = (0..c0 * c1)
         .into_par_iter()
+        .with_min_len(rsfai_core::PAR_MIN_LEN)
         .map(|idx| {
             let (x, y, z) = (grid.x[idx], grid.y[idx], grid.z[idx]);
             let radial = equation(unit.space, x, y, z, wavelength);
@@ -101,6 +102,7 @@ pub fn delta_radial(corner: &[f32], center: &[f64]) -> Vec<f64> {
     );
     (0..npix)
         .into_par_iter()
+        .with_min_len(rsfai_core::PAR_MIN_LEN)
         .map(|p| {
             let c = center[p];
             let mut m = (corner[p * 8] as f64 - c).abs();
@@ -129,6 +131,7 @@ pub fn delta_chi(corner: &[f32], center: &[f64]) -> Vec<f64> {
     );
     (0..npix)
         .into_par_iter()
+        .with_min_len(rsfai_core::PAR_MIN_LEN)
         .map(|p| {
             let c = center[p];
             let wrap = |k: usize| -> f64 {
