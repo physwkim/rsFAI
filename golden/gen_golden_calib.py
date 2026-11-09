@@ -1,11 +1,10 @@
 #!/usr/bin/env python
 """Golden generator for ControlPoints + GeometryRefinement (rsfai-calib).
 
-Run single-thread in the daq env (pyFAI 2026.5.0 built -ffp-contract=off,
+Run single-thread in the pyfai2026.5 micromamba env (pyFAI 2026.5.0 manylinux wheel, no FMA,
 scipy 1.17.1, numpy 2.4.3):
 
-    env -u VIRTUAL_ENV CONDA_PREFIX=/Users/stevek/mamba/envs/daq \\
-        OMP_NUM_THREADS=1 /Users/stevek/mamba/envs/daq/bin/python \\
+    OMP_NUM_THREADS=1 ~/micromamba/envs/pyfai2026.5/bin/python -I \\
         golden/gen_golden_calib.py
 
 TWO parity surfaces, both feeding crates/rsfai-calib/tests/golden_calib.rs:

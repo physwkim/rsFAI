@@ -5,9 +5,9 @@
   "pyfai_version": "2026.5.0",
   "numpy_version": "2.4.3",
   "omp_num_threads": "1",
-  "pyopencl_version": "2026.1.2",
-  "opencl_device": "Apple M4 Pro",
-  "platform": "macOS-26.5-arm64-arm-64bit-Mach-O",
+  "pyopencl_version": "2026.1.4",
+  "opencl_device": "NVIDIA RTX 5000 Ada Generation",
+  "platform": "Linux-6.14.0-37-generic-x86_64-with-glibc2.39",
   "tolerance_note": "OpenCL golden: GPU doubleword (two-f32 Kahan) accumulation. The Rust backend reuses pyFAI's own .cl kernels on the same device, validated at relative error <= 1e-6 (cross-work-group reduction order). See doc/bit-exact-ladder.md.",
   "config": {
     "dim": 2,

@@ -1,11 +1,10 @@
 #!/usr/bin/env python
 """Golden generator for the goniometer subsystem (rsfai-goniometer).
 
-Run single-thread in the daq env (pyFAI 2026.5.0 built -ffp-contract=off,
+Run single-thread in the pyfai2026.5 micromamba env (pyFAI 2026.5.0 manylinux wheel, no FMA,
 scipy 1.17.1, numpy 2.4.3, numexpr present):
 
-    env -u VIRTUAL_ENV CONDA_PREFIX=/Users/stevek/mamba/envs/daq \\
-        OMP_NUM_THREADS=1 /Users/stevek/mamba/envs/daq/bin/python \\
+    OMP_NUM_THREADS=1 ~/micromamba/envs/pyfai2026.5/bin/python -I \\
         golden/gen_golden_goniometer.py
 
 THREE parity surfaces, all feeding crates/rsfai-goniometer/tests/golden_goniometer.rs:

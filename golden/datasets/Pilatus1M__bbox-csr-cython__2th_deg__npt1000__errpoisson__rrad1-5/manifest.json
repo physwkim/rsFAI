@@ -3,15 +3,13 @@
   "detector_name": "Pilatus1M",
   "pyfai_version": "2026.5.0",
   "numpy_version": "2.4.3",
-  "platform": "macOS-26.5-arm64-arm-64bit-Mach-O",
+  "platform": "Linux-6.14.0-37-generic-x86_64-with-glibc2.39",
   "omp_num_threads": "1",
   "build": {
-    "from_source": true,
-    "source_tree": "~/codes/pyFAI",
-    "cflags": "-ffp-contract=off",
-    "cxxflags": "-ffp-contract=off"
+    "from_source": false,
+    "wheel": "PyPI manylinux x86-64 baseline (no FMA)"
   },
-  "provenance_note": "pyFAI rebuilt from local source with -ffp-contract=off (no FMA); see doc/bit-exact-ladder.md",
+  "provenance_note": "pyFAI 2026.5.0 PyPI manylinux wheel, x86-64 baseline (no FMA); see doc/bit-exact-ladder.md",
   "config": {
     "dim": 1,
     "npt": 1000,

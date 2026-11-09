@@ -8,10 +8,9 @@ h5py/libhdf5-written file back BIT-EXACTLY across the rsFAI dtypes
 (f32 image, i32 counts, f64 positions). One dataset is stored gzip-compressed +
 chunked to exercise `rust-hdf5`'s filter pipeline; the rest are contiguous.
 
-Run in the daq env (h5py 3.16, libhdf5 2.0):
+Run in the pyfai2026.5 micromamba env (h5py 3.16, libhdf5 2.0):
 
-    env -u VIRTUAL_ENV CONDA_PREFIX=/Users/stevek/mamba/envs/daq \\
-        /Users/stevek/mamba/envs/daq/bin/python golden/gen_golden_io.py
+    ~/micromamba/envs/pyfai2026.5/bin/python -I golden/gen_golden_io.py
 """
 
 import json

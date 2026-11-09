@@ -62,26 +62,18 @@ and boundary 3 removed at the source.
   - **Serial by construction.** The CSR **build** (`build_*_csr`) stays serial:
     each bin's LUT entry order must match pyFAI's `SparseBuilder` insertion order
     (ascending pixel index), which a parallel build would scramble.
-- **No-FMA source build.** Golden is generated from pyFAI 2026.5.0 **rebuilt
-  from the local `~/codes/pyFAI` source** into the `daq` env with FMA
-  contraction disabled:
-
-  ```sh
-  # build deps into daq (numpy already present, so --no-build-isolation)
-  daq/bin/python -m pip install "meson-python>=0.11" "meson>=1.1" ninja wheel \
-      "Cython>=0.29.31" "pyproject-metadata>=0.5.0"
-  # build a no-FMA wheel from the local source tree (clang on arm64)
-  cd ~/codes/pyFAI
-  PATH="$(dirname daq/bin/python):$PATH" \
-    CFLAGS="-ffp-contract=off" CXXFLAGS="-ffp-contract=off" \
-    daq/bin/python -m pip wheel . --no-build-isolation --no-deps -w /tmp/pyfai-nofma
-  daq/bin/python -m pip install --force-reinstall --no-deps /tmp/pyfai-nofma/pyfai-*.whl
-  ```
-
-  This links Apple's system libm (the same libm Rust's `std` f64 transcendentals
-  call) **and** removes FMA fusion, so the algebraic transform is bitwise-exact
-  by construction (boundary 3 above). The `manifest.json` `build` block records
-  `cflags`/`source_tree`. Tier A is libm- and FMA-independent regardless.
+- **No-FMA wheel, canonical platform Linux x86_64.** Golden is generated from
+  the pyFAI 2026.5.0 PyPI manylinux wheel (`golden/requirements.txt`, the
+  `pyfai2026.5` micromamba env). That wheel targets baseline x86-64, which has
+  no FMA instruction (`objdump -d` of `_geometry`/`splitBBox*`/`histogram`
+  finds no `vfmadd`), so the Cython algebra is never contracted and the
+  algebraic transform is bitwise-exact by construction (boundary 3 above).
+  It links glibc's libm, the libm Rust's `std` f64 transcendentals call on
+  Linux, which closes boundary 2 on that platform only: against goldens made
+  on macOS (Apple libm) the bbox `sum_*`, calcfrom, fiber and OpenCL exact
+  gates differ by 1–88 ULP, and the converse holds on a Mac. Goldens are
+  therefore committed from Linux only; `manifest.json` records `platform`
+  and a `build` block. Tier A is libm- and FMA-independent regardless.
 
 ## dtype contract
 
@@ -143,9 +135,8 @@ documented divergence. Tier C is the integration test; **Tier A is the gate.**
 ### Tier D — OpenCL/GPU backend (Phase 2, tolerance-gated)
 
 The `rsfai-opencl` crate targets pyFAI's **OpenCL** integrators, not the cython
-kernels. On the target device (Apple M4 Pro GPU) there is no f64
-(`CL_DEVICE_DOUBLE_FP_CONFIG == 0`), so pyFAI accumulates in a **doubleword**
-(two-f32 Kahan) representation and the work-group reductions reorder adds — so
+kernels. pyFAI accumulates in a **doubleword** (two-f32 Kahan) representation
+and the work-group reductions reorder adds — so
 end-to-end bitwise identity is **not** promised by construction; the gate is
 **relative error `<= 1e-6`** (`golden/gen_golden_opencl.py` → `opencl_params.json`).
 
@@ -209,18 +200,19 @@ into the bins with `atomic_add` (the bin is computed from the per-pixel
 `radial`/`azimuthal` arrays the host uploads). It shares the LUT path's
 image-pre-cast and 23-arg `corrections4`.
 
-This is the one Phase-2 path where bit-exactness is **physically impossible**,
-for two compounding reasons on the Apple M4 Pro:
+This is the one Phase-2 path where bit-exactness is not promised, for two
+compounding reasons (both measured on an Apple M4 Pro, where the gate was
+sized):
 
 1. **Non-deterministic atomic order.** `atomic_cmpxchg` commit order across
    work-items is not reproducible, so the per-bin running sum is reordered
    every run.
-2. **No `cl_khr_int64_base_atomics`.** The doubleword-Kahan atomic
+2. **No `cl_khr_int64_base_atomics` on that device.** The doubleword-Kahan atomic
    (`atomic_add_global_kahan`) falls back to its 32-bit `#else` branch, which
    CASes only the **high** word — the doubleword low lane stays zero, so the
    compensation is discarded and the accumulation is a plain `f32` atomic sum.
 
-pyFAI is therefore not reproducible against *itself*: over 8 independent runs of
+pyFAI there is therefore not reproducible against *itself*: over 8 independent runs of
 the identical config, intensity diverges by up to **~3.4e-6 (1D)** and
 **~7.0e-6 (2D)** pairwise (measured). The Rust port reproduces pyFAI's algorithm
 exactly (identical `corrections4` output, identical bin assignment); the residual
@@ -232,8 +224,11 @@ value) stays **bit-exact**. This boundary is the GPU analogue of the OpenMP/
 parallel-reduction boundary the cython side pins by running single-threaded.
 
 **Measured (Pilatus1M, Poisson):** both `("no", "histogram")` tuples (1D npt=1000,
-2D npt=100×36) pass the 5e-5 gate; `count` is bit-exact; the noisy fields land at
-1–6e-6, inside the measured pyFAI self-divergence envelope.
+2D npt=100×36) pass the 5e-5 gate. On the Apple M4 Pro `count` was bit-exact
+and the noisy fields landed at 1–6e-6, inside the measured pyFAI self-divergence
+envelope. On the committed golden device (NVIDIA RTX 5000 Ada, which has the
+int64 atomics, so the Kahan compensation is kept) every histogram field matched
+bit-for-bit.
 
 ## The arithmetic to reproduce (from `regrid_common.pxi`)
 

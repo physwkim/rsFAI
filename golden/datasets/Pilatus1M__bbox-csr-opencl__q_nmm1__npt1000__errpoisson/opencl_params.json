@@ -1,4 +1,9 @@
 {
+  "algo": "csr",
+  "bins": 1000,
+  "image_size": 1023183,
+  "empty": 0.0,
+  "dim": 1,
   "corrections4a": {
     "dtype": -4,
     "error_model": 2,
@@ -22,9 +27,5 @@
   },
   "wg_min": 32,
   "wg_max": 256,
-  "data_is_ones": false,
-  "bins": 1000,
-  "image_size": 1023183,
-  "empty": 0.0,
-  "dim": 1
+  "data_is_ones": false
 }

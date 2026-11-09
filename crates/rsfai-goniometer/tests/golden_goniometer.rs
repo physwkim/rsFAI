@@ -1,5 +1,5 @@
 //! Goniometer subsystem parity gate: `rsfai-goniometer` vs pyFAI on
-//! `golden/datasets_goniometer/` (built by `gen_golden_goniometer.py` in the daq
+//! `golden/datasets_goniometer/` (built by `gen_golden_goniometer.py` in the pyfai2026.5
 //! env, single-thread).
 //!
 //! FOUR surfaces across the two structurally-separate tiers (see the crate docs

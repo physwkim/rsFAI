@@ -1,9 +1,12 @@
-# Pinned environment for generating golden datasets (the `daq` conda env,
-# Python 3.14). Installed from ESRF prebuilt cp314 macOS-arm64 wheels — see the
-# provenance caveat in doc/bit-exact-ladder.md. Regenerate with:
-#   OMP_NUM_THREADS=1 /Users/stevek/mamba/envs/daq/bin/python golden/gen_golden.py
+# Pinned environment for generating golden datasets: the `pyfai2026.5`
+# micromamba env (Python 3.12, Linux x86_64), PyPI manylinux wheels — see the
+# provenance note in doc/bit-exact-ladder.md. Regenerate with:
+#   OMP_NUM_THREADS=1 ~/micromamba/envs/pyfai2026.5/bin/python -I golden/gen_golden.py
 pyFAI==2026.5.0
 fabio==2025.10.0
 silx==3.0.1
 scipy==1.17.1
 numpy==2.4.3
+h5py==3.16.0
+hdf5plugin==7.1.0
+pyopencl==2026.1.4

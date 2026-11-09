@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Generate golden datasets for validating the rsFAI Rust port against pyFAI.
 
-Run in the `daq` conda env (which has pyFAI installed):
+Run single-thread in the `pyfai2026.5` micromamba env (Linux x86_64, pyFAI
+2026.5.0 manylinux wheel; see golden/README.md):
 
-    OMP_NUM_THREADS=1 /Users/stevek/mamba/envs/daq/bin/python golden/gen_golden.py
+    OMP_NUM_THREADS=1 ~/micromamba/envs/pyfai2026.5/bin/python -I golden/gen_golden.py
 
 For each (detector image, integration config) pair this script emits a
 self-contained directory under ``golden/datasets/`` containing, as ``.npy``
@@ -394,19 +395,17 @@ def generate(detector_name, poni_image, configs):
             "platform": platform.platform(),
             "omp_num_threads": os.environ.get("OMP_NUM_THREADS", "unset"),
             "build": {
-                # pyFAI rebuilt from the local ~/codes/pyFAI source into daq with
-                # FMA contraction disabled, so the Cython geometry evaluates the
-                # bare IEEE-754 expression (a*b + c*d - e*f) with no fused
+                # The PyPI manylinux wheel targets baseline x86-64, which has no
+                # FMA instruction, so the Cython geometry evaluates the bare
+                # IEEE-754 expression (a*b + c*d - e*f) with no fused
                 # multiply-add. That makes the algebraic transform (calc_pos_zyx)
                 # bitwise-reproducible by Rust's plain f64 ops. See
                 # doc/bit-exact-ladder.md.
-                "from_source": True,
-                "source_tree": "~/codes/pyFAI",
-                "cflags": "-ffp-contract=off",
-                "cxxflags": "-ffp-contract=off",
+                "from_source": False,
+                "wheel": "PyPI manylinux x86-64 baseline (no FMA)",
             },
             "provenance_note": (
-                "pyFAI rebuilt from local source with -ffp-contract=off (no FMA); "
+                "pyFAI 2026.5.0 PyPI manylinux wheel, x86-64 baseline (no FMA); "
                 "see doc/bit-exact-ladder.md"
             ),
             "config": {

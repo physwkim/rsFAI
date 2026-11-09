@@ -1,7 +1,7 @@
 //! Calibrant + crystallography parity gate: `rsfai-calibrant` vs pyFAI on
 //! `golden/datasets_calibrant/`.
 //!
-//! `gen_golden_calibrant.py` (daq env, pyFAI 2026.5.0 `-ffp-contract=off`) dumps,
+//! `gen_golden_calibrant.py` (pyfai2026.5 env, pyFAI 2026.5.0, no FMA) dumps,
 //! for a set of shipped calibrants and a matrix of wavelengths, the d-spacing
 //! list, the Bragg 2theta list, and `get_peaks` in four units; and, for the
 //! cubic calibrants, the `Cell.calculate_dspacing` d-spacing + multiplicity

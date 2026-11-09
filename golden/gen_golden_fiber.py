@@ -1,10 +1,9 @@
 #!/usr/bin/env python
 """Golden generator for the fiber / grazing-incidence unit equations (M10.0).
 
-Run single-thread in the daq env (scipy 1.17.1 present):
+Run single-thread in the pyfai2026.5 micromamba env (scipy 1.17.1 present):
 
-    env -u VIRTUAL_ENV CONDA_PREFIX=/Users/stevek/mamba/envs/daq \\
-        OMP_NUM_THREADS=1 /Users/stevek/mamba/envs/daq/bin/python \\
+    OMP_NUM_THREADS=1 ~/micromamba/envs/pyfai2026.5/bin/python -I \\
         golden/gen_golden_fiber.py
 
 This gates `rsfai_geometry::fiber_units` as a PURE equation test (identical-input

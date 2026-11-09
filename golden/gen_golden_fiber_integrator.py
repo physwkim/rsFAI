@@ -1,10 +1,9 @@
 #!/usr/bin/env python
 """Golden generator for FiberIntegrator.integrate2d_fiber / integrate_fiber (M10.1).
 
-Run single-thread in the daq env (numexpr present):
+Run single-thread in the pyfai2026.5 micromamba env (numexpr present):
 
-    env -u VIRTUAL_ENV CONDA_PREFIX=/Users/stevek/mamba/envs/daq \\
-        OMP_NUM_THREADS=1 /Users/stevek/mamba/envs/daq/bin/python \\
+    OMP_NUM_THREADS=1 ~/micromamba/envs/pyfai2026.5/bin/python -I \\
         golden/gen_golden_fiber_integrator.py
 
 Builds a real Pilatus1M FiberIntegrator, a deterministic detector image, and

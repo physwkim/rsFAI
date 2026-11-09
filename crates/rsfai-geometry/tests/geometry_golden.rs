@@ -2,8 +2,9 @@
 //!
 //! Tier A: feed the golden float64 pixel centres into [`calc_pos_zyx`] and
 //! require the lab coords `(z,y,x)` to be **bit-exact** vs the golden
-//! `pos_zyx`. The golden comes from a pyFAI rebuilt with `-ffp-contract=off`,
-//! so the Cython transform has no FMA fusion and the match is bitwise.
+//! `pos_zyx`. The golden comes from the pyFAI manylinux wheel (baseline
+//! x86-64, no FMA), so the Cython transform has no FMA fusion and the match is
+//! bitwise.
 //!
 //! Tier B: apply the unit equations to the golden lab coords and compare to the
 //! golden `pos0_center` / `chi_center`. `r` (sqrt-only) is IEEE-exact; `q`/`2th`/
@@ -145,7 +146,7 @@ fn calc_pos_zyx_and_units_bit_exact() {
         // BIT-EXACT GATE. calc_pos_zyx is pure f64 `+ - *` (the six scalar
         // sin/cos of the rotation angles are computed once and shared), so given
         // identical pixel centres it must reproduce pyFAI exactly. The golden is
-        // generated from a pyFAI rebuilt with -ffp-contract=off (no FMA fusion),
+        // generated from the pyFAI manylinux wheel (baseline x86-64, no FMA),
         // so the Cython evaluates the same bare IEEE-754 expression Rust does and
         // the match is bitwise. See doc/bit-exact-ladder.md.
         for (label, r) in [("z", &rz), ("y", &ry), ("x", &rx)] {

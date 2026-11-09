@@ -2,7 +2,7 @@
   "dataset": "MultiGeometry__full-histogram-cython__r_mm__dim2__errnone__csa0",
   "pyfai_version": "2026.5.0",
   "numpy_version": "2.4.3",
-  "platform": "macOS-26.5-arm64-arm-64bit-Mach-O",
+  "platform": "Linux-6.14.0-37-generic-x86_64-with-glibc2.39",
   "omp_num_threads": "1",
   "config": {
     "dim": 2,

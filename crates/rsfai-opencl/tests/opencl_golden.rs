@@ -8,8 +8,8 @@
 //! then compares each output field against the golden.
 //!
 //! Gate: relative error <= 1e-6 (the Phase-2 tolerance for the GPU doubleword
-//! reduction). On the Apple M4 Pro the deterministic same-device/same-kernel
-//! path is expected to be bit-exact; the test reports which fields actually
+//! reduction). On the golden device (NVIDIA RTX 5000 Ada) the deterministic
+//! same-device/same-kernel path is bit-exact; the test reports which fields actually
 //! matched bit-for-bit so any drift from that is visible.
 
 use std::path::{Path, PathBuf};
@@ -28,17 +28,17 @@ use rsfai_opencl::{
 /// device, so they are bit-exact and this tolerance is never actually exercised.
 const REL_TOL: f64 = 1e-6;
 
-/// Gate for the histogram (atomic-add) path. On the Apple M4 Pro there is no
-/// `cl_khr_int64_base_atomics`, so pyFAI's doubleword-Kahan atomic degrades to a
+/// Gate for the histogram (atomic-add) path, sized on the Apple M4 Pro: without
+/// `cl_khr_int64_base_atomics` pyFAI's doubleword-Kahan atomic degrades to a
 /// 32-bit `atomic_cmpxchg` on the high word only — a plain `f32` accumulation in
-/// non-deterministic commit order. pyFAI is therefore not even reproducible
+/// non-deterministic commit order, so pyFAI there is not even reproducible
 /// against *itself*: over 8 independent runs of this exact config, intensity
-/// diverges by up to ~3.4e-6 (1D) and ~7.0e-6 (2D) pairwise (measured).
-/// Bit-exactness and the 1e-6 CSR/LUT gate are physically impossible here; the
-/// `count` field (integer atomics, order-independent) stays bit-exact. This 5e-5
-/// gate bounds the atomic-noise envelope with ~7× margin over the measured
-/// ceiling — far below any genuine port error, robust against the frozen-golden
-/// vs live-run sampling. See doc/bit-exact-ladder.md.
+/// diverged by up to ~3.4e-6 (1D) and ~7.0e-6 (2D) pairwise (measured). This
+/// 5e-5 gate bounds that atomic-noise envelope with ~7× margin — far below any
+/// genuine port error, robust against the frozen-golden vs live-run sampling.
+/// The committed golden comes from an NVIDIA RTX 5000 Ada, which has the int64
+/// atomics; there every histogram field matches bit-for-bit, and the gate is
+/// never exercised. See doc/bit-exact-ladder.md.
 const HIST_REL_TOL: f64 = 5e-5;
 
 fn datasets_root() -> PathBuf {

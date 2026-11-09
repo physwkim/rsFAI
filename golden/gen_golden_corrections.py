@@ -11,9 +11,9 @@ The committed ``golden/datasets`` only exercise ``mask=None``, no dark/flat,
 existing gate. This writes ``golden/datasets_corrections/<key>/`` mirroring
 ``gen_golden.py``'s layout, consumed by ``crates/rsfai/tests/corrections_golden.rs``.
 
-Run in the ``daq`` conda env, single-thread (the bit-exact gate):
+Run in the ``pyfai2026.5`` micromamba env, single-thread (the bit-exact gate):
 
-    OMP_NUM_THREADS=1 /Users/stevek/mamba/envs/daq/bin/python golden/gen_golden_corrections.py
+    OMP_NUM_THREADS=1 ~/micromamba/envs/pyfai2026.5/bin/python -I golden/gen_golden_corrections.py
 
 Method is ``("bbox","csr","cython")`` (deterministic ⇒ bit-exact) for every
 config; the two error models exercise the two preproc variance routes:

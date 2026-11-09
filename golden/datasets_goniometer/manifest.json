@@ -5,8 +5,8 @@
     "pyFAI": "2026.5.0",
     "numpy": "2.4.3",
     "scipy": "1.17.1",
-    "numexpr": "2.14.1",
-    "python": "3.14.3"
+    "numexpr": "2.14.2",
+    "python": "3.12.16"
   },
   "omp_num_threads": "1",
   "transformation": {
@@ -41,8 +41,8 @@
         0.0
       ]
     ],
-    "residu2_fixed": 0.012490357000996962,
-    "cost_converged": 0.0007350807225583798,
+    "residu2_fixed": 0.012490357000996963,
+    "cost_converged": 0.0007350807225511329,
     "n_control_points": [
       13,
       12

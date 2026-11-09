@@ -1,10 +1,9 @@
 #!/usr/bin/env python
 """Golden generator for distortion + spline (rsfai-distortion crate).
 
-Run single-thread in the daq env (pyFAI 2026.5.0, no-FMA source build):
+Run single-thread in the pyfai2026.5 micromamba env (pyFAI 2026.5.0 manylinux wheel, no FMA):
 
-    env -u VIRTUAL_ENV CONDA_PREFIX=/Users/stevek/mamba/envs/daq \\
-        OMP_NUM_THREADS=1 /Users/stevek/mamba/envs/daq/bin/python \\
+    OMP_NUM_THREADS=1 ~/micromamba/envs/pyfai2026.5/bin/python -I \\
         golden/gen_golden_distortion.py
 
 Three independently-gated layers:

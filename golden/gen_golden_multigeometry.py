@@ -22,9 +22,9 @@ is the MG default ``("full","histogram","cython")`` (serial split-histogram ⇒
 bit-exact) plus a ``("bbox","csr","cython")`` variant — neither is the no-split
 histogram, so every field is gated bit-exact (0-ULP).
 
-Run in the ``daq`` conda env, single-thread (the bit-exact gate):
+Run in the ``pyfai2026.5`` micromamba env, single-thread (the bit-exact gate):
 
-    OMP_NUM_THREADS=1 /Users/stevek/mamba/envs/daq/bin/python golden/gen_golden_multigeometry.py
+    OMP_NUM_THREADS=1 ~/micromamba/envs/pyfai2026.5/bin/python -I golden/gen_golden_multigeometry.py
 """
 
 import itertools

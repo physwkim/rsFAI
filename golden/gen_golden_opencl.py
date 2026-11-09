@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Generate OpenCL (GPU) golden datasets for the rsFAI Phase-2 backend.
 
-Run in the `daq` conda env (pyFAI + pyopencl, on the Apple M4 Pro GPU):
+Run in the `pyfai2026.5` micromamba env (pyFAI + pyopencl, on the NVIDIA RTX
+5000 Ada GPU):
 
     PYOPENCL_COMPILER_OUTPUT=0 OMP_NUM_THREADS=1 \
-        /Users/stevek/mamba/envs/daq/bin/python golden/gen_golden_opencl.py
+        ~/micromamba/envs/pyfai2026.5/bin/python -I golden/gen_golden_opencl.py
 
 Unlike ``gen_golden.py`` (the bit-exact *cython* generator), this drives
 pyFAI's **OpenCL** integrators (``OCL_CSR_Integrator``) and dumps what the GPU
@@ -311,7 +312,7 @@ def main():
         configs=[
             {
                 # First OpenCL tuple: no-split CSR, 1D, Poisson. The LUT coefs are
-                # all 1.0 (NULL-coefs kernel path); on the M4 Pro GPU the wg_max
+                # all 1.0 (NULL-coefs kernel path); on the golden GPU the wg_max
                 # for csr_integrate4 is 256 (!=1), so pyFAI runs the tree-reduction
                 # csr_integrate4 (NOT csr_integrate4_single) with wg = wg_min = 32.
                 "npt": 1000,

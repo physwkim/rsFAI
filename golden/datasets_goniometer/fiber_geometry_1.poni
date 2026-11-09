@@ -22,3 +22,15 @@ Rot1: 0.0
 Rot2: 0.05
 Rot3: 0.0
 Wavelength: 1e-10
+# Nota: C-Order, 1 refers to the Y axis, 2 to the X axis
+# Calibration done on Tue Nov 10 02:23:45 2026
+poni_version: 2.1
+Detector: Pilatus1M
+Detector_config: {"pixel1": 0.000172, "pixel2": 0.000172, "orientation": 3}
+Distance: 0.22
+Poni1: 0.11
+Poni2: 0.09
+Rot1: 0.0
+Rot2: 0.05
+Rot3: 0.0
+Wavelength: 1e-10

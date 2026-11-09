@@ -1,7 +1,7 @@
 //! Distortion + spline golden gate: `rsfai-distortion` vs pyFAI 2026.5.0 on
 //! `golden/datasets_distortion/`.
 //!
-//! `gen_golden_distortion.py` (daq env, OMP_NUM_THREADS=1) dumps three layers,
+//! `gen_golden_distortion.py` (pyfai2026.5 env, OMP_NUM_THREADS=1) dumps three layers,
 //! each gated **bit-exact** (0 ULP):
 //!
 //!   1. bisplev  -- pyFAI `_bispev.bisplev` on the halfccd X/Y displacement
