@@ -114,7 +114,7 @@ fn golden_lut(dir: &std::path::Path, n_bins: usize) -> Lut {
     let idx = vec_i32(dir, "lut_idx.npy");
     let coef = vec_f32(dir, "lut_coef.npy");
     assert_eq!(idx.len(), coef.len(), "lut_idx/lut_coef length mismatch");
-    let lut_size = if n_bins == 0 { 0 } else { coef.len() / n_bins };
+    let lut_size = coef.len().checked_div(n_bins).unwrap_or(0);
     assert_eq!(
         n_bins * lut_size,
         coef.len(),

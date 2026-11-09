@@ -67,11 +67,7 @@ impl Lut {
     /// and a zero coefficient contributes nothing to any accumulator. Interior
     /// zero-coef entries keep their column and are skipped per-entry in the gather.
     pub fn new(coef: Vec<DataT>, idx: Vec<IndexT>, lut_size: usize) -> Self {
-        let n_bins = if lut_size == 0 {
-            0
-        } else {
-            coef.len() / lut_size
-        };
+        let n_bins = coef.len().checked_div(lut_size).unwrap_or(0);
         let mut sizes = vec![0 as IndexT; n_bins];
         for (b, size) in sizes.iter_mut().enumerate() {
             let row = b * lut_size;
