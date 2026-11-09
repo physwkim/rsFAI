@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 """Golden generator for the peak-finding primitives (rsfai-peaks).
 
-Run single-thread in the daq env (pyFAI 2026.5.0, built -ffp-contract=off):
+Run single-thread with pyFAI 2026.9.0 (the release whose Bilinear.local_maxi
+Hessian rsfai-peaks follows; the micromamba env pyfai2026.9 holds the pip
+wheel, x86-64 baseline so no FMA):
 
-    env -u VIRTUAL_ENV CONDA_PREFIX=/Users/stevek/mamba/envs/daq \\
-        OMP_NUM_THREADS=1 /Users/stevek/mamba/envs/daq/bin/python \\
+    OMP_NUM_THREADS=1 ~/micromamba/envs/pyfai2026.9/bin/python -I \\
         golden/gen_golden_peaks.py
 
 Five parity surfaces, all feeding crates/rsfai-peaks/tests/golden_peaks.rs:

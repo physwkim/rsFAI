@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 """Golden generator for Dioptas's automatic refinement (rsfai-calib ring_search).
 
-Run headless, single-thread, in a venv holding Dioptas 0.13.0 with pyFAI
-pinned to 2026.5.0, the release rsfai-peaks' Bilinear follows (2026.9.0
-rewrote the Hessian in Bilinear.local_maxi):
+Run headless, single-thread, with Dioptas 0.13.0 on pyFAI 2026.9.0, the
+release whose Bilinear.local_maxi Hessian rsfai-peaks follows (the
+micromamba env pyfai2026.9 holds both as pip wheels):
 
-    QT_QPA_PLATFORM=offscreen OMP_NUM_THREADS=1 <venv>/bin/python -I \\
-        golden/gen_golden_ringsearch.py
+    QT_QPA_PLATFORM=offscreen OMP_NUM_THREADS=1 \\
+        ~/micromamba/envs/pyfai2026.9/bin/python -I golden/gen_golden_ringsearch.py
 
 Dioptas does the work. A synthetic LaB6 image is loaded into its
 CalibrationModel, which runs search_peaks_on_ring and refine in the order of

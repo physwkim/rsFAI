@@ -1,6 +1,6 @@
 //! Dioptas parity gate for `ring_search` on `golden/datasets_ringsearch/`.
 //!
-//! `gen_golden_ringsearch.py` runs Dioptas 0.13.0 (pyFAI 2026.5.0) headless
+//! `gen_golden_ringsearch.py` runs Dioptas 0.13.0 (pyFAI 2026.9.0) headless
 //! on a synthetic LaB6 image and records every ring of its automatic
 //! refinement. Gates:
 //!

@@ -104,19 +104,18 @@ impl<'a> Bilinear<'a> {
             let a12 = self.at(c0, c1 + 1);
             let a20 = self.at(c0 + 1, c1 - 1);
             let a21 = self.at(c0 + 1, c1);
-            // NOTE: pyFAI 2026.5.0 uses `a22 = self.data[current0 + 1, current1 - 1]`
-            // (a copy of a20, an upstream quirk at bilinear.pxi:182). Reproduce
-            // it verbatim so the refinement matches bit-for-bit. 2026.9.0 fixes
-            // it and swaps d00/d11, so its peaks differ by up to ~0.05 px.
-            let a22 = self.at(c0 + 1, c1 - 1);
+            // pyFAI 2026.9.0 (commit 403bc665): a22 reads the true corner and
+            // d00/d11 are the second derivatives along dim0/dim1. 2026.5.0 had
+            // a22 as a copy of a20 and the two swapped, which moves its peaks.
+            let a22 = self.at(c0 + 1, c1 + 1);
             // pyFAI's Cython stores these as C `float` but the RHS expressions
             // contain `double` literals (2.0, 4.0), so each is evaluated under
             // C's usual arithmetic conversions in `double` and rounded to `f32`
             // only at the assignment. Pure-f32 evaluation diverges by ~1 ULP, so
             // promote to f64 for the literal-bearing sub-expressions and round
             // back, matching C exactly (`bilinear.pxi:183-186`).
-            let d00 = (a12 as f64 - 2.0 * a11 as f64 + a10 as f64) as f32;
-            let d11 = (a21 as f64 - 2.0 * a11 as f64 + a01 as f64) as f32;
+            let d00 = (a21 as f64 - 2.0 * a11 as f64 + a01 as f64) as f32;
+            let d11 = (a12 as f64 - 2.0 * a11 as f64 + a10 as f64) as f32;
             // `a00 - a02 - a20 + a22` is all-float in C (no double literal), so
             // it is computed in f32; only the final `/ 4.0` is in double.
             let d01 = ((a00 - a02 - a20 + a22) as f64 / 4.0) as f32;
@@ -167,5 +166,41 @@ pub(crate) fn round_half_even(x: f64) -> f64 {
         }
     } else {
         r
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Bilinear;
+
+    /// `test_subpixel_quadratic` (pyFAI `test_bilinear.py`, 2026.9.0): the
+    /// Taylor step is exact on a quadratic surface, cross-term included, so the
+    /// maximum is found to float32 precision. The 2026.5.0 Hessian (a22 read
+    /// from a20's place, d00/d11 swapped) misses the first case by 0.47 px.
+    #[test]
+    fn local_maxi_is_exact_on_a_quadratic_with_cross_term() {
+        let (h, w) = (25usize, 25usize);
+        // (center0, center1, a, b, c): negative definite, a*b > c*c.
+        let cases = [
+            (12.0f64 - 0.4, 12.0 + 0.3, 0.02, 0.1, 0.0),
+            (12.0 + 0.35, 12.0 - 0.25, 0.05, 0.03, 0.02),
+            (12.0 - 0.1, 12.0 - 0.4, 0.08, 0.06, -0.02),
+            (12.0 + 0.4, 12.0 + 0.4, 0.1, 0.02, 0.015),
+        ];
+        for &(c0, c1, a, b, c) in &cases {
+            let data: Vec<f32> = (0..h * w)
+                .map(|i| {
+                    let d1 = (i / w) as f64 - c0;
+                    let d2 = (i % w) as f64 - c1;
+                    (1.0 - a * d1 * d1 - b * d2 * d2 - 2.0 * c * d1 * d2) as f32
+                })
+                .collect();
+            let (p0, p1) = Bilinear::new(&data, h, w).local_maxi((12.0, 12.0));
+            let err = ((p0 - c0).powi(2) + (p1 - c1).powi(2)).sqrt();
+            assert!(
+                err < 1e-4,
+                "maximum ({c0}, {c1}) found at ({p0}, {p1}), err {err}"
+            );
+        }
     }
 }

@@ -1,7 +1,7 @@
 //! Peak-finding parity gate: `rsfai-peaks` vs pyFAI on `golden/datasets_peaks/`.
 //!
-//! `gen_golden_peaks.py` (daq env, pyFAI 2026.5.0 `-ffp-contract=off`, scipy
-//! 1.17.1) dumps five surfaces; this verifier reloads the identical inputs,
+//! `gen_golden_peaks.py` (pyFAI 2026.9.0 manylinux wheel, scipy 1.18.1)
+//! dumps five surfaces; this verifier reloads the identical inputs,
 //! runs the Rust ports, and asserts the gate from `doc/bit-exact-ladder.md`:
 //!
 //!   * `scipy.ndimage.label` (8/4-connectivity) -> int32 labels: **bit-exact**.
