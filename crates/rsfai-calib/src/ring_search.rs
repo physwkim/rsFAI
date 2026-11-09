@@ -13,6 +13,7 @@
 //! not scipy's SLSQP. The picked peaks and the converged geometry are
 //! therefore checked at a tolerance, not bit for bit.
 
+use rayon::prelude::*;
 use rsfai_calibrant::Calibrant;
 use rsfai_detectors::Detector;
 use rsfai_geometry::calc_pos_zyx;
@@ -57,37 +58,35 @@ pub struct Band {
 
 /// 2θ (rad) at every pixel centre under `param`, row-major
 /// (`Geometry.twoThetaArray`): [`GeometryRefinement::tth`]'s chain over the
-/// whole detector, a block of rows at a time.
+/// whole detector, blocks of rows in parallel.
 pub fn tth_array(detector: &Detector, param: &GeometryParams) -> Vec<f64> {
-    const ROWS: usize = 256;
-    let (h, w) = detector.shape;
-    let mut tth = Vec::with_capacity(h * w);
-    for r0 in (0..h).step_by(ROWS) {
-        let rows = r0..(r0 + ROWS).min(h);
-        let (p1, p2): (Vec<f64>, Vec<f64>) = rows
-            .flat_map(|i| (0..w).map(move |j| (i, j)))
-            .map(|(i, j)| point_cartesian(detector, i as f64, j as f64))
-            .unzip();
-        let pos = calc_pos_zyx(
-            param.dist,
-            param.poni1,
-            param.poni2,
-            param.rot1,
-            param.rot2,
-            param.rot3,
-            &p1,
-            &p2,
-            None,
-            detector.orientation,
-        );
-        tth.extend(
-            pos.y
-                .iter()
-                .zip(&pos.x)
-                .zip(&pos.z)
-                .map(|((&t1, &t2), &t3)| (t1 * t1 + t2 * t2).sqrt().atan2(t3)),
-        );
-    }
+    const ROWS: usize = 64;
+    let w = detector.shape.1;
+    let mut tth = vec![0.0; detector.size()];
+    tth.par_chunks_mut(ROWS * w.max(1))
+        .enumerate()
+        .for_each(|(block, out)| {
+            let r0 = block * ROWS;
+            let (p1, p2): (Vec<f64>, Vec<f64>) = (r0..r0 + out.len() / w)
+                .flat_map(|i| (0..w).map(move |j| (i, j)))
+                .map(|(i, j)| point_cartesian(detector, i as f64, j as f64))
+                .unzip();
+            let pos = calc_pos_zyx(
+                param.dist,
+                param.poni1,
+                param.poni2,
+                param.rot1,
+                param.rot2,
+                param.rot3,
+                &p1,
+                &p2,
+                None,
+                detector.orientation,
+            );
+            for (t, ((&t1, &t2), &t3)) in out.iter_mut().zip(pos.y.iter().zip(&pos.x).zip(&pos.z)) {
+                *t = (t1 * t1 + t2 * t2).sqrt().atan2(t3);
+            }
+        });
     tth
 }
 
