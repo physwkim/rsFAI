@@ -35,6 +35,10 @@ import os
 import platform
 import tempfile
 
+# Before numpy loads: its AVX512 kernels (SVML pow/arctan2/arccos) are not
+# libm-exact, so a golden would depend on the generating CPU.
+os.environ["NPY_DISABLE_CPU_FEATURES"] = "X86_V4 AVX512_SKX AVX512_CLX AVX512_CNL AVX512_ICL AVX512_SPR"
+
 import fabio
 import numpy as np
 import scipy

@@ -14,6 +14,10 @@ OMP_NUM_THREADS=1 /Users/stevek/mamba/envs/daq/bin/python golden/gen_golden.py
 `OMP_NUM_THREADS=1` is mandatory: it removes OpenMP reduction nondeterminism so
 the accumulation order is reproducible (the bit-exact precondition).
 
+Each generator also sets `NPY_DISABLE_CPU_FEATURES` to NumPy's AVX512 targets
+before importing numpy: on an AVX512 CPU those kernels compute `power`,
+`arctan2` and `arccos` with SVML, which is not libm-exact.
+
 ## What's committed vs regenerated
 
 Each `datasets/<config>/` directory is self-contained. To keep the repo lean

@@ -23,6 +23,10 @@ Dumps (committed): sample_{x,y,z}.npy + out_<combo>__<key>.npy (each ~4096 f64,
 import json
 import os
 
+# Before numpy loads: its AVX512 kernels (SVML pow/arctan2/arccos) are not
+# libm-exact, so a golden would depend on the generating CPU.
+os.environ["NPY_DISABLE_CPU_FEATURES"] = "X86_V4 AVX512_SKX AVX512_CLX AVX512_CNL AVX512_ICL AVX512_SPR"
+
 import numpy as np
 
 from pyFAI import units as U
