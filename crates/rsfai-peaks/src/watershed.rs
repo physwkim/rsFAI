@@ -253,8 +253,9 @@ impl InverseWatershed {
     ///   * `refine`: sub-pixel-refine each kept peak via the bilinear Taylor fit.
     ///   * `dmin`: minimum distance (in pixels) between kept peaks.
     ///
-    /// Returns peaks as `(y, x)` `f32` pairs (refined) or integer-valued `f32`
-    /// pairs (`refine == false`).
+    /// Returns peaks as `(y, x)` pairs: the doubles [`Bilinear::local_maxi`]
+    /// returns (refined), or the integer pixel (`refine == false`), as pyFAI's
+    /// Python numbers are.
     ///
     /// **Ordering caveat.** The peak *coordinates* are bit-exact vs pyFAI, but
     /// the returned *list order* is not a portable contract: pyFAI gathers peaks
@@ -268,11 +269,11 @@ impl InverseWatershed {
     pub fn peaks_from_area(
         &self,
         mask: &[bool],
-        imin: Option<f32>,
+        imin: Option<f64>,
         keep: Option<usize>,
         refine: bool,
         dmin: f32,
-    ) -> Vec<(f32, f32)> {
+    ) -> Vec<(f64, f64)> {
         assert_eq!(mask.len(), self.height * self.width, "mask shape");
         let width = self.width;
         // Regions touched by any valid pixel. pyFAI builds a CPython `set`
@@ -291,7 +292,8 @@ impl InverseWatershed {
             }
         }
 
-        let mut output_points: Vec<(f32, f32)> = Vec::new();
+        let bilinear = refine.then(|| Bilinear::new(&self.data, self.height, self.width));
+        let mut output_points: Vec<(f64, f64)> = Vec::new();
         let mut intensities: Vec<f32> = Vec::new();
         for ri in &keep_regions {
             let region = &self.regions[ri];
@@ -300,16 +302,11 @@ impl InverseWatershed {
                     intensities.push(self.data[j as usize]);
                     let x = j as usize % width;
                     let y = j as usize / width;
-                    output_points.push((y as f32, x as f32));
+                    output_points.push(match &bilinear {
+                        Some(b) => b.local_maxi((y as f32, x as f32)),
+                        None => (y as f64, x as f64),
+                    });
                 }
-            }
-        }
-
-        if refine {
-            let bilinear = Bilinear::new(&self.data, self.height, self.width);
-            for p in output_points.iter_mut() {
-                let (y, x) = bilinear.local_maxi(*p);
-                *p = (y as f32, x as f32);
             }
         }
 
@@ -325,15 +322,20 @@ impl InverseWatershed {
                     .then(a.cmp(&b))
             });
             if let Some(im) = imin {
-                argsort.retain(|&i| intensities[i] >= im);
+                argsort.retain(|&i| f64::from(intensities[i]) >= im);
             }
-            let mut ordered: Vec<(f32, f32)> = argsort.iter().map(|&i| output_points[i]).collect();
+            let mut ordered: Vec<(f64, f64)> = argsort.iter().map(|&i| output_points[i]).collect();
 
-            let dmin2 = if dmin != 0.0 { dmin * dmin } else { 0.0 };
+            // Cython's `dmin * dmin` is a C float product stored in a double.
+            let dmin2 = if dmin != 0.0 {
+                f64::from(dmin * dmin)
+            } else {
+                0.0
+            };
             if let Some(k) = keep {
                 if ordered.len() > k {
                     let tmp_lst = ordered.clone();
-                    let mut rej_lst: Vec<(f32, f32)> = Vec::new();
+                    let mut rej_lst: Vec<(f64, f64)> = Vec::new();
                     ordered = Vec::new();
                     for pt in tmp_lst {
                         let mut too_close = false;
@@ -360,5 +362,31 @@ impl InverseWatershed {
             return ordered;
         }
         output_points
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn imin_is_compared_as_a_double() {
+        // Two pyramids topped by 0.2f32 at (2, 6) and 0.1f32 = 0.10000000149...
+        // at (2, 2); a lone region has no border and is dropped.
+        let level = [1.0f32, 0.5, 0.1, 0.05, 0.01];
+        let data = (0..45)
+            .map(|i: usize| {
+                let (y, x) = (i / 9, i % 9);
+                let at = |cx: usize| level[y.abs_diff(2).max(x.abs_diff(cx)).min(4)];
+                (0.1 * at(2)).max(0.2 * at(6))
+            })
+            .collect();
+        let mut iw = InverseWatershed::new(data, 5, 9);
+        iw.init();
+        let all = vec![true; 45];
+        let peaks = |imin| iw.peaks_from_area(&all, Some(imin), None, false, 0.0);
+        assert_eq!(peaks(0.1000000014), vec![(2.0, 6.0), (2.0, 2.0)]);
+        // Rounds to 0.1f32 but lies above it: pyFAI's double `>=` drops the peak.
+        assert_eq!(peaks(0.1000000016), vec![(2.0, 6.0)]);
     }
 }

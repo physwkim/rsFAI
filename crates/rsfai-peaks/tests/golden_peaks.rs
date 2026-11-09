@@ -9,7 +9,7 @@
 //!     **bit-exact** (the squared-distance accumulation is integer; `sqrt` of an
 //!     exact integer is correctly-rounded, so the distance is exact too).
 //!   * `InverseWatershed` int32 labels, uint8 borders, and `peaks_from_area`
-//!     coordinates (f32): **bit-exact** (deterministic hill-climb + algebra).
+//!     coordinates (f64): **bit-exact** (deterministic hill-climb + algebra).
 //!   * blob DoG `local_max` voxel coords (int32): **bit-exact**; `refine_Hessian`
 //!     positions (f64, `int64_kp + float32_delta`) and peak value (f32):
 //!     **bit-exact** (pure `f32` Hessian algebra on the golden DoG stack, the
@@ -188,7 +188,7 @@ fn watershed_matches_pyfai() {
     for case in ws["peaks"].as_array().unwrap() {
         let tag = case["tag"].as_str().unwrap();
         let cfg = &case["config"];
-        let imin = cfg["Imin"].as_f64().map(|v| v as f32);
+        let imin = cfg["Imin"].as_f64();
         let keep = cfg["keep"].as_u64().map(|v| v as usize);
         let refine = cfg["refine"].as_bool().unwrap();
         let dmin = cfg["dmin"].as_f64().unwrap() as f32;
@@ -206,10 +206,8 @@ fn watershed_matches_pyfai() {
         let mut iwc = InverseWatershed::new(cimg, crows, ccols);
         iwc.init();
         let pts = iwc.peaks_from_area(&cmask, imin, keep, refine, dmin);
-        // pyFAI's peaks_from_area produces f32 coordinates (the bilinear refine
-        // returns f32; the no-refine path returns integer-valued coords). The
-        // generator stored them as a float64 array, so narrow it back to f32 —
-        // every stored value is exactly f32-representable.
+        // pyFAI returns Python floats: the refined `delta + float(current)` is a
+        // double sum, so compare the generator's float64 array bit for bit.
         //
         // The peak COORDINATES are gated bit-exact, but the returned LIST ORDER
         // is not: pyFAI gathers peaks region-by-region in the iteration order of
@@ -220,16 +218,16 @@ fn watershed_matches_pyfai() {
         // here); with tied intensities the order can differ while the coordinate
         // set stays bit-exact. So compare as a SORTED multiset of (y, x) pairs:
         // membership/values bit-exact, order-independent.
-        let mut got_pairs: Vec<(u32, u32)> = pts
+        let mut got_pairs: Vec<(u64, u64)> = pts
             .iter()
             .map(|&(y, x)| (y.to_bits(), x.to_bits()))
             .collect();
         let golden_f64 = f64v(case["file"].as_str().unwrap());
-        let mut golden_pairs: Vec<(u32, u32)> = golden_f64
+        let mut golden_pairs: Vec<(u64, u64)> = golden_f64
             .as_chunks::<2>()
             .0
             .iter()
-            .map(|&[y, x]| ((y as f32).to_bits(), (x as f32).to_bits()))
+            .map(|&[y, x]| (y.to_bits(), x.to_bits()))
             .collect();
         got_pairs.sort_unstable();
         golden_pairs.sort_unstable();
