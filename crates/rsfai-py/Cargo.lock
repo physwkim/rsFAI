@@ -766,7 +766,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argmin",
  "argmin-math",
@@ -784,7 +784,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai-py"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "numpy",
  "opencl3",
