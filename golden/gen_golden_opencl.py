@@ -9,7 +9,7 @@ Run in the `pyfai2026.5` micromamba env (pyFAI + pyopencl, on the NVIDIA RTX
 
 Unlike ``gen_golden.py`` (the bit-exact *cython* generator), this drives
 pyFAI's **OpenCL** integrators (``OCL_CSR_Integrator``) and dumps what the GPU
-actually produced. The Rust ``rsfai-opencl`` backend reuses pyFAI's own
+actually produced. The Rust ``rsfai::opencl`` backend reuses pyFAI's own
 ``.cl`` kernels, so on the same device the result is expected to match these
 golden values bit-for-bit; the validation gate is relative error <= 1e-6 to
 allow for the cross-work-group reduction order (see doc/bit-exact-ladder.md).

@@ -21,12 +21,12 @@
 
 use std::path::PathBuf;
 
+use rsfai::calibrant::Calibrant;
+use rsfai::compare::compare_f64;
+use rsfai::detectors::Detector;
+use rsfai::geometry::{unscaled_center_array, Unit};
+use rsfai::golden::{load_npy_f64, load_npy_i8};
 use rsfai::{fake_calibration_image, numpy_interp, AzimuthalIntegrator, Calcfrom1dOptions};
-use rsfai_calibrant::Calibrant;
-use rsfai_core::compare::compare_f64;
-use rsfai_core::golden::{load_npy_f64, load_npy_i8};
-use rsfai_detectors::Detector;
-use rsfai_geometry::{unscaled_center_array, Unit};
 
 /// Tier-B ULP budget for the transcendental `fake_xrpdp` Gaussian (its numexpr
 /// `exp` and Bragg-2θ `asin`) and `fake_calibration_image`, which inherits it.

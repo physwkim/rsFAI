@@ -9,8 +9,8 @@ identical input arrays.
 This crate is intentionally **excluded** from the default Cargo workspace (see
 the root `Cargo.toml`) so `cargo build` / `cargo test` of the engines do not
 require the extension-module linkage. It is a `cdylib` built standalone by
-maturin; its path dependencies (`rsfai-core`, `rsfai-integrate`, `rsfai-preproc`)
-still resolve their workspace inheritance from the root.
+maturin; its one path dependency (`rsfai`, with the `opencl` feature) still resolves
+its workspace inheritance from the root.
 
 ## Exposed kernels
 

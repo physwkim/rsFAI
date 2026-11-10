@@ -7,7 +7,7 @@ use thiserror::Error;
 pub enum Error {
     /// The `.poni` file could not be parsed or loaded.
     #[error(transparent)]
-    Geometry(#[from] rsfai_geometry::GeometryError),
+    Geometry(#[from] crate::geometry::GeometryError),
     /// The PONI named a detector with no golden-validated path in this crate.
     /// Supply the detector explicitly via
     /// [`AzimuthalIntegrator::from_poni`](crate::AzimuthalIntegrator::from_poni).

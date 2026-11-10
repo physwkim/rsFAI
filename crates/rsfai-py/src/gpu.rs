@@ -13,7 +13,7 @@
 //! All three OpenCL algos are exposed: CSR and LUT (deterministic on the M4 Pro,
 //! validated bit-exact) and histogram (atomic scatter — `count` is bit-exact via
 //! integer atomics, the float columns carry a bounded atomic-add noise; pyFAI is
-//! not bit-reproducible against itself there either). See `rsfai-opencl`.
+//! not bit-reproducible against itself there either). See `rsfai::opencl`.
 //!
 //! Results are **tolerance-validated, not bit-exact** in general: the target
 //! device (Apple M4 Pro) has no f64, so pyFAI's kernels accumulate in a doubleword
@@ -27,8 +27,8 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use rsfai_opencl::program::{build_csr_program, build_histogram_program, build_lut_program};
-use rsfai_opencl::{
+use rsfai_engine::opencl::program::{build_csr_program, build_histogram_program, build_lut_program};
+use rsfai_engine::opencl::{
     create_queue, default_context, integrate1d_csr, integrate1d_histogram, integrate1d_lut,
     integrate2d_csr, integrate2d_histogram, integrate2d_lut, ClSession, Corrections4Args,
     Corrections4aArgs, CsrInputs, HistResult1d, HistResult2d, HistogramInputs, HistogramScalars,
@@ -37,7 +37,7 @@ use rsfai_opencl::{
 
 use crate::as_slice_1d;
 
-/// Map an `rsfai-opencl` `String` error to a Python `RuntimeError`.
+/// Map an `rsfai::opencl` `String` error to a Python `RuntimeError`.
 fn ocl_err<T>(r: Result<T, String>, what: &str) -> PyResult<T> {
     r.map_err(|e| PyRuntimeError::new_err(format!("{what}: {e}")))
 }
@@ -64,7 +64,7 @@ fn opt_vec_i8(a: Option<PyReadonlyArray1<'_, i8>>) -> PyResult<Option<Vec<i8>>> 
 /// and pyFAI's doubleword kernels are required (the Apple M4 Pro case).
 #[pyfunction]
 pub fn list_gpu_devices(py: Python<'_>) -> PyResult<Vec<Py<PyDict>>> {
-    let devs = rsfai_opencl::list_devices()
+    let devs = rsfai_engine::opencl::list_devices()
         .map_err(|e| PyRuntimeError::new_err(format!("OpenCL device enumeration failed: {e}")))?;
     let mut out = Vec::with_capacity(devs.len());
     for d in devs {
@@ -145,7 +145,7 @@ impl CorrConfig {
 }
 
 /// The cached sparse/scatter matrix on the GPU side, one variant per algo. Holds
-/// the host-side data the `rsfai-opencl` orchestrator uploads on each frame plus
+/// the host-side data the `rsfai::opencl` orchestrator uploads on each frame plus
 /// the algo's work-group parameter.
 enum GpuMatrix {
     Csr {

@@ -78,7 +78,7 @@ and boundary 3 removed at the source.
 ## dtype contract
 
 Ported verbatim from `pyFAI/ext/regrid_common.pxi:56-78`. See
-`crates/rsfai-core/src/dtype.rs`.
+`crates/rsfai/src/dtype.rs`.
 
 | pyFAI ctype | meaning | Rust type |
 |---|---|---|
@@ -134,7 +134,7 @@ documented divergence. Tier C is the integration test; **Tier A is the gate.**
 
 ### Tier D — OpenCL/GPU backend (Phase 2, tolerance-gated)
 
-The `rsfai-opencl` crate targets pyFAI's **OpenCL** integrators, not the cython
+The `rsfai::opencl` module (cargo feature `opencl`) targets pyFAI's **OpenCL** integrators, not the cython
 kernels. pyFAI accumulates in a **doubleword** (two-f32 Kahan) representation
 and the work-group reductions reorder adds — so
 end-to-end bitwise identity is **not** promised by construction; the gate is

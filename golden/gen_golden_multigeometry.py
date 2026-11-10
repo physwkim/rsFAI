@@ -4,7 +4,7 @@ detector geometries integrated into one shared radial/azimuth grid and combined
 by the sequential weighted ``union`` + ``__recalculate_means__``
 (``containers.py``).
 
-This gates the ``rsfai-multigeometry`` crate end-to-end:
+This gates the ``rsfai::multigeometry`` module end-to-end:
 
   * per-geometry monitor scaling ``monitor * pixel1*pixel2/dist**2`` (f64), with
     ``correctSolidAngle`` on **and** off;

@@ -1,21 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/rsfai-core",
-    "crates/rsfai-geometry",
-    "crates/rsfai-detectors",
-    "crates/rsfai-preproc",
-    "crates/rsfai-integrate",
-    "crates/rsfai-opencl",
     "crates/rsfai",
-    "crates/rsfai-multigeometry",
-    "crates/rsfai-fiber",
-    "crates/rsfai-calibrant",
-    "crates/rsfai-distortion",
-    "crates/rsfai-peaks",
-    "crates/rsfai-calib",
-    "crates/rsfai-goniometer",
-    "crates/rsfai-io",
     # rsfai-py (the PyO3 drop-in) is intentionally excluded from the default
     # cargo build/test: it is a cdylib needing extension-module linkage, built
     # standalone with maturin. See crates/rsfai-py/README.md.
@@ -30,23 +16,6 @@ repository = "https://github.com/physwkim/rsFAI"
 rust-version = "1.94"
 
 [workspace.dependencies]
-# Internal crates
-rsfai-core = { path = "crates/rsfai-core", version = "0.1.0" }
-rsfai-geometry = { path = "crates/rsfai-geometry", version = "0.1.0" }
-rsfai-detectors = { path = "crates/rsfai-detectors", version = "0.1.0" }
-rsfai-preproc = { path = "crates/rsfai-preproc", version = "0.1.0" }
-rsfai-integrate = { path = "crates/rsfai-integrate", version = "0.1.0" }
-rsfai-opencl = { path = "crates/rsfai-opencl", version = "0.1.0" }
-rsfai = { path = "crates/rsfai", version = "0.1.0" }
-rsfai-multigeometry = { path = "crates/rsfai-multigeometry", version = "0.1.0" }
-rsfai-fiber = { path = "crates/rsfai-fiber", version = "0.1.0" }
-rsfai-calibrant = { path = "crates/rsfai-calibrant", version = "0.1.0" }
-rsfai-distortion = { path = "crates/rsfai-distortion", version = "0.1.0" }
-rsfai-peaks = { path = "crates/rsfai-peaks", version = "0.1.0" }
-rsfai-calib = { path = "crates/rsfai-calib", version = "0.1.0" }
-rsfai-goniometer = { path = "crates/rsfai-goniometer", version = "0.1.0" }
-rsfai-io = { path = "crates/rsfai-io", version = "0.1.0" }
-
 # External
 ndarray = "0.16"
 ndarray-npy = "0.9"
@@ -55,10 +24,10 @@ serde_json = "1"
 num-traits = "0.2"
 thiserror = "2"
 rayon = "1"
-# Pure-Rust HDF5 / NeXus reader (no libhdf5 C dependency) used by rsfai-io.
+# Pure-Rust HDF5 / NeXus reader (no libhdf5 C dependency) used by `rsfai::io`.
 rust-hdf5 = "0.2"
-# Iterative optimizer used ONLY by rsfai-calib's `refine()` (and later
-# rsfai-goniometer). Isolated to the calibration layer; the bit-exact
+# Iterative optimizer used ONLY by the `refine()` of `rsfai::calib` and
+# `rsfai::goniometer`. Isolated to the calibration layer; the bit-exact
 # integration/geometry core never depends on it.
 argmin = { version = "0.11", default-features = false }
 argmin-math = { version = "0.5", default-features = true }

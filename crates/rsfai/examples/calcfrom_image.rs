@@ -15,10 +15,10 @@
 use std::f64::consts::PI;
 use std::path::PathBuf;
 
+use rsfai::calibrant::Calibrant;
+use rsfai::detectors::Detector;
+use rsfai::geometry::Unit;
 use rsfai::{fake_calibration_image, AzimuthalIntegrator, Calcfrom1dOptions};
-use rsfai_calibrant::Calibrant;
-use rsfai_detectors::Detector;
-use rsfai_geometry::Unit;
 
 /// Generic 128×128 detector, 100 µm pixels, orientation 3 (pyFAI's `Detector`
 /// default), at a short distance so several LaB6 rings land on it.

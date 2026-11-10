@@ -1,7 +1,7 @@
 //! `rsfai` — PyO3 bindings over the bit-exact rsFAI integration kernels.
 //!
 //! This module is a thin, numpy-in/numpy-out shim around the engines in
-//! `rsfai-preproc` and `rsfai-integrate`. It exists for **in-process
+//! `rsfai::preproc` and `rsfai::integrate`. It exists for **in-process
 //! side-by-side validation**: a test running in the same Python interpreter as
 //! `pyFAI` feeds both libraries the identical input arrays and compares the
 //! outputs bit-for-bit (`numpy.ndarray.tobytes()` / `.view` equality).
@@ -36,12 +36,12 @@ use pyo3::types::PyDict;
 
 mod gpu;
 
-use rsfai_core::dtype::ErrorModel;
+use rsfai_engine::dtype::ErrorModel;
 use rsfai_engine::{
     Algo, AzimuthalIntegrator as RsAzimuthalIntegrator, Integrate1dResult, Integrate2dResult,
     IntegrationOptions, Method, RadialUnit, Split,
 };
-use rsfai_integrate::{
+use rsfai_engine::integrate::{
     build_bbox_csc_1d as rs_build_bbox_csc_1d, build_bbox_csc_2d as rs_build_bbox_csc_2d,
     build_bbox_csr_1d as rs_build_bbox_csr_1d, build_bbox_csr_2d as rs_build_bbox_csr_2d,
     build_bbox_lut_1d as rs_build_bbox_lut_1d, build_bbox_lut_2d as rs_build_bbox_lut_2d,
@@ -60,7 +60,7 @@ use rsfai_integrate::{
     Bbox2dBounds, Csc, Csr, CsrIntegrate1d, Hist2dOptions, Integrate1d, Integrate2d, Lut,
     ReductionOut,
 };
-use rsfai_preproc::{preproc4 as rs_preproc4, PreprocOptions};
+use rsfai_engine::preproc::{preproc4 as rs_preproc4, PreprocOptions};
 
 /// A built 1D CSR returned to Python: `(data, indices, indptr, bin_centers)`.
 type Csr1dPy<'py> = (

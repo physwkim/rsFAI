@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-"""Golden generator for Dioptas's automatic refinement (rsfai-calib ring_search).
+"""Golden generator for Dioptas's automatic refinement (rsfai::calib ring_search).
 
 Run headless, single-thread, with Dioptas 0.13.0 on pyFAI 2026.9.0, the
-release whose Bilinear.local_maxi Hessian rsfai-peaks follows (the
+release whose Bilinear.local_maxi Hessian rsfai::peaks follows (the
 micromamba env pyfai2026.9 holds both as pip wheels):
 
     QT_QPA_PLATFORM=offscreen OMP_NUM_THREADS=1 \\
@@ -16,7 +16,7 @@ Massif.peaks_from_area are wrapped to record, for each ring: the geometry
 it was searched with, the band (mask2, Imin, keep), the visit order and
 the peaks kept.
 
-Surfaces, all feeding crates/rsfai-calib/tests/golden_ringsearch.rs:
+Surfaces, all feeding crates/rsfai/tests/golden_ringsearch.rs:
 
   * tth: Geometry.twoThetaArray at the start geometry (ULP tolerance).
   * band: per ring, mask2 from the geometry the ring was searched with

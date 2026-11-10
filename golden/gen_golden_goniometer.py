@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Golden generator for the goniometer subsystem (rsfai-goniometer).
+"""Golden generator for the goniometer subsystem (rsfai::goniometer).
 
 Run single-thread in the pyfai2026.5 micromamba env (pyFAI 2026.5.0 manylinux wheel, no FMA,
 scipy 1.17.1, numpy 2.4.3, numexpr present):
@@ -7,7 +7,7 @@ scipy 1.17.1, numpy 2.4.3, numexpr present):
     OMP_NUM_THREADS=1 ~/micromamba/envs/pyfai2026.5/bin/python -I \\
         golden/gen_golden_goniometer.py
 
-THREE parity surfaces, all feeding crates/rsfai-goniometer/tests/golden_goniometer.rs:
+THREE parity surfaces, all feeding crates/rsfai/tests/golden_goniometer.rs:
 
   * GeometryTransformation (the BIT-EXACT formula gate). A real 2-motor
     GeometryTransformation (one translation on dist, one rotation on rot2, plus a
@@ -99,7 +99,7 @@ POSITIONS = [
 #   params ARE the six pyFAI geometry params (identity passthrough per
 #   component). A single motor `pos` is bound but referenced only via a
 #   `0.0 * pos` term in rot2 so the motor-binding plumbing is exercised without
-#   adding a null fit direction. This mirrors rsfai-calib's well-posed
+#   adding a null fit direction. This mirrors rsfai::calib's well-posed
 #   test_noSpline refinement (chi2 ~1.25e-2 -> ~7.35e-4), so SLSQP converges
 #   cleanly (status 0) on the five ring-constrained params; rot3 is a null
 #   direction and is left near its start.
@@ -114,7 +114,7 @@ ROT3_EXPR = "rot3"
 
 # The "fixed" goniometer parameter vector (bit-exact residual gate + refine
 # start): the test_noSpline post-`guess_poni` initial estimate (the same start
-# rsfai-calib's golden uses).
+# rsfai::calib's golden uses).
 FIXED_PARAM = [
     0.07024175,   # dist
     0.02680055,   # poni1
@@ -128,7 +128,7 @@ PIXEL = 1.5e-5
 WAVELENGTH = 1.54e-10
 
 # --- pyFAI test_geometry_refinement.py::test_noSpline LaB6 control points --
-# (verbatim, the same fixture rsfai-calib uses; first 25 rows for a compact
+# (verbatim, the same fixture rsfai::calib uses; first 25 rows for a compact
 #  two-geometry refinement.)
 CONTROL_POINTS = [
     [1585.9999996029055, 2893.999999119241, 0.5300564938306779],

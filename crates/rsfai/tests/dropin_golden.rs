@@ -25,11 +25,11 @@
 
 use std::path::{Path, PathBuf};
 
+use rsfai::compare::{compare_f32, compare_f64};
+use rsfai::golden::{load_image_f32, load_manifest, load_npy_f32, load_npy_f64};
 use rsfai::{
     Algo, AzimuthalIntegrator, ErrorModelKind, IntegrationOptions, Method, RadialUnit, Split,
 };
-use rsfai_core::compare::{compare_f32, compare_f64};
-use rsfai_core::golden::{load_image_f32, load_manifest, load_npy_f32, load_npy_f64};
 
 /// Relative-error gate for the parallel-histogram accumulator fields.
 const REL_TOL: f64 = 1e-6;
@@ -63,7 +63,7 @@ fn dataset_dirs() -> Vec<PathBuf> {
         for e in rd.flatten() {
             // Cython golden datasets only: skip the Phase-2 OpenCL datasets,
             // which carry an `opencl_params.json` and a reduced manifest with no
-            // cython intermediates. `rsfai-opencl`'s own golden test owns those.
+            // cython intermediates. `rsfai::opencl`'s own golden test owns those.
             if e.path().join("manifest.json").exists()
                 && !e.path().join("opencl_params.json").exists()
             {

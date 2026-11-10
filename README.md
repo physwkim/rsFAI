@@ -7,8 +7,8 @@ DAQ-side use.
 
 Scope: geometry (PONI), detector model, units, per-pixel preprocessing, and
 `integrate1d` / `integrate2d` via histogram + bbox/CSR/full pixel-splitting on
-CPU, plus crates for OpenCL/GPU, multi-geometry, fiber, calibration,
-distortion/spline, peaks, goniometer and HDF5 I/O. **Out of scope:** GUI.
+CPU, plus modules for OpenCL/GPU (cargo feature `opencl`), multi-geometry,
+fiber, calibration, distortion/spline, peaks, goniometer and HDF5 I/O. **Out of scope:** GUI.
 
 ## Correctness: bit-exact against pyFAI
 
@@ -88,30 +88,37 @@ CSR with pixel-splitting runs ~0.8× of pyFAI. LUT now runs close to CSR for fin
 Reproduce (no `daq` env needed — pure Rust):
 
 ```sh
-cargo run --release -p rsfai-integrate --example native_bench      # 1D, npt1000
-cargo run --release -p rsfai-integrate --example native_bench_2d   # 2D, nr×na sweep
-RAYON_NUM_THREADS=1 cargo run --release -p rsfai-integrate --example native_bench_2d  # single-thread
+cargo run --release -p rsfai --example native_bench      # 1D, npt1000
+cargo run --release -p rsfai --example native_bench_2d   # 2D, nr×na sweep
+RAYON_NUM_THREADS=1 cargo run --release -p rsfai --example native_bench_2d  # single-thread
 ```
 
 ## Layout
 
-| Crate | Role | Milestone |
-|---|---|---|
-| `rsfai-core` | dtype contract, golden bit/ULP comparison, `.npy` loaders | M0 |
-| `rsfai-geometry` | PONI parse, `tth`/`chi`/`q`/`r`, units | M1 |
-| `rsfai-detectors` | detector model + registry, pixel corners | M2 |
-| `rsfai-preproc` | per-pixel dark/flat/solidangle/polarization/norm | M3 |
-| `rsfai-integrate` | histogram, bbox/full split, sparse builder, CSR | M4–M6 |
-| `rsfai-py` | PyO3 drop-in module (maturin) | M7 |
+One library crate, `crates/rsfai`, with a module per pyFAI subsystem, plus
+`crates/rsfai-py` (the PyO3 drop-in module, built standalone with maturin):
+
+| Module | Role |
+|---|---|
+| `dtype`, `compare`, `golden` | dtype contract, golden bit/ULP comparison, `.npy` loaders |
+| `geometry` | PONI parse, `tth`/`chi`/`q`/`r`, fiber units, solid-angle / polarization |
+| `detectors` | detector model + registry, pixel corners |
+| `preproc` | per-pixel dark/flat/solidangle/polarization/norm |
+| `integrate` | histogram, bbox/full split, CSR / CSC / LUT engines |
+| `opencl` (feature `opencl`) | pyFAI's own `.cl` kernels on the GPU via `opencl3` |
+| `multigeometry`, `fiber`, `goniometer` | multi-geometry union, GIWAXS fiber, goniometer refinement |
+| `calibrant`, `calib`, `peaks` | calibrants + cells, control points + refinement, peak finding |
+| `distortion`, `io` | spline distortion correction, HDF5/NeXus reading |
 
 `golden/` holds the Python generator (`gen_golden.py`, runs in `daq`) and the
-committed golden curves; each crate's `tests/` holds the Rust integration tests
-that read them (e.g. `crates/rsfai-core/tests/golden_smoke.rs`).
+committed golden curves; `crates/rsfai/tests/` holds the Rust integration tests
+that read them (e.g. `golden_smoke.rs`).
 
 ## Build & test
 
 ```sh
 cargo test                 # serial, single-threaded — the bit-exact gate
+cargo test --features opencl   # adds the OpenCL golden gate (needs an OpenCL ICD)
 ```
 
 Golden generation (in the `daq` env):

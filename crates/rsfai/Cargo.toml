@@ -6,13 +6,27 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 readme = "../../README.md"
-description = "Azimuthal integrator (PONI + detector image to 1D/2D curves), a bit-exact Rust port of pyFAI's integrate1d/integrate2d"
+description = "Bit-exact Rust port of pyFAI: azimuthal integration, geometry, calibration, distortion, peaks, goniometer, HDF5 I/O"
+
+[features]
+# OpenCL/GPU backend (`rsfai::opencl`): off by default because it links the
+# system OpenCL ICD loader at build time.
+opencl = ["dep:opencl3"]
 
 [dependencies]
-rsfai-core.workspace = true
-rsfai-geometry.workspace = true
-rsfai-detectors.workspace = true
-rsfai-preproc.workspace = true
-rsfai-integrate.workspace = true
-rsfai-calibrant.workspace = true
+ndarray.workspace = true
+ndarray-npy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+num-traits.workspace = true
 thiserror.workspace = true
+rayon.workspace = true
+rust-hdf5.workspace = true
+argmin.workspace = true
+argmin-math.workspace = true
+nalgebra = "0.33"
+opencl3 = { version = "0.12", optional = true }
+
+[[test]]
+name = "opencl_golden"
+required-features = ["opencl"]

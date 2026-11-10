@@ -1,14 +1,14 @@
 #!/usr/bin/env python
-"""Golden generator for the peak-finding primitives (rsfai-peaks).
+"""Golden generator for the peak-finding primitives (rsfai::peaks).
 
 Run single-thread with pyFAI 2026.9.0 (the release whose Bilinear.local_maxi
-Hessian rsfai-peaks follows; the micromamba env pyfai2026.9 holds the pip
+Hessian rsfai::peaks follows; the micromamba env pyfai2026.9 holds the pip
 wheel, x86-64 baseline so no FMA):
 
     OMP_NUM_THREADS=1 ~/micromamba/envs/pyfai2026.9/bin/python -I \\
         golden/gen_golden_peaks.py
 
-Five parity surfaces, all feeding crates/rsfai-peaks/tests/golden_peaks.rs:
+Five parity surfaces, all feeding crates/rsfai/tests/golden_peaks.rs:
 
   * label: scipy.ndimage.label on a synthetic binary image, 8- and
     4-connectivity (the get_labeled_massif connected-component pass,

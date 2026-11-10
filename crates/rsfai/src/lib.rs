@@ -1,9 +1,9 @@
 //! The end-to-end azimuthal integrator: PONI + detector image → integrated
 //! curve, in pure Rust. This is the orchestrator that wires the validated
-//! pieces together — [`rsfai_detectors`] (pixel centres, gap mask, dummy),
-//! [`rsfai_geometry`] (rotation transform, radial/azimuthal units, solid-angle
-//! and polarization corrections), [`rsfai_preproc`] (per-pixel preprocessing),
-//! and [`rsfai_integrate`] (the binning engines) — into a single
+//! pieces together — [`crate::detectors`] (pixel centres, gap mask, dummy),
+//! [`crate::geometry`] (rotation transform, radial/azimuthal units, solid-angle
+//! and polarization corrections), [`crate::preproc`] (per-pixel preprocessing),
+//! and [`crate::integrate`] (the binning engines) — into a single
 //! [`AzimuthalIntegrator`] that mirrors `pyFAI.integrator.AzimuthalIntegrator`.
 //!
 //! Method coverage: every cython method tuple `(split, algo, "cython")` with
@@ -11,7 +11,7 @@
 //! 1D and 2D — selected by [`IntegrationOptions::method`]. The bbox/full splits
 //! additionally build the `delta_array` (radial + chi half-widths) and the
 //! four-corner `corner_array` geometry. Each link in the chain is already
-//! validated bit-exact against golden data; this crate composes them and is
+//! validated bit-exact against golden data; the crate root composes them and is
 //! validated end-to-end (PONI + image in, only) against the live pyFAI
 //! integrator. (The 2D `pseudo` split is not ported.)
 //!
@@ -34,14 +34,13 @@
 
 use std::f64::consts::PI;
 
-use rsfai_calibrant::Calibrant;
-use rsfai_core::dtype::ErrorModel;
-use rsfai_detectors::Detector;
-use rsfai_geometry::{
+use crate::calibrant::Calibrant;
+use crate::detectors::Detector;
+use crate::geometry::{
     calc_pos_zyx, center_array, corner_array_f32, delta_chi, delta_radial, polarization_array,
     solid_angle_array, unscaled_center_array, PoniFile, PosZyx, Unit,
 };
-use rsfai_integrate::{
+use crate::integrate::{
     build_bbox_csc_1d, build_bbox_csc_2d, build_bbox_csr_1d, build_bbox_csr_2d, build_bbox_lut_1d,
     build_bbox_lut_2d, build_full_csc_1d, build_full_csc_2d, build_full_csr_1d, build_full_csr_2d,
     build_full_lut_1d, build_full_lut_2d, csc_integrate1d, csc_integrate2d, csr_integrate1d,
@@ -49,16 +48,47 @@ use rsfai_integrate::{
     histogram2d_bbox, histogram2d_full, lut_integrate1d, lut_integrate2d, Bbox2dBounds, BboxAzim1d,
     CsrIntegrate1d, Hist2dOptions, Integrate1d, Integrate2d,
 };
-use rsfai_preproc::{preproc4, PreprocOptions};
+use crate::preproc::{preproc4, PreprocOptions};
 
+pub mod compare;
+pub mod dtype;
 mod error;
+pub mod golden;
+
+pub mod calib;
+pub mod calibrant;
+pub mod detectors;
+pub mod distortion;
+pub mod fiber;
+pub mod geometry;
+pub mod goniometer;
+pub mod integrate;
+pub mod io;
+pub mod multigeometry;
+/// The OpenCL/GPU backend, behind the `opencl` cargo feature because it links
+/// the system OpenCL ICD loader.
+#[cfg(feature = "opencl")]
+pub mod opencl;
+pub mod peaks;
+pub mod preproc;
+
+pub use dtype::{
+    calc_upper_bound, AccT, BufferT, DataT, ErrorModel, IndexT, LutEntry, MaskT, PositionT, EPS32,
+};
 pub use error::{Error, Result};
 
+/// Pixels per rayon task in every per-pixel map. Below it, waking threads
+/// costs more than the arithmetic (a refinement's few-hundred-point
+/// `calc_pos_zyx` batches spent ten times their work on it), and without a
+/// floor rayon re-splits each stolen task down to one pixel, a join stack
+/// deep enough to overflow a debug build's 2 MiB worker stack.
+pub const PAR_MIN_LEN: usize = 4096;
+
 // Re-export the types a caller needs to drive an integration, so `use rsfai::*`
-// is enough to build options and read units without reaching into sub-crates.
-pub use rsfai_core::dtype::ErrorModel as ErrorModelKind;
-pub use rsfai_detectors::Detector as DetectorModel;
-pub use rsfai_geometry::Unit as RadialUnit;
+// is enough to build options and read units without reaching into submodules.
+pub use crate::detectors::Detector as DetectorModel;
+pub use crate::dtype::ErrorModel as ErrorModelKind;
+pub use crate::geometry::Unit as RadialUnit;
 
 /// The order pyFAI's `solidAngleArray` uses by default (`SolidAngleFactor`,
 /// `1/cos³`). Matches the `corrections_golden` validation.
@@ -446,7 +476,7 @@ impl AzimuthalIntegrator {
     /// are contiguous (`p3 = None` ⇒ `L3 = dist`).
     ///
     /// Public so fiber/GI integration can build the `qip`/`qoop` position arrays
-    /// (`rsfai_geometry::fiber_center_array`) it feeds to
+    /// (`crate::geometry::fiber_center_array`) it feeds to
     /// [`integrate2d_positions`](Self::integrate2d_positions).
     pub fn pixel_positions(&self) -> PosZyx {
         let (p1, p2) = self.detector.centers_f64();

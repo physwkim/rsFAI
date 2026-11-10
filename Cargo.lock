@@ -674,168 +674,18 @@ dependencies = [
 name = "rsfai"
 version = "0.1.0"
 dependencies = [
- "rsfai-calibrant",
- "rsfai-core",
- "rsfai-detectors",
- "rsfai-geometry",
- "rsfai-integrate",
- "rsfai-preproc",
- "thiserror",
-]
-
-[[package]]
-name = "rsfai-calib"
-version = "0.1.0"
-dependencies = [
  "argmin",
  "argmin-math",
- "rayon",
- "rsfai-calibrant",
- "rsfai-core",
- "rsfai-detectors",
- "rsfai-geometry",
- "rsfai-peaks",
- "serde_json",
-]
-
-[[package]]
-name = "rsfai-calibrant"
-version = "0.1.0"
-dependencies = [
- "rsfai-core",
- "serde_json",
-]
-
-[[package]]
-name = "rsfai-core"
-version = "0.1.0"
-dependencies = [
+ "nalgebra",
  "ndarray",
  "ndarray-npy",
  "num-traits",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "rsfai-detectors"
-version = "0.1.0"
-dependencies = [
- "ndarray",
- "rsfai-core",
- "thiserror",
-]
-
-[[package]]
-name = "rsfai-distortion"
-version = "0.1.0"
-dependencies = [
- "ndarray",
- "rsfai-core",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "rsfai-fiber"
-version = "0.1.0"
-dependencies = [
- "ndarray",
- "rsfai",
- "rsfai-core",
- "rsfai-geometry",
-]
-
-[[package]]
-name = "rsfai-geometry"
-version = "0.1.0"
-dependencies = [
- "ndarray",
- "rayon",
- "rsfai-core",
- "rsfai-detectors",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "rsfai-goniometer"
-version = "0.1.0"
-dependencies = [
- "argmin",
- "argmin-math",
- "rsfai",
- "rsfai-calib",
- "rsfai-calibrant",
- "rsfai-core",
- "rsfai-detectors",
- "rsfai-fiber",
- "rsfai-geometry",
- "serde_json",
-]
-
-[[package]]
-name = "rsfai-integrate"
-version = "0.1.0"
-dependencies = [
- "ndarray",
- "rayon",
- "rsfai-core",
- "rsfai-detectors",
- "rsfai-geometry",
- "rsfai-preproc",
- "serde_json",
-]
-
-[[package]]
-name = "rsfai-io"
-version = "0.1.0"
-dependencies = [
- "rsfai-core",
- "rust-hdf5",
- "thiserror",
-]
-
-[[package]]
-name = "rsfai-multigeometry"
-version = "0.1.0"
-dependencies = [
- "rsfai",
- "rsfai-core",
- "rsfai-geometry",
- "serde_json",
-]
-
-[[package]]
-name = "rsfai-opencl"
-version = "0.1.0"
-dependencies = [
- "ndarray",
- "ndarray-npy",
  "opencl3",
- "rsfai-core",
- "rsfai-integrate",
+ "rayon",
+ "rust-hdf5",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "rsfai-peaks"
-version = "0.1.0"
-dependencies = [
- "nalgebra",
- "rsfai-core",
- "serde_json",
-]
-
-[[package]]
-name = "rsfai-preproc"
-version = "0.1.0"
-dependencies = [
- "ndarray",
- "rayon",
- "rsfai-core",
+ "thiserror",
 ]
 
 [[package]]
