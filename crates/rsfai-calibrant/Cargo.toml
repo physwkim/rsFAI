@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "Calibrant ring positions and crystallography for rsFAI, ported from pyFAI's crystallography package"
 
 [dependencies]
 

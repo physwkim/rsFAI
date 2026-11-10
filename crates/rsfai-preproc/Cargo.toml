@@ -3,6 +3,7 @@ name = "rsfai-preproc"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 description = "Per-pixel preprocessing (dark/flat/solidangle/polarization/normalization) for rsFAI (M3)"
 

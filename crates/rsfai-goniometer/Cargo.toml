@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "Goniometer geometry model and refinement for rsFAI, ported from pyFAI's goniometer.py"
 
 [dependencies]
 rsfai.workspace = true

@@ -672,7 +672,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "rsfai-calibrant",
  "rsfai-core",
@@ -685,7 +685,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai-calib"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "argmin",
  "argmin-math",
@@ -700,7 +700,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai-calibrant"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "rsfai-core",
  "serde_json",
@@ -708,7 +708,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai-core"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "ndarray",
  "ndarray-npy",
@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai-detectors"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "ndarray",
  "rsfai-core",
@@ -729,7 +729,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai-distortion"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "ndarray",
  "rsfai-core",
@@ -739,7 +739,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai-fiber"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "ndarray",
  "rsfai",
@@ -749,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai-geometry"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "ndarray",
  "rayon",
@@ -761,7 +761,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai-goniometer"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "argmin",
  "argmin-math",
@@ -777,7 +777,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai-integrate"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "ndarray",
  "rayon",
@@ -790,7 +790,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai-io"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "rsfai-core",
  "rust-hdf5",
@@ -799,7 +799,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai-multigeometry"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "rsfai",
  "rsfai-core",
@@ -809,7 +809,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai-opencl"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "ndarray",
  "ndarray-npy",
@@ -822,7 +822,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai-peaks"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "nalgebra",
  "rsfai-core",
@@ -831,7 +831,7 @@ dependencies = [
 
 [[package]]
 name = "rsfai-preproc"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "ndarray",
  "rayon",

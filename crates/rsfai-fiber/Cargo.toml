@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "Fiber and grazing-incidence (GIWAXS/GISAXS) integration for rsFAI, ported from pyFAI's integrator/fiber.py"
 
 [dependencies]
 rsfai.workspace = true

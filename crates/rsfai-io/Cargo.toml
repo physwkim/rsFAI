@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "HDF5/NeXus diffraction frame reader for rsFAI, pure Rust"
 
 [dependencies]
 rust-hdf5.workspace = true

@@ -3,6 +3,7 @@ name = "rsfai-geometry"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 description = "PONI geometry, coordinate transforms (tth/chi/q/r) and units for rsFAI (M1)"
 

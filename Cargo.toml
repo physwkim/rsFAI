@@ -23,29 +23,29 @@ members = [
 exclude = ["crates/rsfai-py"]
 
 [workspace.package]
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/stevek/rsFAI"
+repository = "https://github.com/physwkim/rsFAI"
 rust-version = "1.94"
 
 [workspace.dependencies]
 # Internal crates
-rsfai-core = { path = "crates/rsfai-core" }
-rsfai-geometry = { path = "crates/rsfai-geometry" }
-rsfai-detectors = { path = "crates/rsfai-detectors" }
-rsfai-preproc = { path = "crates/rsfai-preproc" }
-rsfai-integrate = { path = "crates/rsfai-integrate" }
-rsfai-opencl = { path = "crates/rsfai-opencl" }
-rsfai = { path = "crates/rsfai" }
-rsfai-multigeometry = { path = "crates/rsfai-multigeometry" }
-rsfai-fiber = { path = "crates/rsfai-fiber" }
-rsfai-calibrant = { path = "crates/rsfai-calibrant" }
-rsfai-distortion = { path = "crates/rsfai-distortion" }
-rsfai-peaks = { path = "crates/rsfai-peaks" }
-rsfai-calib = { path = "crates/rsfai-calib" }
-rsfai-goniometer = { path = "crates/rsfai-goniometer" }
-rsfai-io = { path = "crates/rsfai-io" }
+rsfai-core = { path = "crates/rsfai-core", version = "0.1.0" }
+rsfai-geometry = { path = "crates/rsfai-geometry", version = "0.1.0" }
+rsfai-detectors = { path = "crates/rsfai-detectors", version = "0.1.0" }
+rsfai-preproc = { path = "crates/rsfai-preproc", version = "0.1.0" }
+rsfai-integrate = { path = "crates/rsfai-integrate", version = "0.1.0" }
+rsfai-opencl = { path = "crates/rsfai-opencl", version = "0.1.0" }
+rsfai = { path = "crates/rsfai", version = "0.1.0" }
+rsfai-multigeometry = { path = "crates/rsfai-multigeometry", version = "0.1.0" }
+rsfai-fiber = { path = "crates/rsfai-fiber", version = "0.1.0" }
+rsfai-calibrant = { path = "crates/rsfai-calibrant", version = "0.1.0" }
+rsfai-distortion = { path = "crates/rsfai-distortion", version = "0.1.0" }
+rsfai-peaks = { path = "crates/rsfai-peaks", version = "0.1.0" }
+rsfai-calib = { path = "crates/rsfai-calib", version = "0.1.0" }
+rsfai-goniometer = { path = "crates/rsfai-goniometer", version = "0.1.0" }
+rsfai-io = { path = "crates/rsfai-io", version = "0.1.0" }
 
 # External
 ndarray = "0.16"

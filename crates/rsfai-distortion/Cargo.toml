@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "Spatial-distortion correction and FITPACK spline evaluation for rsFAI, ported from pyFAI's distortion.py and spline.py"
 
 [dependencies]
 rsfai-core.workspace = true

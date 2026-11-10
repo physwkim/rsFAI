@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+readme = "../../README.md"
+description = "Azimuthal integrator (PONI + detector image to 1D/2D curves), a bit-exact Rust port of pyFAI's integrate1d/integrate2d"
 
 [dependencies]
 rsfai-core.workspace = true

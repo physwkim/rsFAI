@@ -3,6 +3,7 @@ name = "rsfai-integrate"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 description = "Integration engines: histogram, bbox/full pixel-splitting, sparse builder, CSR build+apply (M4-M6)"
 

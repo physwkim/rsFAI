@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "OpenCL/GPU integration backend for rsFAI, running pyFAI's CSR, LUT and histogram kernels"
 
 # The OpenCL/GPU backend (Phase 2). Unlike the cython-parity crates this is
 # tolerance-validated, not bit-exact: the target device (Apple M4 Pro) has no
