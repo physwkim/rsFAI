@@ -430,7 +430,7 @@ def run_live(d, cfg):
 
 def dataset_dirs():
     # Skip OpenCL datasets: they carry a reduced manifest (no error_model_code /
-    # cython intermediates) and are validated by the rsfai-opencl harness, not
+    # cython intermediates) and are validated by the rsfai::opencl harness, not
     # this cython-kernel parity test. Mirrors the Rust golden discovery filter.
     return sorted(
         p.name

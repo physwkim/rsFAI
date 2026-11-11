@@ -7,7 +7,7 @@ Run single-thread in the pyfai2026.5 micromamba env (pyFAI 2026.5.0 manylinux wh
         golden/gen_golden_calibrant.py
 
 Two parity surfaces, both feeding the Rust verifier in
-`crates/rsfai-calibrant/tests/golden_calibrant.rs`:
+`crates/rsfai/tests/golden_calibrant.rs`:
 
   * `.D`-file path: for a handful of shipped calibrants (AgBh, Al, LaB6, Si,
     CeO2) we copy the `.D` file into `datasets_calibrant/`, then for a matrix of

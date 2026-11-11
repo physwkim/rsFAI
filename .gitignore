@@ -56,7 +56,7 @@ golden/datasets_calibrant/**/*.h5
 golden/datasets_calcfrom/**/*.edf
 golden/datasets_calcfrom/**/*.cbf
 golden/datasets_calcfrom/**/*.h5
-# rsfai-io golden (HDF5 / NeXus read): the test INPUT is a small (~24 KB)
+# rsfai::io golden (HDF5 / NeXus read): the test INPUT is a small (~24 KB)
 # h5py-written frame.h5 plus the .npy of each dataset, all offline-required, so
 # we COMMIT them — including the .h5, which is the fixture here (unlike the dirs
 # above, where .h5 is an ignored detector-image blob). Ignore only foreign
@@ -70,7 +70,7 @@ golden/datasets_io/**/*.cbf
 # corrected image), the manifest, and the committed halfccd.spline (not .npy).
 golden/datasets_distortion/**/*.npy
 !golden/datasets_distortion/**/out_*.npy
-# Peak-finding golden (rsfai-peaks): every output is small (synthetic images
+# Peak-finding golden (rsfai::peaks): every output is small (synthetic images
 # <= 128x128 and a handful of points / coordinate arrays) and offline-required,
 # so we COMMIT all the .npy arrays (inputs + outputs) and the manifest — the
 # verifier reloads the identical inputs pyFAI consumed. Only defensively ignore
@@ -79,7 +79,7 @@ golden/datasets_distortion/**/*.npy
 golden/datasets_peaks/**/*.edf
 golden/datasets_peaks/**/*.cbf
 golden/datasets_peaks/**/*.h5
-# ControlPoints + GeometryRefinement golden (M14, rsfai-calib): every output is
+# ControlPoints + GeometryRefinement golden (M14, rsfai::calib): every output is
 # tiny and offline-required (control points <= 51x3 doubles, the 6-param vectors,
 # the per-point residual/2theta arrays, the calibrant d-spacing/2theta lists), so
 # we COMMIT all the .npy arrays + manifest.json. Only ignore detector-image /
@@ -88,7 +88,7 @@ golden/datasets_peaks/**/*.h5
 golden/datasets_calib/**/*.edf
 golden/datasets_calib/**/*.cbf
 golden/datasets_calib/**/*.h5
-# Goniometer golden (M15, rsfai-goniometer): every output is tiny and
+# Goniometer golden (M15, rsfai::goniometer): every output is tiny and
 # offline-required (the 6-PONI transformation outputs, the fixed/converged param
 # vectors, the residu2 scalar, the MultiGeometryFiber accumulators + 200-bin
 # axes), so we COMMIT all the .npy arrays, the two frame .poni files, and

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Golden generator for distortion + spline (rsfai-distortion crate).
+"""Golden generator for distortion + spline (``rsfai::distortion``).
 
 Run single-thread in the pyfai2026.5 micromamba env (pyFAI 2026.5.0 manylinux wheel, no FMA):
 

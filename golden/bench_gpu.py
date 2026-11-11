@@ -14,7 +14,7 @@ differs between the two columns is the method's implementation backend
 (``cython`` on the CPU vs ``opencl`` on the GPU), so the comparison isolates the
 single question: is the GPU faster for this per-frame workload?
 
-rsFAI's own OpenCL backend (``rsfai-opencl``) reuses pyFAI's identical ``.cl``
+rsFAI's own OpenCL backend (``rsfai::opencl``) reuses pyFAI's identical ``.cl``
 kernels on the same device, so pyFAI's opencl numbers represent the rsFAI GPU
 path too; rsFAI does not (yet) expose OpenCL to Python, hence measuring through
 pyFAI.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Golden generator for rsfai-io (HDF5 / NeXus reading via the pure-Rust
+"""Golden generator for rsfai::io (HDF5 / NeXus reading via the pure-Rust
 `rust-hdf5` crate).
 
 Writes a small NeXus-shaped HDF5 file with h5py (libhdf5), plus the .npy of

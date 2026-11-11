@@ -31,12 +31,12 @@
 
 use std::path::{Path, PathBuf};
 
+use rsfai::compare::{compare_f32, compare_f64};
+use rsfai::golden::{load_image_f32, load_manifest, load_npy_f32, load_npy_f64, load_npy_i8};
 use rsfai::{
     Algo, AzimuthalIntegrator, Corrections, ErrorModelKind, IntegrationOptions, Method, RadialUnit,
     Split,
 };
-use rsfai_core::compare::{compare_f32, compare_f64};
-use rsfai_core::golden::{load_image_f32, load_manifest, load_npy_f32, load_npy_f64, load_npy_i8};
 
 /// Relative tolerance for the direct-split histogram norm channel + its
 /// norm-dependents (the f64-vs-f32 norm quirk; ≤1 f32-ULP, rel ~1e-7). CSR/LUT

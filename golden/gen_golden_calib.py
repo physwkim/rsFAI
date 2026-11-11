@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Golden generator for ControlPoints + GeometryRefinement (rsfai-calib).
+"""Golden generator for ControlPoints + GeometryRefinement (rsfai::calib).
 
 Run single-thread in the pyfai2026.5 micromamba env (pyFAI 2026.5.0 manylinux wheel, no FMA,
 scipy 1.17.1, numpy 2.4.3):
@@ -7,7 +7,7 @@ scipy 1.17.1, numpy 2.4.3):
     OMP_NUM_THREADS=1 ~/micromamba/envs/pyfai2026.5/bin/python -I \\
         golden/gen_golden_calib.py
 
-TWO parity surfaces, both feeding crates/rsfai-calib/tests/golden_calib.rs:
+TWO parity surfaces, both feeding crates/rsfai/tests/golden_calib.rs:
 
   * Fixed-parameter residual / chi2 (the BIT-EXACT gate). For a fixed parameter
     vector (the post-`guess_poni` initial estimate) we dump the control points
